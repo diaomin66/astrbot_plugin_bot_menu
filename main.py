@@ -6,12 +6,69 @@ from typing import Any
 
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
-from astrbot.api.web import error_response, json_response, request
 
 from .services import MenuStorage, MenuValidationError, build_render_payload, normalize_menu
 
 PLUGIN_NAME = "astrbot_plugin_bot_menu"
 logger = logging.getLogger("astrbot")
+
+try:
+    from astrbot.api.web import (
+        error_response as _astrbot_error_response,
+        json_response as _astrbot_json_response,
+        request as _astrbot_request,
+    )
+except ModuleNotFoundError:
+    _astrbot_request = None
+
+    from quart import jsonify, request as _quart_request
+
+    def json_response(
+        data: Any = None,
+        *,
+        status_code: int = 200,
+    ):
+        response = jsonify({"status": "ok", "data": {} if data is None else data})
+        response.status_code = status_code
+        return response
+
+    def error_response(
+        message: str,
+        *,
+        status_code: int = 400,
+        data: Any = None,
+    ):
+        # AstrBot 4.25.x's plugin-page bridge reads the JSON error envelope
+        # from successful HTTP responses.  Returning 4xx here makes axios
+        # reject before the bridge can forward the actual message.
+        return jsonify({"status": "error", "message": message, "data": data})
+
+    async def read_json_body(default: Any = None) -> Any:
+        try:
+            payload = await _quart_request.get_json(silent=True)
+        except Exception:
+            return default
+        return default if payload is None else payload
+
+else:
+
+    def json_response(
+        data: Any = None,
+        *,
+        status_code: int = 200,
+    ):
+        return _astrbot_json_response(data, status_code=status_code)
+
+    def error_response(
+        message: str,
+        *,
+        status_code: int = 400,
+        data: Any = None,
+    ):
+        return _astrbot_error_response(message, status_code=status_code, data=data)
+
+    async def read_json_body(default: Any = None) -> Any:
+        return await _astrbot_request.json(default=default)
 
 
 class BotMenuPlugin(Star):
@@ -57,7 +114,7 @@ class BotMenuPlugin(Star):
         return json_response({"menu": menu})
 
     async def api_save_menu(self):
-        payload = await request.json(default={})
+        payload = await read_json_body(default={})
         raw_menu = payload.get("menu") if isinstance(payload, dict) else None
         if raw_menu is None:
             raw_menu = payload
@@ -68,7 +125,7 @@ class BotMenuPlugin(Star):
             return error_response(str(exc), status_code=400)
 
     async def api_delete_menu(self):
-        payload = await request.json(default={})
+        payload = await read_json_body(default={})
         menu_id = str(payload.get("id", "")).strip() if isinstance(payload, dict) else ""
         if not menu_id:
             return error_response("missing menu id", status_code=400)
@@ -85,7 +142,7 @@ class BotMenuPlugin(Star):
             return error_response(str(exc), status_code=400)
 
     async def api_preview_menu(self):
-        payload = await request.json(default={})
+        payload = await read_json_body(default={})
         try:
             if isinstance(payload, dict) and isinstance(payload.get("menu"), dict):
                 menu = normalize_menu(payload["menu"])
@@ -106,7 +163,7 @@ class BotMenuPlugin(Star):
         return json_response(self.storage.export_data())
 
     async def api_import_menus(self):
-        payload = await request.json(default={})
+        payload = await read_json_body(default={})
         try:
             if isinstance(payload, dict):
                 raw_menus = payload.get("menus")

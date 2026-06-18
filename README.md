@@ -44,4 +44,4 @@ data/plugin_data/astrbot_plugin_bot_menu/menus.json
 
 ## 说明
 
-本插件使用 AstrBot 内置 `html_render()` 渲染图片，不额外引入浏览器渲染依赖。
+本插件使用 AstrBot 内置 `html_render()` 渲染图片，不额外引入浏览器渲染依赖。插件 Web API 同时兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。

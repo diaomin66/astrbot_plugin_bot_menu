@@ -2,7 +2,7 @@ name: astrbot_plugin_bot_menu
 display_name: Bot 菜单
 short_desc: 可视化配置机器人菜单并渲染为图片发送。
 desc: 通过 AstrBot Pages WebUI 自定义多套机器人菜单，实时预览并使用指令发送菜单图片。
-version: 0.1.0
+version: 0.1.1
 author: diaomin66
 repo: https://github.com/diaomin66/astrbot_plugin_bot_menu
 astrbot_version: ">=4.16,<5"
