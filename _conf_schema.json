@@ -11,6 +11,17 @@
     "default": 900,
     "hint": "图片 HTML 模板的默认宽度，实际范围会限制在 520-1400。"
   },
+  "render_mode": {
+    "description": "菜单图片渲染模式",
+    "type": "string",
+    "default": "local",
+    "options": [
+      "local",
+      "auto",
+      "remote"
+    ],
+    "hint": "local 为本地 PNG 渲染，最稳定；auto 会先尝试 AstrBot 远程 T2I，失败后回退本地；remote 仅使用远程 T2I。"
+  },
   "show_render_error_detail": {
     "description": "聊天侧显示详细渲染错误",
     "type": "bool",

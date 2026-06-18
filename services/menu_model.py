@@ -7,6 +7,7 @@ from typing import Any
 
 DEFAULT_MENU_ID = "default"
 MENU_ID_PATTERN = re.compile(r"^[A-Za-z0-9_-]{1,48}$")
+HEX_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 MAX_SECTIONS = 24
 MAX_ITEMS_PER_SECTION = 64
 MAX_TOTAL_ITEMS = 256
@@ -139,7 +140,7 @@ def _normalize_style(raw_style: Any) -> dict[str, Any]:
 
     style["theme"] = _clean_text(style.get("theme"), "theme", default="aurora", max_length=32)
     for key in ("primary_color", "background_color", "card_color", "text_color", "muted_color"):
-        style[key] = _clean_text(style.get(key), key, default=DEFAULT_STYLE[key], max_length=32)
+        style[key] = _clean_color(style.get(key), default=DEFAULT_STYLE[key])
 
     style["radius"] = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48)
     style["width"] = _clamp_int(style.get("width"), default=900, minimum=520, maximum=1400)
@@ -197,6 +198,11 @@ def _clean_text(value: Any, field_name: str, *, default: str = "", max_length: i
     if len(value) > max_length:
         raise MenuValidationError(f"{field_name} is too long")
     return value
+
+
+def _clean_color(value: Any, *, default: str) -> str:
+    raw = _clean_text(value, "color", default=default, max_length=32)
+    return raw if HEX_COLOR_PATTERN.fullmatch(raw) else default
 
 
 def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:

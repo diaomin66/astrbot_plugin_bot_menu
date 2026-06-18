@@ -7,7 +7,14 @@ from typing import Any
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
-from .services import MenuStorage, MenuValidationError, build_render_payload, normalize_menu
+from .services import (
+    MenuStorage,
+    MenuValidationError,
+    build_render_payload,
+    image_file_to_data_url,
+    normalize_menu,
+    render_menu_image,
+)
 
 PLUGIN_NAME = "astrbot_plugin_bot_menu"
 logger = logging.getLogger("astrbot")
@@ -152,7 +159,7 @@ class BotMenuPlugin(Star):
                 if not menu:
                     return error_response("menu not found", status_code=404)
             image_url = await self._render_menu(menu)
-            return json_response({"url": image_url})
+            return json_response({"url": self._preview_image_url(image_url)})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
         except Exception as exc:  # noqa: BLE001
@@ -178,8 +185,28 @@ class BotMenuPlugin(Star):
 
     async def _render_menu(self, menu: dict[str, Any]) -> str:
         default_width = self._config_int("render_width", 900)
+        render_mode = str(self._config_get("render_mode", "local") or "local").strip().lower()
+        if render_mode == "local":
+            return render_menu_image(menu, self.storage.data_dir, default_width=default_width)
+
         template, data, options = build_render_payload(menu, default_width=default_width)
-        return await self.html_render(template, data, return_url=True, options=options)
+        try:
+            return await self.html_render(template, data, return_url=True, options=options)
+        except Exception as exc:
+            if render_mode == "remote":
+                raise
+            logger.warning("Remote menu rendering failed, falling back to local PNG: %s", exc)
+            return render_menu_image(menu, self.storage.data_dir, default_width=default_width)
+
+    def _preview_image_url(self, image_url_or_path: str) -> str:
+        """Return a URL that can be rendered inside the plugin Page iframe."""
+
+        if image_url_or_path.startswith(("http://", "https://", "data:")):
+            return image_url_or_path
+        path = Path(image_url_or_path)
+        if path.is_file():
+            return image_file_to_data_url(path)
+        return image_url_or_path
 
     def _register_web_apis(self, context: Context) -> None:
         routes = [

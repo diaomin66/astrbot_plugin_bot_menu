@@ -4,6 +4,7 @@ import tempfile
 import unittest
 
 from services.menu_model import MenuValidationError, normalize_menu
+from services.local_image import image_file_to_data_url, render_menu_image
 from services.storage import MenuStorage
 
 
@@ -58,6 +59,21 @@ class MenuStorageTests(unittest.TestCase):
                 mode="replace",
             )
             self.assertEqual([menu["id"] for menu in menus], ["imported"])
+
+    def test_local_renderer_writes_png(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            path = render_menu_image(storage.get_menu("default"), tmp)
+            self.assertTrue(path.endswith(".png"))
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
+
+    def test_rendered_png_can_be_embedded_in_web_preview(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            path = render_menu_image(storage.get_menu("default"), tmp)
+            data_url = image_file_to_data_url(path)
+            self.assertTrue(data_url.startswith("data:image/png;base64,"))
 
 
 if __name__ == "__main__":

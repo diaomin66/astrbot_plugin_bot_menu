@@ -21,6 +21,8 @@
 AstrBot/data/plugins/astrbot_plugin_bot_menu/
 ```
 
+插件本地 PNG 渲染依赖 `Pillow`，AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
+
 ## 使用
 
 1. 打开 AstrBot WebUI。
@@ -34,6 +36,7 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 
 - `default_menu_id`：默认菜单方案 ID。
 - `render_width`：默认渲染宽度。
+- `render_mode`：菜单图片渲染模式，默认 `local`，可选 `auto` 或 `remote`。
 - `show_render_error_detail`：调试时在聊天侧显示详细渲染错误。
 
 菜单正文数据保存在：
@@ -44,4 +47,4 @@ data/plugin_data/astrbot_plugin_bot_menu/menus.json
 
 ## 说明
 
-本插件使用 AstrBot 内置 `html_render()` 渲染图片，不额外引入浏览器渲染依赖。插件 Web API 同时兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
+本插件默认使用本地 PNG 渲染，避免 `/menu` 受远程 T2I 服务 502、超时或不可用影响。若需要使用 AstrBot 内置 `html_render()`，可将 `render_mode` 改为 `auto` 或 `remote`；其中 `auto` 会在远程 T2I 失败后回退到本地 PNG。插件 Web API 同时兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
