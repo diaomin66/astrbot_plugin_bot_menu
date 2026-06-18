@@ -1,0 +1,20 @@
+{
+  "default_menu_id": {
+    "description": "默认菜单方案 ID",
+    "type": "string",
+    "default": "default",
+    "hint": "发送 /menu 或 /菜单 且不带参数时使用的菜单方案。"
+  },
+  "render_width": {
+    "description": "默认渲染宽度",
+    "type": "int",
+    "default": 900,
+    "hint": "图片 HTML 模板的默认宽度，实际范围会限制在 520-1400。"
+  },
+  "show_render_error_detail": {
+    "description": "聊天侧显示详细渲染错误",
+    "type": "bool",
+    "default": false,
+    "hint": "建议仅调试时启用，避免向普通聊天暴露内部错误。"
+  }
+}

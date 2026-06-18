@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Bot 菜单编辑器</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body>
+  <div class="app">
+    <aside class="sidebar">
+      <div>
+        <p class="kicker">AstrBot Plugin Page</p>
+        <h1>Bot 菜单</h1>
+        <p class="muted">编辑菜单方案，实时预览聊天中发送的图片样式。</p>
+      </div>
+
+      <label class="field">
+        <span>菜单方案</span>
+        <select id="schemeSelect"></select>
+      </label>
+
+      <div class="button-grid">
+        <button id="newBtn" type="button">新建</button>
+        <button id="copyBtn" type="button">复制</button>
+        <button id="deleteBtn" type="button" class="danger">删除</button>
+        <button id="exportBtn" type="button">导出</button>
+      </div>
+
+      <label class="import-box">
+        <input id="importInput" type="file" accept="application/json,.json" />
+        <span>导入 JSON</span>
+      </label>
+
+      <div id="status" class="status">正在加载...</div>
+    </aside>
+
+    <main class="editor">
+      <section class="panel form-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Settings</p>
+            <h2>菜单内容</h2>
+          </div>
+          <div class="actions">
+            <button id="addSectionBtn" type="button">添加分组</button>
+            <button id="saveBtn" type="button" class="primary">保存</button>
+          </div>
+        </div>
+
+        <div class="form-grid">
+          <label class="field"><span>方案 ID</span><input id="menuId" autocomplete="off" /></label>
+          <label class="field"><span>方案名称</span><input id="menuName" /></label>
+          <label class="field wide"><span>标题</span><input id="menuTitle" /></label>
+          <label class="field wide"><span>副标题</span><input id="menuSubtitle" /></label>
+          <label class="field wide"><span>页脚</span><input id="menuFooter" /></label>
+        </div>
+
+        <details open class="style-box">
+          <summary>样式设置</summary>
+          <div class="form-grid style-grid">
+            <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option></select></label>
+            <label class="field"><span>主色</span><input id="primaryColor" type="color" /></label>
+            <label class="field"><span>背景色</span><input id="backgroundColor" type="color" /></label>
+            <label class="field"><span>卡片色</span><input id="cardColor" type="color" /></label>
+            <label class="field"><span>宽度</span><input id="width" type="number" min="520" max="1400" /></label>
+            <label class="field"><span>圆角</span><input id="radius" type="number" min="0" max="48" /></label>
+            <label class="check"><input id="showUpdatedAt" type="checkbox" /> 显示更新时间</label>
+          </div>
+        </details>
+
+        <div id="sections" class="sections-editor"></div>
+      </section>
+
+      <section class="panel preview-panel">
+        <div class="panel-head">
+          <div>
+            <p class="kicker">Preview</p>
+            <h2>实时预览</h2>
+          </div>
+          <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
+        </div>
+        <div id="preview" class="menu-preview"></div>
+        <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />
+      </section>
+    </main>
+  </div>
+  <script type="module" src="./app.js"></script>
+</body>
+</html>
