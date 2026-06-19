@@ -199,6 +199,13 @@ class MenuStorageTests(unittest.TestCase):
         self.assertNotIn("fitBackgroundToCover(false)", app_js)
         self.assertIn("fitBackgroundToCover(true)", app_js)
 
+    def test_editor_preview_column_has_independent_scroll_pane(self):
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        self.assertIn(".preview-stage {\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  overflow-y: auto;", css)
+        self.assertIn(".preview-panel {\n  min-height: 100%;\n  display: flex;\n  flex-direction: column;\n  overflow: visible;", css)
+        self.assertIn(".app {\n  height: 100vh;\n  height: 100dvh;\n  min-height: 0;\n  overflow: hidden;", css)
+        self.assertIn("overscroll-behavior: contain;", css)
+
     def test_preview_width_grows_with_columns(self):
         one_column = normalize_menu(
             {
