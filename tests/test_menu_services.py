@@ -181,6 +181,34 @@ class MenuEditorSourceTests(unittest.TestCase):
             self.assertIn(token, css)
 
 
+
+    def test_page_uses_native_module_split_and_compat_bootstrap(self):
+        page_dir = Path("pages/menu-editor")
+        index_html = (page_dir / "index.html").read_text(encoding="utf-8")
+        app_js = (page_dir / "app.js").read_text(encoding="utf-8")
+
+        for module_name in (
+            "runtime.js",
+            "state.js",
+            "api.js",
+            "preview.js",
+            "modal.js",
+            "background.js",
+            "validation.js",
+            "shortcuts.js",
+        ):
+            self.assertTrue((page_dir / module_name).is_file())
+            self.assertIn(f'src="./{module_name}" defer', index_html)
+
+        self.assertIn('src="./app.js" defer', index_html)
+        self.assertNotIn('<script type="module" src="./app.js"', index_html)
+        self.assertNotIn("await resolvePageBridge();", app_js.split("function initializeEditor", 1)[0])
+        self.assertIn("function cloneData", app_js)
+        self.assertIn("editorRuntime.cloneData", app_js)
+        self.assertIn("createPendingBackgroundAsset", app_js)
+        self.assertIn("flushPendingBackgroundAsset", app_js)
+
+
 class MenuStorageTests(unittest.TestCase):
     def test_storage_creates_default_menu(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -399,7 +427,7 @@ class MenuStorageTests(unittest.TestCase):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
         version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
-        self.assertEqual(version, "0.3.0")
+        self.assertEqual(version, "0.4.0")
         self.assertEqual(author, "雪碧bir")
         self.assertIn(f"当前版本：`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)

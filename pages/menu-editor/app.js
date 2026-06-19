@@ -1,5 +1,58 @@
 const $ = (id) => document.getElementById(id);
 let bridge = null;
+const editorRuntime = window.MenuEditorRuntime || {};
+const editorApi = window.MenuEditorApi || {};
+const editorBackground = window.MenuEditorBackground || {};
+const editorPreview = window.MenuEditorPreview || {};
+const editorModal = window.MenuEditorModal || {};
+const editorShortcuts = window.MenuEditorShortcuts || {};
+const editorValidation = window.MenuEditorValidation || {};
+
+function cloneData(value) {
+  if (editorRuntime.cloneData) return editorRuntime.cloneData(value);
+  if (typeof structuredClone === "function") return structuredClone(value);
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function safeStorageGet(key, fallback = "") {
+  if (editorRuntime.safeStorageGet) return editorRuntime.safeStorageGet(key, fallback);
+  try {
+    return window.localStorage?.getItem(key) ?? fallback;
+  } catch (error) {
+    console.warn("localStorage get failed", error);
+    return fallback;
+  }
+}
+
+function safeStorageSet(key, value) {
+  if (editorRuntime.safeStorageSet) return editorRuntime.safeStorageSet(key, value);
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch (error) {
+    console.warn("localStorage set failed", error);
+  }
+}
+
+function safeStorageRemove(key) {
+  if (editorRuntime.safeStorageRemove) return editorRuntime.safeStorageRemove(key);
+  try {
+    window.localStorage?.removeItem(key);
+  } catch (error) {
+    console.warn("localStorage remove failed", error);
+  }
+}
+
+function replaceChildrenSafe(node, ...children) {
+  if (editorRuntime.replaceChildrenSafe) return editorRuntime.replaceChildrenSafe(node, ...children);
+  if (!node) return;
+  if (typeof node.replaceChildren === "function") {
+    node.replaceChildren(...children);
+    return;
+  }
+  while (node.firstChild) node.removeChild(node.firstChild);
+  children.forEach((child) => node.append(child));
+}
 
 const CARD_TEMPLATES = {
   compact: { label: "紧凑", icon: "•", title: "快捷项", command: "/cmd", description: "", width: 190 },
@@ -22,7 +75,7 @@ const STYLE_COPY_KEYS = [
   "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns",
   "section_gap_mode", "section_gap", "font_family", "card_gap", "section_padding", "shadow_strength", "border_strength", "watermark", "show_updated_at",
 ];
-const MENU_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
+const MENU_ID_PATTERN = editorValidation.MENU_ID_PATTERN || /^[A-Za-z0-9_-]{1,48}$/;
 const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
 const COLLAPSE_PREFIX = "astrbot_plugin_bot_menu:collapsed:";
 const DENSITY_KEY = "astrbot_plugin_bot_menu:density";
@@ -47,10 +100,11 @@ const state = {
   history: [],
   historyIndex: -1,
   historyPaused: false,
-  density: localStorage.getItem(DENSITY_KEY) || "standard",
-  previewDevice: localStorage.getItem(PREVIEW_DEVICE_KEY) || "group",
+  density: safeStorageGet(DENSITY_KEY, "standard") || "standard",
+  previewDevice: safeStorageGet(PREVIEW_DEVICE_KEY, "group") || "group",
   renderStatusTimer: 0,
   backgroundEditMode: false,
+  pendingBackgroundAsset: null,
 };
 
 const els = {
@@ -120,14 +174,30 @@ const els = {
   modalFooter: $("modalFooter"),
 };
 
-try {
-  bridge = await resolvePageBridge();
-  bindEvents();
-  await loadMenus();
-} catch (error) {
-  console.error("failed to initialize bot menu editor", error);
-  setStatus(`页面初始化失败：${error.message || error}`, "error");
-  updateSaveState("saved");
+window.addEventListener("error", (event) => {
+  const message = event.error?.message || event.message || "未知脚本错误";
+  console.error("bot menu editor runtime error", event.error || event);
+  setStatus(`页面脚本错误：${message}`, "error");
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason?.message || event.reason || "未知异步错误";
+  console.error("bot menu editor async error", event.reason || event);
+  setStatus(`页面异步错误：${reason}`, "error");
+});
+
+initializeEditor();
+
+async function initializeEditor() {
+  try {
+    bindEvents();
+    bridge = await resolvePageBridge();
+    await loadMenus();
+  } catch (error) {
+    console.error("failed to initialize bot menu editor", error);
+    setStatus(`页面初始化失败：${error.message || error}`, "error");
+    updateSaveState("saved");
+  }
 }
 
 function bindEvents() {
@@ -139,30 +209,30 @@ function bindEvents() {
     }
     await selectMenu(nextId);
   });
-  $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
-  $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
-  els.deleteBtn.addEventListener("click", deleteMenu);
-  els.commandPaletteBtn?.addEventListener("click", openCommandPalette);
-  els.undoBtn?.addEventListener("click", undoMenuChange);
-  els.redoBtn?.addEventListener("click", redoMenuChange);
-  els.assetCenterBtn?.addEventListener("click", openAssetCenter);
-  els.historyBtn?.addEventListener("click", openHistoryPanel);
-  els.trashBtn?.addEventListener("click", openTrashPanel);
-  els.routingBtn?.addEventListener("click", openRoutingPanel);
-  els.backgroundEditToggleBtn.addEventListener("click", toggleBackgroundEditMode);
-  $("saveBtn").addEventListener("click", saveMenu);
-  $("copyStyleBtn").addEventListener("click", copyStyleToMenus);
-  $("resetStyleBtn").addEventListener("click", resetCurrentStyle);
-  $("addSectionBtn").addEventListener("click", addSection);
-  $("exportBtn").addEventListener("click", exportMenus);
+  bindClick($("newBtn"), "新建菜单", async () => { if (await confirmLeaveDirty()) newMenu(); });
+  bindClick($("copyBtn"), "复制菜单", async () => { if (await confirmLeaveDirty()) copyMenu(); });
+  bindClick(els.deleteBtn, "删除菜单", deleteMenu);
+  bindClick(els.commandPaletteBtn, "打开命令面板", openCommandPalette);
+  bindClick(els.undoBtn, "撤销", undoMenuChange);
+  bindClick(els.redoBtn, "重做", redoMenuChange);
+  bindClick(els.assetCenterBtn, "打开资产中心", openAssetCenter);
+  bindClick(els.historyBtn, "打开历史版本", openHistoryPanel);
+  bindClick(els.trashBtn, "打开回收站", openTrashPanel);
+  bindClick(els.routingBtn, "打开路由设置", openRoutingPanel);
+  bindClick(els.backgroundEditToggleBtn, "切换背景编辑模式", toggleBackgroundEditMode);
+  bindClick($("saveBtn"), "保存菜单", saveMenu);
+  bindClick($("copyStyleBtn"), "复制样式", copyStyleToMenus);
+  bindClick($("resetStyleBtn"), "重置样式", resetCurrentStyle);
+  bindClick($("addSectionBtn"), "添加分组", addSection);
+  bindClick($("exportBtn"), "导出菜单", exportMenus);
   $("importInput").addEventListener("change", importMenus);
-  els.batchEnableBtn?.addEventListener("click", () => batchSetEnabled(true));
-  els.batchDisableBtn?.addEventListener("click", () => batchSetEnabled(false));
-  els.batchCopyBtn?.addEventListener("click", batchCopySelection);
-  els.batchDeleteBtn?.addEventListener("click", batchDeleteSelection);
-  els.batchMoveUpBtn?.addEventListener("click", () => batchMoveSelection(-1));
-  els.batchMoveDownBtn?.addEventListener("click", () => batchMoveSelection(1));
-  els.batchClearBtn?.addEventListener("click", clearSelection);
+  bindClick(els.batchEnableBtn, "批量启用", () => batchSetEnabled(true));
+  bindClick(els.batchDisableBtn, "批量禁用", () => batchSetEnabled(false));
+  bindClick(els.batchCopyBtn, "批量复制", batchCopySelection);
+  bindClick(els.batchDeleteBtn, "批量删除", batchDeleteSelection);
+  bindClick(els.batchMoveUpBtn, "批量上移", () => batchMoveSelection(-1));
+  bindClick(els.batchMoveDownBtn, "批量下移", () => batchMoveSelection(1));
+  bindClick(els.batchClearBtn, "清除选择", clearSelection);
   if (els.densitySelect) {
     els.densitySelect.value = state.density;
     bindValueChange(els.densitySelect, () => setDensity(els.densitySelect.value));
@@ -254,6 +324,7 @@ function controlValueSignature(control) {
 }
 
 async function resolvePageBridge() {
+  if (editorApi.resolvePageBridge) return editorApi.resolvePageBridge({ timeoutMs: 6000, sleep });
   const rawBridge = await waitForPageBridge();
   if (typeof rawBridge.ready === "function") {
     await rawBridge.ready();
@@ -263,18 +334,46 @@ async function resolvePageBridge() {
 
 async function waitForPageBridge(timeoutMs = 6000) {
   const startedAt = Date.now();
-  while (!window.AstrBotPluginPage) {
+  let pageBridge = findPageBridge();
+  while (!pageBridge) {
     if (Date.now() - startedAt > timeoutMs) {
       throw new Error("未检测到 AstrBot 页面桥接对象，请在 AstrBot Pages 中打开本页面。");
     }
     await sleep(40);
+    pageBridge = findPageBridge();
   }
-  return window.AstrBotPluginPage;
+  return pageBridge;
+}
+
+function findPageBridge() {
+  const candidates = [
+    window.AstrBotPluginPage,
+    window.AstrBotPage,
+    window.PluginPage,
+    window.astrBotPluginPage,
+    window.astrbotPluginPage,
+    window.astrbot?.pluginPage,
+    window.astrbot?.page,
+  ];
+  try {
+    if (window.parent && window.parent !== window) {
+      candidates.push(
+        window.parent.AstrBotPluginPage,
+        window.parent.AstrBotPage,
+        window.parent.PluginPage,
+        window.parent.astrbot?.pluginPage,
+        window.parent.astrbot?.page,
+      );
+    }
+  } catch {
+    // Cross-origin parent access can fail in some WebViews; polling local candidates is enough.
+  }
+  return candidates.find((candidate) => candidate && typeof candidate === "object") || null;
 }
 
 function normalizePageBridge(rawBridge) {
-  const apiGet = rawBridge.apiGet || rawBridge.get;
-  const apiPost = rawBridge.apiPost || rawBridge.post;
+  const apiGet = rawBridge.apiGet || rawBridge.get || rawBridge.GET;
+  const apiPost = rawBridge.apiPost || rawBridge.post || rawBridge.POST;
   if (typeof apiGet !== "function" || typeof apiPost !== "function") {
     throw new Error("AstrBot 页面桥接缺少 apiGet/apiPost，请升级 AstrBot 或刷新页面。");
   }
@@ -285,6 +384,7 @@ function normalizePageBridge(rawBridge) {
 }
 
 function unwrapBridgeResponse(response) {
+  if (editorApi.unwrapBridgeResponse) return editorApi.unwrapBridgeResponse(response);
   if (response && typeof response === "object" && "status" in response) {
     if (response.status === "ok") return response.data ?? {};
     if (response.status === "error") throw new Error(response.message || "请求失败");
@@ -294,6 +394,30 @@ function unwrapBridgeResponse(response) {
 
 function sleep(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function runAction(label, handler) {
+  if (editorRuntime.runAction) return editorRuntime.runAction(label, handler, setStatus);
+  try {
+    const result = handler();
+    if (result && typeof result.catch === "function") {
+      result.catch((error) => {
+        console.error(`menu editor action failed: ${label}`, error);
+        setStatus(`${label}失败：${error.message || error}`, "error");
+      });
+    }
+    return result;
+  } catch (error) {
+    console.error(`menu editor action failed: ${label}`, error);
+    setStatus(`${label}失败：${error.message || error}`, "error");
+    return null;
+  }
+}
+
+function bindClick(control, label, handler) {
+  if (editorRuntime.bindClick) return editorRuntime.bindClick(control, label, handler, setStatus);
+  if (!control) return;
+  control.addEventListener("click", (event) => runAction(label, () => handler(event)));
 }
 
 async function loadMenus(preferredId) {
@@ -318,7 +442,8 @@ async function selectMenu(id) {
   if (!menu) return;
   state.currentId = menu.id;
   state.backgroundEditMode = false;
-  const sourceMenu = structuredClone(menu);
+  discardPendingBackgroundAsset();
+  const sourceMenu = cloneData(menu);
   const isUnsaved = state.unsavedMenuIds.has(menu.id);
   state.menu = isUnsaved ? sourceMenu : maybeRestoreDraft(sourceMenu);
   state.dirty = isUnsaved || state.menu !== sourceMenu;
@@ -573,14 +698,15 @@ function bindModalChrome() {
     if (event.target.closest("[data-close-modal]")) closeModal();
   });
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.editorModal.hidden) closeModal();
+    const isOpen = editorModal.modalIsOpen ? editorModal.modalIsOpen(els.editorModal) : !els.editorModal.hidden;
+    if (event.key === "Escape" && isOpen) closeModal();
   });
 }
 
 function bindGlobalShortcuts() {
   window.addEventListener("keydown", (event) => {
     const target = event.target;
-    const isTyping = target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    const isTyping = editorShortcuts.isTypingTarget ? editorShortcuts.isTypingTarget(target) : (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
     if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
       event.preventDefault();
       saveMenu();
@@ -645,7 +771,7 @@ function filterCommandPalette(body, query) {
   const list = body._list;
   const commands = body._commands || [];
   const normalized = String(query || "").trim().toLowerCase();
-  list.replaceChildren();
+  replaceChildrenSafe(list);
   commands
     .filter((command) => !normalized || `${command.label} ${command.keywords}`.toLowerCase().includes(normalized))
     .forEach((command) => {
@@ -663,8 +789,8 @@ function filterCommandPalette(body, query) {
 
 function openModal(title, body, actions = []) {
   els.modalTitle.textContent = title;
-  els.modalBody.replaceChildren(body);
-  els.modalFooter.replaceChildren();
+  replaceChildrenSafe(els.modalBody, body);
+  replaceChildrenSafe(els.modalFooter);
   actions.forEach((action) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -1072,11 +1198,12 @@ async function applyBackgroundFile(file) {
   if (file.size > 2 * 1024 * 1024) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
-  const dataUrl = await readFileAsDataUrl(file);
-  const asset = await saveBackgroundAsset(dataUrl, file.name);
+  const pending = await createPendingBackgroundAsset(file);
+  discardPendingBackgroundAsset();
+  state.pendingBackgroundAsset = pending;
   Object.assign(ensureStyle(state.menu), {
-    background_image: dataUrl,
-    background_image_asset_id: asset?.id || "",
+    background_image: pending.previewUrl,
+    background_image_asset_id: "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -1084,6 +1211,50 @@ async function applyBackgroundFile(file) {
   });
   commitMenuChange();
   fitBackgroundToCover(true);
+}
+
+async function createPendingBackgroundAsset(file) {
+  if (editorBackground.createPendingBackground) {
+    const pending = editorBackground.createPendingBackground(file);
+    return {
+      ...pending,
+      previewUrl: pending.objectUrl || await pending.dataUrlPromise,
+    };
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  return {
+    name: file.name || "background",
+    size: file.size || 0,
+    type: file.type || "",
+    objectUrl: "",
+    previewUrl: dataUrl,
+    dataUrlPromise: Promise.resolve(dataUrl),
+  };
+}
+
+function discardPendingBackgroundAsset() {
+  if (!state.pendingBackgroundAsset) return;
+  if (editorBackground.revokePendingBackground) editorBackground.revokePendingBackground(state.pendingBackgroundAsset);
+  state.pendingBackgroundAsset = null;
+}
+
+async function flushPendingBackgroundAsset() {
+  const pending = state.pendingBackgroundAsset;
+  if (!pending || !state.menu) return;
+  const style = ensureStyle(state.menu);
+  const shouldFlush = style.background_image === pending.previewUrl || style.background_image === pending.objectUrl;
+  if (!shouldFlush) {
+    discardPendingBackgroundAsset();
+    return;
+  }
+  const dataUrl = await pending.dataUrlPromise;
+  const asset = await saveBackgroundAsset(dataUrl, pending.name);
+  style.background_image = dataUrl;
+  style.background_image_asset_id = asset?.id || "";
+  style.background_image_name = pending.name;
+  discardPendingBackgroundAsset();
+  syncBackgroundControls();
+  renderPreview();
 }
 
 function renderPreview() {
@@ -1152,7 +1323,9 @@ function renderPreview() {
         ${style.watermark ? `<div class="preview-watermark">${escapeHtml(style.watermark)}</div>` : ""}
       </div>
     </div>`;
-  els.previewMeta.textContent = `${deviceLabel} · ${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  els.previewMeta.textContent = editorPreview.formatPreviewMeta
+    ? editorPreview.formatPreviewMeta(deviceLabel, layout)
+    : `${deviceLabel} · ${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
   updateBackgroundEditToggle();
   attachBackgroundEditor();
   fitPreviewToStage();
@@ -1229,7 +1402,7 @@ function moveSection(index, direction) {
 }
 
 function copySection(index) {
-  const copy = structuredClone(state.menu.sections[index]);
+  const copy = cloneData(state.menu.sections[index]);
   copy.title = `${copy.title || "分组"} 副本`;
   state.menu.sections.splice(index + 1, 0, copy);
   markDirty();
@@ -1254,7 +1427,7 @@ function moveItem(sectionIndex, itemIndex, direction) {
 
 function copyItem(sectionIndex, itemIndex) {
   const items = state.menu.sections[sectionIndex].items;
-  const copy = structuredClone(items[itemIndex]);
+  const copy = cloneData(items[itemIndex]);
   copy.label = `${copy.label || "菜单项"} 副本`;
   items.splice(itemIndex + 1, 0, copy);
   markDirty();
@@ -1271,6 +1444,7 @@ function removeItem(sectionIndex, itemIndex) {
 
 async function saveMenu() {
   const draftIdBeforeSave = currentDraftId();
+  await flushPendingBackgroundAsset();
   syncFormToMenu({ mark: false });
   if (!validateMenu({ scroll: true })) {
     setStatus("请先修正表单错误，再保存菜单。", "error");
@@ -1283,7 +1457,7 @@ async function saveMenu() {
     state.menus = result.menus || [result.menu];
     state.unsavedMenuIds.clear();
     state.currentId = result.menu.id;
-    state.menu = structuredClone(result.menu);
+    state.menu = cloneData(result.menu);
     state.unsavedMenuIds.delete(draftIdBeforeSave);
     state.unsavedMenuIds.delete(state.currentId);
     state.dirty = false;
@@ -1322,7 +1496,7 @@ function newMenu() {
 }
 
 function copyMenu() {
-  const copy = structuredClone(state.menu);
+  const copy = cloneData(state.menu);
   copy.id = uniqueId(`${copy.id || "menu"}_copy`);
   copy.name = `${copy.name || "菜单"} 副本`;
   state.menu = copy;
@@ -1580,7 +1754,7 @@ async function openRoutingPanel() {
       field("平台默认菜单 JSON", platformInput, { wide: true, hint: '例如 {"telegram":"tg-menu"}' }),
       field("群聊/上下文默认菜单 JSON", contextInput, { wide: true, hint: '例如 {"aiocqhttp:10001":"group-menu"}' }),
     );
-    els.modalFooter.replaceChildren();
+    replaceChildrenSafe(els.modalFooter);
     els.modalFooter.append(actionRow([
       { label: "保存路由", className: "primary", onClick: async () => {
         try {
@@ -1614,12 +1788,13 @@ async function handleBackgroundUpload(event) {
   if (file.size > 2 * 1024 * 1024) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
-  const dataUrl = await readFileAsDataUrl(file);
-  const asset = await saveBackgroundAsset(dataUrl, file.name);
+  const pending = await createPendingBackgroundAsset(file);
+  discardPendingBackgroundAsset();
+  state.pendingBackgroundAsset = pending;
   const style = ensureStyle(state.menu);
   Object.assign(style, {
-    background_image: dataUrl,
-    background_image_asset_id: asset?.id || "",
+    background_image: pending.previewUrl,
+    background_image_asset_id: "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -1646,6 +1821,7 @@ async function saveBackgroundAsset(dataUrl, name) {
 
 function clearBackgroundImage() {
   const style = ensureStyle(state.menu);
+  discardPendingBackgroundAsset();
   state.backgroundEditMode = false;
   Object.assign(style, {
     background_image: "",
@@ -1662,6 +1838,7 @@ function clearBackgroundImage() {
 }
 
 function readFileAsDataUrl(file) {
+  if (editorBackground.readFileAsDataUrl) return editorBackground.readFileAsDataUrl(file);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
@@ -1826,6 +2003,7 @@ function renderThemePresetCards() {
 
 async function copyStyleToMenus() {
   if (!state.menu) return;
+  await flushPendingBackgroundAsset();
   syncFormToMenu({ mark: false });
   const otherMenus = state.menus.filter((menu) => menu.id !== state.currentId);
   if (!otherMenus.length) return setStatus("没有其他菜单可复制样式。", "warning");
@@ -1840,7 +2018,7 @@ async function copyStyleToMenus() {
     setStatus("正在复制样式到其他菜单...");
     let latestMenus = null;
     for (const target of targets) {
-      const nextMenu = structuredClone(target);
+      const nextMenu = cloneData(target);
       nextMenu.style = { ...ensureStyle(nextMenu), ...stylePatch };
       const result = await bridge.apiPost("menus/save", { menu: nextMenu });
       latestMenus = result.menus || latestMenus;
@@ -1857,13 +2035,14 @@ async function copyStyleToMenus() {
 
 function pickStyleForCopy(style) {
   return STYLE_COPY_KEYS.reduce((copy, key) => {
-    copy[key] = structuredClone(style[key]);
+    copy[key] = cloneData(style[key]);
     return copy;
   }, {});
 }
 
 function resetCurrentStyle() {
   if (!confirm("确定重置当前菜单样式？菜单内容不会被删除。")) return;
+  discardPendingBackgroundAsset();
   state.menu.style = defaultStyle();
   fillForm();
   markDirty();
@@ -1977,7 +2156,7 @@ function batchCopySelection() {
   sectionIndexes.forEach((sectionIndex) => {
     const section = state.menu.sections?.[sectionIndex];
     if (!section) return;
-    const copy = structuredClone(section);
+    const copy = cloneData(section);
     copy.title = `${copy.title || "分组"} 副本`;
     state.menu.sections.splice(sectionIndex + 1, 0, copy);
   });
@@ -1989,7 +2168,7 @@ function batchCopySelection() {
     const items = state.menu.sections?.[sectionIndex]?.items;
     const item = items?.[itemIndex];
     if (!items || !item) return;
-    const copy = structuredClone(item);
+    const copy = cloneData(item);
     copy.label = `${copy.label || "菜单项"} 副本`;
     items.splice(itemIndex + 1, 0, copy);
   });
@@ -2086,14 +2265,14 @@ function moveDraggedEntry(sourceKey, targetKey) {
 }
 
 function resetLocalHistory(menu) {
-  state.history = [structuredClone(menu)];
+  state.history = [cloneData(menu)];
   state.historyIndex = 0;
   updateHistoryButtons();
 }
 
 function captureLocalHistory() {
   if (state.historyPaused || !state.menu) return;
-  const snapshot = structuredClone(state.menu);
+  const snapshot = cloneData(state.menu);
   const current = state.history[state.historyIndex];
   if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
   if (state.historyIndex < state.history.length - 1) {
@@ -2109,7 +2288,7 @@ function undoMenuChange() {
   if (state.historyIndex <= 0) return;
   state.historyPaused = true;
   state.historyIndex -= 1;
-  state.menu = structuredClone(state.history[state.historyIndex]);
+  state.menu = cloneData(state.history[state.historyIndex]);
   state.currentId = state.menu.id;
   fillForm();
   markDirty();
@@ -2122,7 +2301,7 @@ function redoMenuChange() {
   if (state.historyIndex >= state.history.length - 1) return;
   state.historyPaused = true;
   state.historyIndex += 1;
-  state.menu = structuredClone(state.history[state.historyIndex]);
+  state.menu = cloneData(state.history[state.historyIndex]);
   state.currentId = state.menu.id;
   fillForm();
   markDirty();
@@ -2142,7 +2321,7 @@ function upsertMenuEntry(menu, { unsaved = false, previousId = "" } = {}) {
     removeMenuEntry(previousId);
     state.unsavedMenuIds.delete(previousId);
   }
-  const snapshot = structuredClone(menu);
+  const snapshot = cloneData(menu);
   const index = state.menus.findIndex((item) => item.id === snapshot.id);
   if (index >= 0) state.menus[index] = snapshot;
   else state.menus.push(snapshot);
@@ -2199,14 +2378,27 @@ function saveDraft() {
   try {
     const id = currentDraftId();
     if (!id || !state.menu) return;
-    localStorage.setItem(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: state.menu }));
+    const draftMenu = cloneData(state.menu);
+    const pending = state.pendingBackgroundAsset;
+    const style = draftMenu.style || {};
+    if (pending && (style.background_image === pending.previewUrl || style.background_image === pending.objectUrl)) {
+      style.background_image = "";
+      style.background_image_asset_id = "";
+      pending.dataUrlPromise.then((dataUrl) => {
+        if (state.pendingBackgroundAsset !== pending || currentDraftId() !== id || !state.menu) return;
+        const resolvedDraft = cloneData(state.menu);
+        resolvedDraft.style = { ...(resolvedDraft.style || {}), background_image: dataUrl, background_image_asset_id: "" };
+        safeStorageSet(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: resolvedDraft }));
+      }).catch((error) => console.warn("failed to persist pending background draft", error));
+    }
+    safeStorageSet(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: draftMenu }));
   } catch (error) {
     console.warn("failed to save menu draft", error);
   }
 }
 
 function clearDraft(id) {
-  try { localStorage.removeItem(draftKey(id)); } catch (error) { console.warn("failed to clear draft", error); }
+  safeStorageRemove(draftKey(id));
 }
 
 function maybeRestoreDraft(menu) {
@@ -2214,7 +2406,7 @@ function maybeRestoreDraft(menu) {
   if (!id || state.restoredDraftIds.has(id)) return menu;
   state.restoredDraftIds.add(id);
   try {
-    const raw = localStorage.getItem(draftKey(id));
+    const raw = safeStorageGet(draftKey(id), "");
     if (!raw) return menu;
     const draft = JSON.parse(raw);
     const serverTime = Date.parse(menu.updated_at || menu.created_at || "") || 0;
@@ -2239,7 +2431,7 @@ function isCollapsed(type, sectionIndex, itemIndex = null) {
   const key = collapseKey(type, sectionIndex, itemIndex);
   if (state.collapsedKeys.has(key)) return true;
   try {
-    const collapsed = localStorage.getItem(key) === "1";
+    const collapsed = safeStorageGet(key, "") === "1";
     if (collapsed) state.collapsedKeys.add(key);
     return collapsed;
   } catch {
@@ -2252,19 +2444,19 @@ function setCollapsed(type, sectionIndex, itemIndex, collapsed) {
   if (collapsed) state.collapsedKeys.add(key);
   else state.collapsedKeys.delete(key);
   try {
-    if (collapsed) localStorage.setItem(key, "1");
-    else localStorage.removeItem(key);
+    if (collapsed) safeStorageSet(key, "1");
+    else safeStorageRemove(key);
   } catch (error) {
     console.warn("failed to save collapse state", error);
   }
 }
 
 function saveSearchState() {
-  try { localStorage.setItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, state.itemSearch || ""); } catch {}
+  safeStorageSet(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, state.itemSearch || "");
 }
 
 function loadSearchState() {
-  try { state.itemSearch = localStorage.getItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`) || ""; } catch { state.itemSearch = ""; }
+  state.itemSearch = safeStorageGet(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, "") || "";
 }
 
 function validateMenu({ scroll = false, silent = false } = {}) {
@@ -2515,14 +2707,14 @@ function applyPreviewDeviceLayout(layout) {
 
 function setPreviewDevice(value) {
   state.previewDevice = ["desktop", "group", "narrow"].includes(value) ? value : "group";
-  try { localStorage.setItem(PREVIEW_DEVICE_KEY, state.previewDevice); } catch {}
+  safeStorageSet(PREVIEW_DEVICE_KEY, state.previewDevice);
   if (els.previewDevice) els.previewDevice.value = state.previewDevice;
   renderPreview();
 }
 
 function setDensity(value) {
   state.density = ["compact", "standard", "comfortable"].includes(value) ? value : "standard";
-  try { localStorage.setItem(DENSITY_KEY, state.density); } catch {}
+  safeStorageSet(DENSITY_KEY, state.density);
   applyDensity();
 }
 
