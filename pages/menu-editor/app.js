@@ -16,69 +16,11 @@ const THEME_PRESETS = {
   sunrise: { label: "日出橙", primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
 };
 
-const MENU_TEMPLATES = [
-  {
-    key: "basic",
-    name: "基础功能菜单",
-    menu: {
-      name: "基础功能菜单",
-      title: "Bot 功能菜单",
-      subtitle: "常用指令一眼可见，发送指令即可使用",
-      footer: "请选择需要的功能入口",
-      sections: [
-        { title: "常用功能", items: [
-          { label: "菜单", command: "/menu", description: "查看当前功能菜单", icon: "📋", card_size: "standard", enabled: true },
-          { label: "帮助", command: "/help", description: "查看机器人帮助信息", icon: "❓", card_size: "standard", enabled: true },
-        ] },
-      ],
-    },
-  },
-  {
-    key: "admin",
-    name: "管理员工具菜单",
-    menu: {
-      name: "管理员工具菜单",
-      title: "管理员工具箱",
-      subtitle: "面向群管和运维的高频操作集合",
-      footer: "请谨慎执行管理类指令",
-      sections: [
-        { title: "群管理", items: [
-          { label: "禁言", command: "/mute @成员 10m", description: "临时禁言成员", icon: "🔇", card_size: "standard", enabled: true },
-          { label: "公告", command: "/notice 内容", description: "发布群公告或提醒", icon: "📌", card_size: "banner", enabled: true },
-        ] },
-        { title: "运维", items: [
-          { label: "状态", command: "/status", description: "查看机器人运行状态", icon: "🧭", card_size: "standard", enabled: true },
-          { label: "重载", command: "/reload", description: "重新加载插件或配置", icon: "♻️", card_size: "standard", enabled: true },
-        ] },
-      ],
-    },
-  },
-  {
-    key: "community",
-    name: "社群/群聊常用菜单",
-    menu: {
-      name: "社群常用菜单",
-      title: "社群服务导航",
-      subtitle: "新人引导、活动信息与常用查询集中展示",
-      footer: "欢迎参与讨论，文明交流",
-      sections: [
-        { title: "新人引导", items: [
-          { label: "群规", command: "/rules", description: "查看群聊规则和注意事项", icon: "📜", card_size: "large", enabled: true },
-          { label: "FAQ", command: "/faq", description: "常见问题与资料索引", icon: "💡", card_size: "standard", enabled: true },
-        ] },
-        { title: "互动", items: [
-          { label: "签到", command: "/checkin", description: "每日签到领取积分", icon: "✅", card_size: "compact", enabled: true },
-          { label: "活动", command: "/events", description: "查看近期社群活动", icon: "🎉", card_size: "standard", enabled: true },
-        ] },
-      ],
-    },
-  },
-];
-
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_name",
   "background_image_x", "background_image_y", "background_image_width", "card_color", "text_color",
-  "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns", "show_updated_at",
+  "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns",
+  "section_gap_mode", "section_gap", "show_updated_at",
 ];
 const MENU_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
 const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
@@ -131,6 +73,8 @@ const els = {
   widthMode: $("widthMode"),
   columns: $("columns"),
   width: $("width"),
+  sectionGapMode: $("sectionGapMode"),
+  sectionGap: $("sectionGap"),
   radius: $("radius"),
   showUpdatedAt: $("showUpdatedAt"),
   itemSearch: $("itemSearch"),
@@ -152,7 +96,6 @@ function bindEvents() {
     await selectMenu(nextId);
   });
   $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
-  $("templateBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenuFromTemplate(); });
   $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
   $("deleteBtn").addEventListener("click", deleteMenu);
   $("saveBtn").addEventListener("click", saveMenu);
@@ -183,6 +126,8 @@ function bindEvents() {
     "widthMode",
     "columns",
     "width",
+    "sectionGapMode",
+    "sectionGap",
     "radius",
     "showUpdatedAt",
   ].forEach((id) => {
@@ -280,9 +225,12 @@ function fillForm() {
   els.widthMode.value = style.width_mode || "auto";
   els.columns.value = style.columns || 2;
   els.width.value = style.width || 760;
+  els.sectionGapMode.value = style.section_gap_mode || "auto";
+  els.sectionGap.value = style.section_gap ?? 14;
   els.radius.value = style.radius ?? 24;
   els.showUpdatedAt.checked = style.show_updated_at !== false;
   syncWidthControl();
+  syncSectionGapControl();
   if (els.itemSearch) els.itemSearch.value = state.itemSearch || "";
 }
 
@@ -310,12 +258,15 @@ function syncFormToMenu({ mark = true } = {}) {
     width_mode: els.widthMode.value,
     columns: Number(els.columns.value) || 2,
     width: Number(els.width.value) || 760,
+    section_gap_mode: els.sectionGapMode.value,
+    section_gap: Number(els.sectionGap.value) || 14,
     radius: Number(els.radius.value) || 0,
     show_updated_at: els.showUpdatedAt.checked,
   };
   markDirty();
   els.foregroundOpacityValue.textContent = `${state.menu.style.foreground_opacity}%`;
   syncWidthControl();
+  syncSectionGapControl();
   els.serverPreview.hidden = true;
 }
 
@@ -340,9 +291,10 @@ function renderSectionsEditor() {
     card.dataset.errorKey = `section-${sectionIndex}`;
     card.innerHTML = `
       <div class="section-head">
-        <button type="button" class="collapse-toggle" data-action="toggle-section">${sectionCollapsed ? "展开" : "折叠"}</button>
-        <input data-error-key="section-${sectionIndex}-title" value="${escapeAttr(section.title)}" aria-label="分组标题" />
+        <button type="button" class="collapse-toggle" data-action="toggle-section" aria-expanded="${!sectionCollapsed}" title="${sectionCollapsed ? "展开分组" : "折叠分组"}">${sectionCollapsed ? "▸" : "▾"}</button>
+        <input class="section-title-input" data-error-key="section-${sectionIndex}-title" value="${escapeAttr(section.title)}" aria-label="分组标题" />
         <div class="actions">
+          <button type="button" data-action="add-item">添加菜单项</button>
           <button type="button" data-action="move-up" ${sectionIndex === 0 ? "disabled" : ""}>上移</button>
           <button type="button" data-action="move-down" ${sectionIndex === state.menu.sections.length - 1 ? "disabled" : ""}>下移</button>
           <button type="button" data-action="copy-section">复制</button>
@@ -350,9 +302,6 @@ function renderSectionsEditor() {
         </div>
       </div>
       <div class="section-body" ${sectionCollapsed ? "hidden" : ""}>
-        <div class="template-actions">
-          ${Object.entries(CARD_TEMPLATES).map(([key, template]) => `<button type="button" data-template="${key}">${template.label}</button>`).join("")}
-        </div>
         <div class="items-editor"></div>
       </div>`;
     const titleInput = card.querySelector("input");
@@ -367,9 +316,7 @@ function renderSectionsEditor() {
       setCollapsed("section", sectionIndex, null, !sectionCollapsed);
       renderSectionsEditor();
     });
-    card.querySelectorAll("[data-template]").forEach((button) => {
-      button.addEventListener("click", () => addItem(sectionIndex, button.dataset.template));
-    });
+    card.querySelector('[data-action="add-item"]').addEventListener("click", () => addItem(sectionIndex, "standard"));
     card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveSection(sectionIndex, -1));
     card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveSection(sectionIndex, 1));
     card.querySelector('[data-action="copy-section"]').addEventListener("click", () => copySection(sectionIndex));
@@ -396,9 +343,9 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
   const itemCollapsed = isCollapsed("item", sectionIndex, itemIndex);
   card.className = `item-card size-${currentSize} ${itemCollapsed ? "is-collapsed" : ""}`;
   card.dataset.errorKey = `item-${sectionIndex}-${itemIndex}`;
-  card.innerHTML = `
+    card.innerHTML = `
     <div class="item-head">
-      <button type="button" class="collapse-toggle" data-action="toggle-item">${itemCollapsed ? "展开" : "折叠"}</button>
+      <button type="button" class="collapse-toggle" data-action="toggle-item" aria-expanded="${!itemCollapsed}" title="${itemCollapsed ? "展开菜单项" : "折叠菜单项"}">${itemCollapsed ? "▸" : "▾"}</button>
       <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1} · ${escapeHtml(item.label || "未命名")}</strong>
       <div class="actions">
         <button type="button" data-action="move-up" ${itemIndex === 0 ? "disabled" : ""}>上移</button>
@@ -410,7 +357,7 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
     <div class="item-body" ${itemCollapsed ? "hidden" : ""}>
       <div class="item-grid">
         <label class="field"><span>图标</span><input data-error-key="item-${sectionIndex}-${itemIndex}-icon" data-key="icon" value="${escapeAttr(item.icon || "")}" /></label>
-        <label class="field"><span>模板</span><select data-key="card_size">${cardSizeOptions(currentSize)}</select></label>
+        <label class="field"><span>卡片样式</span><select data-key="card_size">${cardSizeOptions(currentSize)}</select></label>
         <label class="field"><span>名称</span><input data-error-key="item-${sectionIndex}-${itemIndex}-label" data-key="label" value="${escapeAttr(item.label || "")}" /></label>
         <label class="field"><span>指令</span><input data-error-key="item-${sectionIndex}-${itemIndex}-command" data-key="command" value="${escapeAttr(item.command || "")}" /></label>
         <label class="field wide"><span>描述</span><input data-error-key="item-${sectionIndex}-${itemIndex}-description" data-key="description" value="${escapeAttr(item.description || "")}" /></label>
@@ -452,6 +399,7 @@ function renderPreview() {
     `--preview-radius:${style.radius || 24}px`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
+    `--preview-section-gap:${sectionGapForMenu(menu)}px`,
     `--preview-foreground-opacity:${clampNumber(style.foreground_opacity, 0, 100, 92) / 100}`,
   ].join(";");
   const backgroundMarkup = style.background_image ? `
@@ -470,6 +418,7 @@ function renderPreview() {
           <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
           <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
           <div class="preview-sub">${escapeHtml(menu.subtitle || "")}</div>
+          <div class="preview-sections">
           ${menu.sections.map((section) => `
             <section class="preview-section">
               <h3>${escapeHtml(section.title || "分组")}</h3>
@@ -481,6 +430,7 @@ function renderPreview() {
                   </div>`).join("")}
               </div>
             </section>`).join("")}
+          </div>
           <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
         </div>
       </div>
@@ -621,31 +571,10 @@ function newMenu() {
     sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
   state.currentId = id;
-  if (mark) markDirty();
-  fillForm();
-  renderAll();
-  setStatus("已创建本地新菜单，保存后生效。");
-}
-
-function newMenuFromTemplate() {
-  const choices = MENU_TEMPLATES.map((template, index) => `${index + 1}. ${template.name}`).join("\n");
-  const answer = prompt(`选择模板编号：\n${choices}`, "1");
-  const index = Math.max(0, Math.min(MENU_TEMPLATES.length - 1, Number(answer || 1) - 1));
-  const template = MENU_TEMPLATES[index] || MENU_TEMPLATES[0];
-  const id = uniqueId(template.key);
-  state.menu = {
-    id,
-    style: defaultStyle(),
-    ...structuredClone(template.menu),
-    id,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-  };
-  state.currentId = id;
   markDirty();
   fillForm();
   renderAll();
-  setStatus(`已从「${template.name}」创建本地新菜单，保存后生效。`);
+  setStatus("已创建本地新菜单，保存后生效。");
 }
 
 function copyMenu() {
@@ -1183,6 +1112,8 @@ function defaultStyle() {
     width_mode: "auto",
     width: 760,
     columns: 2,
+    section_gap_mode: "auto",
+    section_gap: 14,
     show_updated_at: true,
   };
 }
@@ -1191,6 +1122,26 @@ function syncWidthControl() {
   const isAuto = els.widthMode.value !== "custom";
   els.width.disabled = isAuto;
   els.width.closest(".field")?.classList.toggle("is-disabled", isAuto);
+}
+
+function syncSectionGapControl() {
+  const isAuto = els.sectionGapMode.value !== "custom";
+  els.sectionGap.disabled = isAuto;
+  els.sectionGap.closest(".field")?.classList.toggle("is-disabled", isAuto);
+  if (isAuto && state.menu) {
+    els.sectionGap.value = sectionGapForMenu(state.menu);
+  }
+}
+
+function sectionGapForMenu(menu) {
+  const style = ensureStyle(menu);
+  if (style.section_gap_mode === "custom") {
+    return clampNumber(style.section_gap, 4, 40, 14);
+  }
+  const sectionCount = Math.max(1, menu.sections?.length || 1);
+  const itemCount = (menu.sections || []).reduce((total, section) => total + (section.items?.length || 0), 0);
+  const density = sectionCount * 1.8 + itemCount * 0.35;
+  return clampNumber(20 - density, 8, 20, 14);
 }
 
 function applyThemePreset(theme) {

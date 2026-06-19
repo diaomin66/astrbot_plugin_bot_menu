@@ -185,6 +185,7 @@ def build_render_payload(menu: dict[str, Any], *, default_width: int = 900) -> t
 def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str:
     style = _normalized_style(menu, default_width=default_width)
     width = preview_width_for_menu(menu, default_width=default_width)
+    section_gap = _section_gap_for_menu(menu, style)
     sections = "\n".join(_render_preview_section(section) for section in menu.get("sections", []))
     footer_status = "" if style["show_updated_at"] is False else "实时预览"
     foreground_opacity = style["foreground_opacity"] / 100
@@ -197,6 +198,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-radius:{style['radius'] or 24}px;"
         f"--preview-width:{width}px;"
         f"--preview-columns:{style['columns']};"
+        f"--preview-section-gap:{section_gap}px;"
         f"--preview-foreground-opacity:{foreground_opacity:.3f}"
     )
     background_markup = ""
@@ -246,7 +248,8 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
     .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
-    .preview-section {{ margin-top: 14px; padding: 15px; border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); }}
+    .preview-sections {{ display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }}
+    .preview-section {{ padding: 15px; border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); }}
     .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: 10px; }}
     .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
     .preview-item.size-compact {{ grid-template-columns: 28px 1fr; min-height: 58px; padding: 8px; }}
@@ -265,7 +268,9 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       <div class="kicker">📋 {_escape(menu.get("name") or menu.get("id"))}</div>
       <h1 class="preview-title">{_escape(menu.get("title") or "Bot 功能菜单")}</h1>
       <div class="preview-sub">{_escape(menu.get("subtitle") or "")}</div>
+      <div class="preview-sections">
       {sections}
+      </div>
       <div class="preview-footer"><span>{_escape(menu.get("footer") or "")}</span><span>{footer_status}</span></div>
     </div>
   </div>
@@ -327,6 +332,9 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
     width_mode = str(style.get("width_mode") or "auto").strip().lower()
     if width_mode not in {"auto", "custom"}:
         width_mode = "auto"
+    section_gap_mode = str(style.get("section_gap_mode") or "auto").strip().lower()
+    if section_gap_mode not in {"auto", "custom"}:
+        section_gap_mode = "auto"
     return {
         "primary_color": style.get("primary_color") or "#7c3aed",
         "background_color": style.get("background_color") or "#f8fafc",
@@ -343,6 +351,8 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
         "width_mode": width_mode,
         "width": _clamp_int(style.get("width"), default=default_width, minimum=520, maximum=1400),
         "columns": _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4),
+        "section_gap_mode": section_gap_mode,
+        "section_gap": _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40),
         "show_updated_at": style.get("show_updated_at", True),
     }
 
@@ -350,6 +360,16 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
 def _card_size(value: Any) -> str:
     size = str(value or "standard").strip().lower()
     return size if size in CARD_SIZE_VALUES else "standard"
+
+
+def _section_gap_for_menu(menu: dict[str, Any], style: dict[str, Any]) -> int:
+    if style.get("section_gap_mode") == "custom":
+        return _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40)
+    sections = menu.get("sections") if isinstance(menu.get("sections"), list) else []
+    section_count = max(1, len(sections))
+    item_count = sum(len(section.get("items", [])) for section in sections if isinstance(section, dict))
+    density = section_count * 1.8 + item_count * 0.35
+    return _clamp_int(round(20 - density), default=14, minimum=8, maximum=20)
 
 
 def _escape(value: Any) -> str:

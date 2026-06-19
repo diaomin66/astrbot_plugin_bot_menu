@@ -46,6 +46,8 @@ class MenuModelTests(unittest.TestCase):
                     "background_image_x": -12,
                     "background_image_y": 18,
                     "background_image_width": 150,
+                    "section_gap_mode": "custom",
+                    "section_gap": 22,
                 },
                 "sections": [
                     {
@@ -62,6 +64,8 @@ class MenuModelTests(unittest.TestCase):
         self.assertEqual(menu["style"]["background_image_x"], -12)
         self.assertEqual(menu["style"]["background_image_y"], 18)
         self.assertEqual(menu["style"]["background_image_width"], 150)
+        self.assertEqual(menu["style"]["section_gap_mode"], "custom")
+        self.assertEqual(menu["style"]["section_gap"], 22)
         self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
@@ -243,13 +247,14 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("DRAFT_PREFIX", app_js)
         self.assertIn("beforeunload", app_js)
         self.assertIn("validateMenu", app_js)
-        self.assertIn("MENU_TEMPLATES", app_js)
         self.assertIn("copyStyleToMenus", app_js)
         self.assertIn("backgroundImageWidth", app_js)
+        self.assertIn("sectionGapForMenu", app_js)
         self.assertIn("menus/render-status", app_js)
-        self.assertIn('id="templateBtn"', index_html)
+        self.assertNotIn('id="templateBtn"', index_html)
         self.assertIn('id="itemSearch"', index_html)
         self.assertIn('id="backgroundImageX"', index_html)
+        self.assertIn('id="sectionGapMode"', index_html)
         self.assertIn("theme-preset-cards", css)
         self.assertIn("validation-summary", css)
 
@@ -325,6 +330,21 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('class="preview-bg-image"', html)
         self.assertIn("left:10%;top:-5%;width:120%", html)
         self.assertIn("--preview-foreground-opacity:0.600", html)
+
+    def test_preview_html_uses_custom_section_gap(self):
+        menu = normalize_menu(
+            {
+                "id": "gap",
+                "style": {"section_gap_mode": "custom", "section_gap": 24},
+                "sections": [
+                    {"title": "分组1", "items": [{"label": "帮助"}]},
+                    {"title": "分组2", "items": [{"label": "菜单"}]},
+                ],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn("--preview-section-gap:24px", html)
+        self.assertIn('class="preview-sections"', html)
 
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")

@@ -45,6 +45,7 @@ def render_menu_image(
     radius = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48) * scale
     foreground_opacity = _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100) / 100
     columns = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
+    section_gap = _section_gap_for_menu(menu, style) * scale
 
     font_regular = _font(20 * scale)
     font_small = _font(17 * scale)
@@ -82,7 +83,7 @@ def render_menu_image(
             row_heights.append(max(_item_height(item, row_width, font_mono, font_small, scale) for item in row))
         section_height = 22 * scale + 30 * scale + 16 * scale + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + 22 * scale
         section_layouts.append({"section": section, "rows": rows, "row_heights": row_heights, "height": int(section_height)})
-        y += section_height + 18 * scale
+        y += section_height + section_gap
 
     footer_text = str(menu.get("footer") or "")
     y += 26 * scale if footer_text or style.get("show_updated_at", True) else 0
@@ -150,7 +151,7 @@ def render_menu_image(
                 _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity)
                 item_x += row_width + item_gap
             y += row_height + item_gap
-        y = bottom + 18 * scale
+        y = bottom + section_gap
 
     if footer_text or style.get("show_updated_at", True):
         footer_y = height - margin - shell_pad - 6 * scale
@@ -420,6 +421,16 @@ def _estimate_preview_height(menu: dict[str, Any]) -> int:
 
     estimated = 260 + section_count * 90 + item_count * 95 + (text_units // 28) * 24
     return max(900, min(30000, estimated))
+
+
+def _section_gap_for_menu(menu: dict[str, Any], style: dict[str, Any]) -> int:
+    if str(style.get("section_gap_mode") or "auto").strip().lower() == "custom":
+        return _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40)
+    sections = menu.get("sections") if isinstance(menu.get("sections"), list) else []
+    section_count = max(1, len(sections))
+    item_count = sum(len(section.get("items", [])) for section in sections if isinstance(section, dict))
+    density = section_count * 1.8 + item_count * 0.35
+    return _clamp_int(round(20 - density), default=14, minimum=8, maximum=20)
 
 
 def _crop_transparent_padding(path: Path) -> None:
