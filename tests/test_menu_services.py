@@ -84,6 +84,17 @@ class MenuModelTests(unittest.TestCase):
             normalize_menu({"id": "main", "sections": [{"title": "x", "items": [{"label": ""}]}]})
 
 
+class MenuEditorSourceTests(unittest.TestCase):
+    def test_layout_mode_controls_handle_webview_change_events_without_resetting_style(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        self.assertIn('select.addEventListener("change", emitChange);', app_js)
+        self.assertIn('function styleSnapshot(menu, patch = {})', app_js)
+        self.assertIn('styleSnapshot(menu, { width_mode: "auto" })', app_js)
+        self.assertIn('styleSnapshot(menu, { section_gap_mode: "auto" })', app_js)
+        self.assertNotIn('style: { ...ensureStyle(menu), width_mode: "auto" }', app_js)
+        self.assertNotIn('style: { ...ensureStyle(menu), section_gap_mode: "auto" }', app_js)
+
+
 class MenuStorageTests(unittest.TestCase):
     def test_storage_creates_default_menu(self):
         with tempfile.TemporaryDirectory() as tmp:

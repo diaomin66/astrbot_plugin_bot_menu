@@ -138,13 +138,13 @@ function bindEvents() {
     "radius",
     "showUpdatedAt",
   ].forEach((id) => {
-    $(id).addEventListener("input", () => {
+    bindValueChange($(id), () => {
       syncFormToMenu();
       renderAll();
     });
   });
 
-  els.theme.addEventListener("input", () => {
+  bindValueChange(els.theme, () => {
     applyThemePreset(els.theme.value);
     syncFormToMenu();
     renderAll();
@@ -170,6 +170,11 @@ function bindEvents() {
   bindPreviewInteractions();
   bindModalChrome();
   updateSaveState("saved");
+}
+
+function bindValueChange(control, handler) {
+  if (!control) return;
+  control.addEventListener(control.tagName === "SELECT" ? "change" : "input", handler);
 }
 
 async function loadMenus(preferredId) {
@@ -496,7 +501,15 @@ function textInput(value, onInput, attrs = {}) {
 function selectInput(value, options, onInput) {
   const select = document.createElement("select");
   select.innerHTML = options.map((option) => `<option value="${escapeAttr(option.value)}" ${String(option.value) === String(value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
-  select.addEventListener("input", () => onInput(select.value, select));
+  let lastValue = String(select.value);
+  const emitChange = () => {
+    const nextValue = String(select.value);
+    if (nextValue === lastValue) return;
+    lastValue = nextValue;
+    onInput(select.value, select);
+  };
+  select.addEventListener("input", emitChange);
+  select.addEventListener("change", emitChange);
   return select;
 }
 
@@ -523,6 +536,128 @@ function actionRow(actions) {
   return row;
 }
 
+function appendLayoutFields(body, style = ensureStyle(state.menu)) {
+  const controls = createLayoutControls(style);
+  body.append(
+    field("宽度模式", controls.widthMode),
+    field("每行卡片", controls.columns),
+    field("手动宽度", controls.width),
+    field("分组间距", controls.sectionGapMode),
+    field("间距数值", controls.sectionGap),
+  );
+  controls.syncDisabled();
+  return controls;
+}
+
+function createLayoutControls(initialStyle = ensureStyle(state.menu)) {
+  let widthInput;
+  let sectionGapInput;
+  const getStyle = () => ensureStyle(state.menu);
+
+  const commitLayoutChange = () => {
+    commitMenuChange();
+    const style = getStyle();
+    syncLayoutControlDisabled(widthInput, style.width_mode !== "custom");
+    syncLayoutControlDisabled(sectionGapInput, style.section_gap_mode !== "custom");
+  };
+
+  const widthModeSelect = selectInput(
+    initialStyle.width_mode || "auto",
+    [{ value: "auto", label: "智能自动" }, { value: "custom", label: "手动指定" }],
+    (value) => {
+      const style = getStyle();
+      setLayoutWidthMode(style, value);
+      if (widthInput) widthInput.value = style.width || 760;
+      commitLayoutChange();
+    },
+  );
+  const columnsSelect = selectInput(
+    initialStyle.columns || 2,
+    [1, 2, 3, 4].map((value) => ({ value, label: `${value} 张` })),
+    (value) => {
+      const style = getStyle();
+      style.columns = clampNumber(value, 1, 4, 2);
+      commitLayoutChange();
+    },
+  );
+  widthInput = textInput(initialStyle.width || 760, (value) => {
+    const style = getStyle();
+    style.width = clampNumber(value, 520, 1400, 760);
+    commitLayoutChange();
+  }, { type: "number", min: 520, max: 1400, disabled: initialStyle.width_mode !== "custom" });
+
+  const sectionGapModeSelect = selectInput(
+    initialStyle.section_gap_mode || "auto",
+    [{ value: "auto", label: "智能" }, { value: "custom", label: "自定义" }],
+    (value) => {
+      const style = getStyle();
+      setLayoutSectionGapMode(style, value);
+      if (sectionGapInput) sectionGapInput.value = style.section_gap ?? 14;
+      commitLayoutChange();
+    },
+  );
+  sectionGapInput = textInput(
+    initialStyle.section_gap_mode === "custom" ? initialStyle.section_gap : autoSectionGapForMenu(state.menu),
+    (value) => {
+      const style = getStyle();
+      style.section_gap = clampNumber(value, 0, 200, 14);
+      commitLayoutChange();
+    },
+    { type: "number", min: 0, max: 200, disabled: initialStyle.section_gap_mode !== "custom" },
+  );
+
+  return {
+    widthMode: widthModeSelect,
+    columns: columnsSelect,
+    width: widthInput,
+    sectionGapMode: sectionGapModeSelect,
+    sectionGap: sectionGapInput,
+    syncDisabled: () => {
+      const style = getStyle();
+      syncLayoutControlDisabled(widthInput, style.width_mode !== "custom");
+      syncLayoutControlDisabled(sectionGapInput, style.section_gap_mode !== "custom");
+    },
+  };
+}
+
+function setLayoutWidthMode(style, value) {
+  const nextMode = value === "custom" ? "custom" : "auto";
+  if (nextMode === "custom" && style.width_mode !== "custom") {
+    style.width = autoWidthForMenu(state.menu);
+  } else {
+    style.width = clampNumber(style.width, 520, 1400, 760);
+  }
+  style.width_mode = nextMode;
+}
+
+function setLayoutSectionGapMode(style, value) {
+  const nextMode = value === "custom" ? "custom" : "auto";
+  if (nextMode === "custom" && style.section_gap_mode !== "custom") {
+    style.section_gap = autoSectionGapForMenu(state.menu);
+  } else {
+    style.section_gap = clampNumber(style.section_gap, 0, 200, 14);
+  }
+  style.section_gap_mode = nextMode;
+}
+
+function autoWidthForMenu(menu) {
+  return previewLayout({ ...menu, style: styleSnapshot(menu, { width_mode: "auto" }) }).width;
+}
+
+function autoSectionGapForMenu(menu) {
+  return sectionGapForMenu({ ...menu, style: styleSnapshot(menu, { section_gap_mode: "auto" }) });
+}
+
+function styleSnapshot(menu, patch = {}) {
+  return { ...defaultStyle(), ...(menu?.style || {}), ...patch };
+}
+
+function syncLayoutControlDisabled(control, disabled) {
+  if (!control) return;
+  control.disabled = disabled;
+  control.closest(".field")?.classList.toggle("is-disabled", disabled);
+}
+
 function openMenuEditor() {
   const menu = state.menu;
   const body = document.createElement("div");
@@ -534,6 +669,7 @@ function openMenuEditor() {
     field("副标题", textInput(menu.subtitle, (value) => { menu.subtitle = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuSubtitle" }),
     field("页脚", textInput(menu.footer, (value) => { menu.footer = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuFooter" }),
   );
+  appendLayoutFields(body, ensureStyle(menu));
   const list = document.createElement("div");
   list.className = "entity-list wide";
   list.dataset.errorKey = "sections";
@@ -642,12 +778,8 @@ function openStyleEditor() {
   );
   const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => { style.foreground_opacity = clampNumber(value, 0, 100, 92); input.previousElementSibling && (input.previousElementSibling.textContent = `${style.foreground_opacity}%`); commitMenuChange(); }, { type: "range", min: 0, max: 100, step: 1 });
   body.append(field(`前景菜单透明度 ${clampNumber(style.foreground_opacity, 0, 100, 92)}%`, opacity, { wide: true }));
+  appendLayoutFields(body, style);
   body.append(
-    field("宽度模式", selectInput(style.width_mode || "auto", [{ value: "auto", label: "智能自动" }, { value: "custom", label: "手动指定" }], (value) => { style.width_mode = value; commitMenuChange(); openStyleEditor(); })),
-    field("每行卡片", selectInput(style.columns || 2, [1,2,3,4].map((value) => ({ value, label: `${value} 张` })), (value) => { style.columns = Number(value); commitMenuChange(); })),
-    field("手动宽度", textInput(style.width || 760, (value) => { style.width = clampNumber(value, 520, 1400, 760); commitMenuChange(); }, { type: "number", min: 520, max: 1400, disabled: style.width_mode !== "custom" })),
-    field("分组间距", selectInput(style.section_gap_mode || "auto", [{ value: "auto", label: "智能" }, { value: "custom", label: "自定义" }], (value) => { style.section_gap_mode = value; commitMenuChange(); openStyleEditor(); })),
-    field("间距数值", textInput(style.section_gap_mode === "custom" ? style.section_gap : sectionGapForMenu(state.menu), (value) => { style.section_gap = clampNumber(value, 0, 200, 14); commitMenuChange(); }, { type: "number", min: 0, max: 200, disabled: style.section_gap_mode !== "custom" })),
     field("圆角", textInput(style.radius ?? 24, (value) => { style.radius = clampNumber(value, 0, 48, 24); commitMenuChange(); }, { type: "number", min: 0, max: 48 })),
   );
   const updatedAt = document.createElement("label");
