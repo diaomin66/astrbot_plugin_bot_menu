@@ -11,6 +11,7 @@ from astrbot.api.star import Context, Star
 from .services import (
     MenuStorage,
     MenuRenderCache,
+    MenuRenderCoordinator,
     MenuValidationError,
     build_preview_html,
     build_render_payload,
@@ -91,10 +92,16 @@ class BotMenuPlugin(Star):
         self.config = config or {}
         self.storage = MenuStorage(self._resolve_data_dir())
         self.render_cache = MenuRenderCache(self.storage.data_dir)
-        self._cache_tasks: dict[str, asyncio.Task] = {}
-        self._cache_task_fingerprints: dict[str, str] = {}
+        self.render_coordinator = MenuRenderCoordinator(
+            storage=self.storage,
+            cache=self.render_cache,
+            render_menu=self._render_menu_for_cache,
+            render_width=lambda: self._config_int("render_width", 900),
+            render_scale=lambda: max(1, min(4, self._config_int("render_scale", 4))),
+            logger=logger,
+        )
         self._register_web_apis(context)
-        self._schedule_cache_prewarm()
+        self.render_coordinator.schedule_prewarm()
 
     @filter.command("menu", alias={"菜单"})
     async def show_menu(self, event: AstrMessageEvent, menu_id: str = ""):
@@ -106,11 +113,11 @@ class BotMenuPlugin(Star):
                 available = ", ".join(menu["id"] for menu in self.storage.list_menus())
                 yield event.plain_result(f"未找到菜单方案：{menu_id}\n可用方案：{available}")
                 return
-            cached_path = self._cached_menu_image(menu)
+            cached_path = self.render_coordinator.get_cached_path(menu)
             if cached_path:
                 yield event.image_result(cached_path)
                 return
-            self._schedule_cache_render(menu)
+            self.render_coordinator.schedule(menu)
             yield event.plain_result("菜单图片缓存正在后台生成，请稍后再试。")
         except Exception as exc:  # noqa: BLE001 - plugin should degrade gracefully in chat
             logger.exception("Bot menu render failed")
@@ -140,10 +147,16 @@ class BotMenuPlugin(Star):
             raw_menu = payload
         try:
             menu = self.storage.save_menu(raw_menu)
-            self._schedule_cache_render(menu)
+            self.render_coordinator.schedule(menu)
             return json_response({"menu": menu, "menus": self.storage.list_menus()})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
+
+    async def api_render_status(self, menu_id: str):
+        status = self.render_coordinator.status_for_menu_id(str(menu_id or "").strip())
+        if status is None:
+            return error_response(f"menu not found: {menu_id}", status_code=404)
+        return json_response(status)
 
     async def api_delete_menu(self):
         payload = await read_json_body(default={})
@@ -194,10 +207,13 @@ class BotMenuPlugin(Star):
                 mode = "merge"
             menus = self.storage.import_menus(raw_menus, mode=mode)
             for menu in menus:
-                self._schedule_cache_render(menu)
+                self.render_coordinator.schedule(menu)
             return json_response({"menus": menus})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
+
+    async def _render_menu_for_cache(self, menu: dict[str, Any]) -> str:
+        return await self._render_menu_uncached(menu, render_mode="browser")
 
     async def _render_menu_uncached(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
         default_width = self._config_int("render_width", 900)
@@ -256,92 +272,6 @@ class BotMenuPlugin(Star):
                 output_scale=render_scale,
             )
 
-    def _cached_menu_image(self, menu: dict[str, Any]) -> str | None:
-        return self.render_cache.get_cached_path(
-            menu,
-            render_width=self._config_int("render_width", 900),
-            render_scale=max(1, min(4, self._config_int("render_scale", 4))),
-        )
-
-    def _schedule_cache_prewarm(self) -> None:
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return
-        loop.create_task(self._prewarm_menu_cache())
-
-    async def _prewarm_menu_cache(self) -> None:
-        await asyncio.sleep(0)
-        for menu in self.storage.list_menus():
-            if not self._cached_menu_image(menu):
-                self._schedule_cache_render(menu)
-
-    def _schedule_cache_render(self, menu: dict[str, Any]) -> bool:
-        menu_id = str(menu.get("id") or "")
-        if not menu_id:
-            return False
-        render_width = self._config_int("render_width", 900)
-        render_scale = max(1, min(4, self._config_int("render_scale", 4)))
-        fingerprint = self.render_cache.fingerprint(menu, render_width=render_width, render_scale=render_scale)
-        if self.render_cache.get_cached_path(menu, render_width=render_width, render_scale=render_scale):
-            return False
-
-        current_task = self._cache_tasks.get(menu_id)
-        if current_task and not current_task.done():
-            if self._cache_task_fingerprints.get(menu_id) == fingerprint:
-                return True
-            current_task.cancel()
-
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            return False
-
-        self._cache_task_fingerprints[menu_id] = fingerprint
-        self._cache_tasks[menu_id] = loop.create_task(
-            self._render_menu_cache(menu, fingerprint, render_width=render_width, render_scale=render_scale)
-        )
-        return True
-
-    async def _render_menu_cache(
-        self,
-        menu: dict[str, Any],
-        fingerprint: str,
-        *,
-        render_width: int,
-        render_scale: int,
-    ) -> None:
-        menu_id = str(menu.get("id") or "")
-        try:
-            rendered_path = await self._render_menu_uncached(menu, render_mode="browser")
-            path = Path(rendered_path)
-            if not path.is_file():
-                raise RuntimeError(f"cached render did not produce a local file: {rendered_path}")
-            latest_menu = self.storage.get_menu(menu_id)
-            latest_fingerprint = (
-                self.render_cache.fingerprint(latest_menu, render_width=render_width, render_scale=render_scale)
-                if latest_menu
-                else ""
-            )
-            if latest_fingerprint != fingerprint:
-                return
-            cached_path = self.render_cache.store_rendered(
-                menu,
-                path,
-                render_width=render_width,
-                render_scale=render_scale,
-            )
-            logger.info("Bot menu cached render ready: %s -> %s", menu_id, cached_path)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:  # noqa: BLE001 - cache render should not break the plugin
-            logger.exception("Bot menu cached render failed: %s", menu_id)
-            self.render_cache.mark_error(menu, str(exc), render_width=render_width, render_scale=render_scale)
-        finally:
-            if self._cache_tasks.get(menu_id) is asyncio.current_task():
-                self._cache_tasks.pop(menu_id, None)
-                self._cache_task_fingerprints.pop(menu_id, None)
-
     def _preview_image_url(self, image_url_or_path: str) -> str:
         """Return a URL that can be rendered inside the plugin Page iframe."""
 
@@ -358,6 +288,7 @@ class BotMenuPlugin(Star):
             (f"/{PLUGIN_NAME}/menus/save", self.api_save_menu, ["POST"], "Save bot menu"),
             (f"/{PLUGIN_NAME}/menus/delete", self.api_delete_menu, ["POST"], "Delete bot menu"),
             (f"/{PLUGIN_NAME}/menus/preview", self.api_preview_menu, ["POST"], "Preview bot menu"),
+            (f"/{PLUGIN_NAME}/menus/render-status/<menu_id>", self.api_render_status, ["GET"], "Get bot menu render cache status"),
             (f"/{PLUGIN_NAME}/menus/<menu_id>", self.api_get_menu, ["GET"], "Get bot menu"),
             (f"/{PLUGIN_NAME}/export", self.api_export_menus, ["GET"], "Export bot menus"),
             (f"/{PLUGIN_NAME}/import", self.api_import_menus, ["POST"], "Import bot menus"),

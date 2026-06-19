@@ -30,7 +30,7 @@
         <div class="rail-head">
           <div>
             <p class="kicker">Editor</p>
-            <h2>Bot 菜单</h2>
+            <h2>Bot 菜单 <span id="saveState" class="save-state">已保存</span></h2>
           </div>
           <button id="saveBtn" type="button" class="primary">保存</button>
         </div>
@@ -42,6 +42,7 @@
 
         <div class="button-grid">
           <button id="newBtn" type="button">新建</button>
+          <button id="templateBtn" type="button">从模板新建</button>
           <button id="copyBtn" type="button">复制</button>
           <button id="deleteBtn" type="button" class="danger">删除</button>
           <button id="exportBtn" type="button">导出</button>
@@ -53,6 +54,7 @@
         </label>
 
         <div id="status" class="status">正在加载...</div>
+        <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
 
         <details open class="style-box">
           <summary>基础内容</summary>
@@ -69,10 +71,18 @@
           <summary>样式设置</summary>
           <div class="form-grid style-grid">
             <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select></label>
+            <div id="themePresetCards" class="theme-preset-cards wide"></div>
             <label class="field"><span>主色</span><input id="primaryColor" type="color" /></label>
             <label class="field"><span>背景色</span><input id="backgroundColor" type="color" /></label>
             <label class="field wide background-upload"><span>自定义背景图（不限制尺寸）</span><input id="backgroundImageInput" type="file" accept="image/*" /><small id="backgroundImageName">No background image</small></label>
-            <button id="clearBackgroundBtn" type="button">清除背景图</button>
+            <label class="field wide"><span>背景缩放 <output id="backgroundWidthValue">100%</output></span><input id="backgroundImageWidth" type="range" min="10" max="600" step="1" /></label>
+            <label class="field"><span>背景 X(%)</span><input id="backgroundImageX" type="number" min="-300" max="300" /></label>
+            <label class="field"><span>背景 Y(%)</span><input id="backgroundImageY" type="number" min="-300" max="300" /></label>
+            <div class="background-actions wide">
+              <button id="centerBackgroundBtn" type="button">居中</button>
+              <button id="coverBackgroundBtn" type="button">铺满</button>
+              <button id="clearBackgroundBtn" type="button">重置背景</button>
+            </div>
             <label class="field"><span>卡片色</span><input id="cardColor" type="color" /></label>
             <label class="field"><span>文字色</span><input id="textColor" type="color" /></label>
             <label class="field"><span>辅助文字</span><input id="mutedColor" type="color" /></label>
@@ -82,13 +92,21 @@
             <label class="field"><span>手动宽度</span><input id="width" type="number" min="520" max="1400" /></label>
             <label class="field"><span>圆角</span><input id="radius" type="number" min="0" max="48" /></label>
             <label class="check"><input id="showUpdatedAt" type="checkbox" /> 显示更新时间</label>
+            <div class="style-actions wide">
+              <button id="copyStyleBtn" type="button">复制当前样式到其他菜单</button>
+              <button id="resetStyleBtn" type="button">一键重置样式</button>
+            </div>
           </div>
         </details>
 
         <div class="section-toolbar">
           <span>菜单分组</span>
-          <button id="addSectionBtn" type="button">添加分组</button>
+          <div class="toolbar-actions">
+            <input id="itemSearch" type="search" placeholder="搜索标题 / 指令 / 描述" />
+            <button id="addSectionBtn" type="button">添加分组</button>
+          </div>
         </div>
+        <div id="validationSummary" class="validation-summary" hidden></div>
         <div id="sections" class="sections-editor"></div>
       </section>
     </aside>

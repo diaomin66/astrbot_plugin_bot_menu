@@ -42,6 +42,45 @@ class MenuRenderCache:
             return str(path)
         return None
 
+    def get_status(
+        self,
+        menu: dict[str, Any],
+        *,
+        render_width: int,
+        render_scale: int,
+        is_rendering: bool = False,
+    ) -> dict[str, Any]:
+        """Return the render cache status for the current menu fingerprint."""
+
+        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+        if is_rendering:
+            return {"status": "rendering", "rendered_at": None, "error": None}
+
+        with self._lock:
+            entry = self._read().get("menus", {}).get(str(menu.get("id") or ""))
+        if not isinstance(entry, dict) or entry.get("fingerprint") != fingerprint:
+            return {"status": "missing", "rendered_at": None, "error": None}
+
+        status = str(entry.get("status") or "missing")
+        if status == "ready":
+            path = Path(str(entry.get("path") or ""))
+            if path.is_file():
+                return {
+                    "status": "ready",
+                    "rendered_at": entry.get("rendered_at") or None,
+                    "error": None,
+                }
+            return {"status": "missing", "rendered_at": None, "error": None}
+        if status == "rendering":
+            return {"status": "rendering", "rendered_at": None, "error": None}
+        if status == "error":
+            return {
+                "status": "error",
+                "rendered_at": entry.get("rendered_at") or None,
+                "error": entry.get("error") or None,
+            }
+        return {"status": "missing", "rendered_at": None, "error": None}
+
     def cache_path_for_menu(self, menu: dict[str, Any]) -> Path:
         safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
         return self.rendered_dir / f"{safe_id}-cached.png"
@@ -75,6 +114,25 @@ class MenuRenderCache:
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
         return str(target)
+
+    def mark_rendering(
+        self,
+        menu: dict[str, Any],
+        *,
+        render_width: int,
+        render_scale: int,
+    ) -> None:
+        entry = {
+            "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
+            "path": str(self.cache_path_for_menu(menu)),
+            "rendered_at": None,
+            "status": "rendering",
+        }
+        with self._lock:
+            data = self._read()
+            menus = data.setdefault("menus", {})
+            menus[str(menu.get("id") or "")] = entry
+            self._write(data)
 
     def mark_error(
         self,
