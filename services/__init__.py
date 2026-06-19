@@ -3,10 +3,12 @@
 from .menu_model import DEFAULT_MENU_ID, MenuValidationError, normalize_menu
 from .local_image import image_file_to_data_url, render_menu_image, render_menu_via_browser
 from .renderer import build_preview_html, build_render_payload, preview_width_for_menu
+from .render_cache import MenuRenderCache
 from .storage import MenuStorage
 
 __all__ = [
     "DEFAULT_MENU_ID",
+    "MenuRenderCache",
     "MenuStorage",
     "MenuValidationError",
     "build_render_payload",

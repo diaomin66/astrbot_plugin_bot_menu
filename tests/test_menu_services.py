@@ -6,6 +6,7 @@ from pathlib import Path
 
 from services.menu_model import MenuValidationError, normalize_menu
 from services.local_image import _build_browser_screenshot_command, _find_browser_executable, image_file_to_data_url, render_menu_image
+from services.render_cache import MenuRenderCache
 from services.renderer import build_preview_html, preview_width_for_menu
 from services.storage import MenuStorage
 
@@ -111,6 +112,29 @@ class MenuStorageTests(unittest.TestCase):
             path = render_menu_image(storage.get_menu("default"), tmp)
             data_url = image_file_to_data_url(path)
             self.assertTrue(data_url.startswith("data:image/png;base64,"))
+
+    def test_render_cache_stores_and_invalidates_by_menu_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            rendered_path = render_menu_image(menu, tmp)
+            cache = MenuRenderCache(tmp)
+            cached_path = cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
+            self.assertEqual(cache.get_cached_path(menu, render_width=900, render_scale=4), cached_path)
+            changed_menu = {**menu, "title": "修改后的菜单"}
+            self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
+            self.assertTrue(Path(cached_path).is_file())
+
+    def test_commands_use_cached_render_before_scheduling_background_render(self):
+        main_py = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("cached_path = self._cached_menu_image(menu)", main_py)
+        self.assertIn("yield event.image_result(cached_path)", main_py)
+        self.assertIn("self._schedule_cache_render(menu)", main_py)
+        self.assertLess(
+            main_py.index("cached_path = self._cached_menu_image(menu)"),
+            main_py.index("yield event.image_result(cached_path)"),
+        )
+        self.assertIn("self._schedule_cache_render(menu)", main_py[main_py.index("async def api_save_menu") :])
 
     def test_pillow_renderer_can_output_high_resolution_png(self):
         from PIL import Image
