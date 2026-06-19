@@ -596,7 +596,6 @@ function attachBackgroundEditor() {
 
   if (img.complete) updateBox();
   img.addEventListener("load", () => {
-    fitBackgroundToCover(false);
     updateBox();
   }, { once: true });
 

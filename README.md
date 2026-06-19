@@ -23,7 +23,7 @@
 AstrBot/data/plugins/astrbot_plugin_bot_menu/
 ```
 
-插件本地 PNG 渲染依赖 `Pillow`，AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
+插件本地 PNG 渲染依赖 `Pillow` 与 `playwright`；`browser` 模式会优先使用 Playwright/Chromium，失败后再探测系统浏览器，AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
 
 ## 使用
 
@@ -38,8 +38,8 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 
 - `default_menu_id`：默认菜单方案 ID。
 - `render_width`：默认渲染宽度。
-- `render_scale`：图片清晰度倍率，默认 `4`，用于 browser 截图和 Pillow 降级渲染。
-- `render_mode`：菜单图片渲染模式，默认 `browser`（调用系统 Edge/Chrome），可选 `auto`、`remote` 或 `pillow`。
+- `render_scale`：图片清晰度倍率，默认 `4`，用于 Playwright/browser 截图和 Pillow 降级渲染。
+- `render_mode`：菜单图片渲染模式，默认 `browser`（优先 Playwright/Chromium，失败后探测 Windows/macOS/Linux 系统浏览器），可选 `auto`、`remote` 或 `pillow`。
 - `show_render_error_detail`：调试时在聊天侧显示详细渲染错误。
 
 菜单正文数据保存在：
@@ -50,4 +50,4 @@ data/plugin_data/astrbot_plugin_bot_menu/menus.json
 
 ## 说明
 
-本插件默认调用 Windows 系统内置的 Edge 浏览器或 Chrome 进行 4x 无头高清截图（`browser` 模式），复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。Page 中的智能宽度会按标题、描述、卡片模板和每行卡片数自动计算图片宽度，避免少量内容渲染出过宽图片；需要固定尺寸时也可以切换为手动宽度。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
+本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。Page 中的智能宽度会按标题、描述、卡片模板和每行卡片数自动计算图片宽度，避免少量内容渲染出过宽图片；需要固定尺寸时也可以切换为手动宽度。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。

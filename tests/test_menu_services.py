@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 from services.menu_model import MenuValidationError, normalize_menu
-from services.local_image import _build_browser_screenshot_command, image_file_to_data_url, render_menu_image
+from services.local_image import _build_browser_screenshot_command, _find_browser_executable, image_file_to_data_url, render_menu_image
 from services.renderer import build_preview_html, preview_width_for_menu
 from services.storage import MenuStorage
 
@@ -132,6 +132,22 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertIn("--force-device-scale-factor=4", command)
 
+    def test_browser_discovery_uses_cross_platform_command_names(self):
+        import os
+        import shutil
+        from unittest.mock import patch
+
+        command_names: list[str] = []
+
+        def fake_which(name):
+            command_names.append(name)
+            return "/usr/bin/chromium-browser" if name == "chromium-browser" else None
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(shutil, "which", side_effect=fake_which):
+            self.assertEqual(_find_browser_executable(), "/usr/bin/chromium-browser")
+        self.assertIn("google-chrome", command_names)
+        self.assertIn("chromium-browser", command_names)
+
     def test_preview_html_uses_page_preview_markup(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
@@ -177,6 +193,11 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('class="preview-bg-image"', html)
         self.assertIn("left:10%;top:-5%;width:120%", html)
         self.assertIn("--preview-foreground-opacity:0.600", html)
+
+    def test_page_reload_does_not_realign_saved_background_to_top(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        self.assertNotIn("fitBackgroundToCover(false)", app_js)
+        self.assertIn("fitBackgroundToCover(true)", app_js)
 
     def test_preview_width_grows_with_columns(self):
         one_column = normalize_menu(

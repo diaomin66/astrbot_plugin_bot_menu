@@ -183,7 +183,7 @@ def render_menu_via_browser(
     viewport_width: int | None = None,
     device_scale_factor: int = 4,
 ) -> str:
-    """Render a menu to a high-quality local PNG using the system's Edge browser."""
+    """Render a menu to a high-quality local PNG using a cross-platform Chromium browser."""
 
     output_path = _build_output_path(menu, output_dir, prefix="browser")
     output_path.parent.mkdir(parents=True, exist_ok=True)
@@ -192,46 +192,137 @@ def render_menu_via_browser(
     html_path = output_path.with_suffix(".html")
     html_path.write_text(html_content, encoding="utf-8")
 
-    browser_path = _find_browser_executable()
-
-    if not browser_path:
-        raise RuntimeError("No suitable browser (Edge/Chrome) found for local rendering.")
-
     width = _clamp_int(viewport_width, default=default_width, minimum=520, maximum=1400)
     height = _estimate_preview_height(menu)
-
-    cmd = _build_browser_screenshot_command(
-        browser_path,
-        screenshot_path,
-        html_path,
-        width=width,
-        height=height,
-        device_scale_factor=device_scale_factor,
-    )
+    scale = _clamp_int(device_scale_factor, default=4, minimum=1, maximum=4)
 
     try:
-        completed = subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-    except subprocess.CalledProcessError as exc:
-        stderr = _decode_process_output(exc.stderr)
-        stdout = _decode_process_output(exc.stdout)
-        detail = stderr or stdout or str(exc)
-        raise RuntimeError(f"Browser screenshot failed: {detail}") from exc
-    except subprocess.TimeoutExpired as exc:
-        raise RuntimeError("Browser screenshot timed out.") from exc
+        _render_menu_via_playwright(
+            html_content,
+            screenshot_path,
+            width=width,
+            height=height,
+            device_scale_factor=scale,
+        )
+    except Exception as playwright_exc:
+        browser_path = _find_browser_executable()
+
+        if not browser_path:
+            raise RuntimeError(
+                "No suitable Chromium browser found for local rendering. "
+                f"Playwright failed first: {_decode_process_output(str(playwright_exc))}"
+            ) from playwright_exc
+
+        cmd = _build_browser_screenshot_command(
+            browser_path,
+            screenshot_path,
+            html_path,
+            width=width,
+            height=height,
+            device_scale_factor=scale,
+        )
+
+        try:
+            completed = subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+        except subprocess.CalledProcessError as exc:
+            stderr = _decode_process_output(exc.stderr)
+            stdout = _decode_process_output(exc.stdout)
+            detail = stderr or stdout or str(exc)
+            raise RuntimeError(f"Browser screenshot failed: {detail}") from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RuntimeError("Browser screenshot timed out.") from exc
+        else:
+            if not screenshot_path.is_file():
+                stderr = _decode_process_output(completed.stderr)
+                stdout = _decode_process_output(completed.stdout)
+                detail = stderr or stdout or "browser did not create the screenshot file"
+                raise RuntimeError(f"Browser screenshot failed: {detail}")
     else:
         if not screenshot_path.is_file():
-            stderr = _decode_process_output(completed.stderr)
-            stdout = _decode_process_output(completed.stdout)
-            detail = stderr or stdout or "browser did not create the screenshot file"
-            raise RuntimeError(f"Browser screenshot failed: {detail}")
-        _crop_transparent_padding(output_path)
+            raise RuntimeError("Playwright did not create the screenshot file")
     finally:
         try:
             html_path.unlink(missing_ok=True)
         except OSError:
             pass
 
+    try:
+        _crop_transparent_padding(output_path)
+    except Exception:
+        pass
+
     return str(output_path)
+
+
+def _render_menu_via_playwright(
+    html_content: str,
+    screenshot_path: Path,
+    *,
+    width: int,
+    height: int,
+    device_scale_factor: int,
+) -> None:
+    """Render HTML through Playwright's Chromium API when available.
+
+    This avoids OS-specific browser command-line behavior and keeps the output
+    aligned with the Page preview because both paths use Chromium layout.
+    """
+
+    from playwright.sync_api import Error as PlaywrightError
+    from playwright.sync_api import sync_playwright
+
+    launch_args = [
+        "--disable-gpu",
+        "--no-sandbox",
+        "--hide-scrollbars",
+        "--run-all-compositor-stages-before-draw",
+        "--default-background-color=00000000",
+    ]
+    scale = _clamp_int(device_scale_factor, default=4, minimum=1, maximum=4)
+    last_error: Exception | None = None
+
+    with sync_playwright() as playwright:
+        launchers: list[dict[str, Any]] = [{"args": launch_args}]
+        for channel in ("chrome", "msedge", "chromium"):
+            launchers.append({"channel": channel, "args": launch_args})
+
+        for launch_options in launchers:
+            browser = None
+            try:
+                browser = playwright.chromium.launch(headless=True, **launch_options)
+                context = browser.new_context(
+                    viewport={"width": width, "height": height},
+                    device_scale_factor=scale,
+                    is_mobile=False,
+                    has_touch=False,
+                )
+                page = context.new_page()
+                page.set_content(html_content, wait_until="load", timeout=15000)
+                try:
+                    page.wait_for_load_state("networkidle", timeout=3000)
+                except PlaywrightError:
+                    pass
+                page.screenshot(
+                    path=str(screenshot_path),
+                    full_page=True,
+                    omit_background=True,
+                    animations="disabled",
+                    timeout=15000,
+                )
+                context.close()
+                return
+            except Exception as exc:
+                last_error = exc
+            finally:
+                if browser is not None:
+                    try:
+                        browser.close()
+                    except Exception:
+                        pass
+
+    if last_error:
+        raise RuntimeError(f"Playwright Chromium render failed: {last_error}") from last_error
+    raise RuntimeError("Playwright Chromium render failed")
 
 
 def _build_browser_screenshot_command(
@@ -264,8 +355,26 @@ def _find_browser_executable() -> str | None:
     env_browser = os.environ.get("BOT_MENU_BROWSER") or os.environ.get("BROWSER")
     if env_browser and Path(env_browser).exists():
         return env_browser
+    if env_browser:
+        found = shutil.which(env_browser)
+        if found:
+            return found
 
-    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "chromium", "chromium.exe"):
+    for name in (
+        "msedge",
+        "msedge.exe",
+        "microsoft-edge",
+        "microsoft-edge-stable",
+        "chrome",
+        "chrome.exe",
+        "google-chrome",
+        "google-chrome-stable",
+        "chromium",
+        "chromium.exe",
+        "chromium-browser",
+        "brave",
+        "brave-browser",
+    ):
         found = shutil.which(name)
         if found:
             return found
@@ -275,6 +384,18 @@ def _find_browser_executable() -> str | None:
         r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
         r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
         r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+        "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
+        "/usr/bin/google-chrome",
+        "/usr/bin/google-chrome-stable",
+        "/usr/bin/chromium",
+        "/usr/bin/chromium-browser",
+        "/usr/bin/microsoft-edge",
+        "/usr/bin/microsoft-edge-stable",
+        "/usr/bin/brave-browser",
+        "/snap/bin/chromium",
     ]
     return next((path for path in browser_paths if os.path.exists(path)), None)
 
