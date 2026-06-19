@@ -1,11 +1,16 @@
 # AstrBot Bot 菜单插件
 
-![插件图标](./logo.png)
 
 一个用于自定义机器人菜单的 AstrBot 插件：在 WebUI 中编辑多套菜单方案，实时预览，并通过聊天指令发送渲染后的菜单图片。
 
 - 当前版本：`0.2.0`
 - 作者：雪碧bir
+- 交流与反馈：**[点击加入 QQ 群 1081773675](https://qm.qq.com/q/Qr45Vz0a8o)**
+
+## 效果图
+
+<img width="1280" height="1068" alt="c029cb7bdef068975a557a60a2644e8a_720" src="https://github.com/user-attachments/assets/67f9865b-3327-448b-88f6-26958f5c14c6" />
+
 
 ## 功能
 
