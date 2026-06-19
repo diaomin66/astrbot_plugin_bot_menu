@@ -94,6 +94,21 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertNotIn('style: { ...ensureStyle(menu), width_mode: "auto" }', app_js)
         self.assertNotIn('style: { ...ensureStyle(menu), section_gap_mode: "auto" }', app_js)
 
+    def test_page_buttons_use_resilient_bridge_and_change_events(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function resolvePageBridge()", app_js)
+        self.assertIn("function normalizePageBridge(rawBridge)", app_js)
+        self.assertIn('const events = control.type === "file" ? ["change"] : ["input", "change"];', app_js)
+        self.assertIn("bindValueChange(input, () => onInput(input.value, input));", app_js)
+        self.assertIn("bindValueChange(input, () => onInput(input.checked, input));", app_js)
+        self.assertIn('state.unsavedMenuIds.add(snapshot.id);', app_js)
+        self.assertIn('badges.push("未保存");', app_js)
+        self.assertIn('upsertMenuEntry(state.menu, { unsaved: true });', app_js)
+        self.assertIn('const isSavedMenu = state.menus.some((menu) => menu.id === currentId) && !state.unsavedMenuIds.has(currentId);', app_js)
+        self.assertIn('label: "一键重置样式"', app_js)
+        self.assertIn("mutator(ensureStyle(state.menu));", app_js)
+
 
 class MenuStorageTests(unittest.TestCase):
     def test_storage_creates_default_menu(self):

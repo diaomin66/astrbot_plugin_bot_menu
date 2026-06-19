@@ -1,5 +1,5 @@
-const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
+let bridge = null;
 
 const CARD_TEMPLATES = {
   compact: { label: "紧凑", icon: "•", title: "快捷项", command: "/cmd", description: "", width: 190 },
@@ -36,6 +36,7 @@ const state = {
   itemSearch: "",
   restoredDraftIds: new Set(),
   collapsedKeys: new Set(),
+  unsavedMenuIds: new Set(),
   renderStatusTimer: 0,
   backgroundEditMode: false,
 };
@@ -89,9 +90,15 @@ const els = {
   modalFooter: $("modalFooter"),
 };
 
-await bridge.ready();
-bindEvents();
-await loadMenus();
+try {
+  bridge = await resolvePageBridge();
+  bindEvents();
+  await loadMenus();
+} catch (error) {
+  console.error("failed to initialize bot menu editor", error);
+  setStatus(`页面初始化失败：${error.message || error}`, "error");
+  updateSaveState("saved");
+}
 
 function bindEvents() {
   els.schemeSelect.addEventListener("change", async () => {
@@ -156,7 +163,7 @@ function bindEvents() {
   els.centerBackgroundBtn.addEventListener("click", centerBackgroundImage);
   els.coverBackgroundBtn.addEventListener("click", () => fitBackgroundToCover(true));
   els.clearBackgroundBtn.addEventListener("click", clearBackgroundImage);
-  els.itemSearch.addEventListener("input", () => {
+  bindValueChange(els.itemSearch, () => {
     state.itemSearch = els.itemSearch.value.trim().toLowerCase();
     saveSearchState();
     renderAll();
@@ -174,7 +181,65 @@ function bindEvents() {
 
 function bindValueChange(control, handler) {
   if (!control) return;
-  control.addEventListener(control.tagName === "SELECT" ? "change" : "input", handler);
+  const events = control.type === "file" ? ["change"] : ["input", "change"];
+  let lastValue = controlValueSignature(control);
+  const emitChange = () => {
+    const nextValue = controlValueSignature(control);
+    if (nextValue === lastValue) return;
+    lastValue = nextValue;
+    handler(control);
+  };
+  events.forEach((eventName) => control.addEventListener(eventName, emitChange));
+}
+
+function controlValueSignature(control) {
+  if (!control) return "";
+  if (control.type === "checkbox") return control.checked ? "1" : "0";
+  if (control.type === "file") return [...(control.files || [])].map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
+  return String(control.value ?? "");
+}
+
+async function resolvePageBridge() {
+  const rawBridge = await waitForPageBridge();
+  if (typeof rawBridge.ready === "function") {
+    await rawBridge.ready();
+  }
+  return normalizePageBridge(rawBridge);
+}
+
+async function waitForPageBridge(timeoutMs = 6000) {
+  const startedAt = Date.now();
+  while (!window.AstrBotPluginPage) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("未检测到 AstrBot 页面桥接对象，请在 AstrBot Pages 中打开本页面。");
+    }
+    await sleep(40);
+  }
+  return window.AstrBotPluginPage;
+}
+
+function normalizePageBridge(rawBridge) {
+  const apiGet = rawBridge.apiGet || rawBridge.get;
+  const apiPost = rawBridge.apiPost || rawBridge.post;
+  if (typeof apiGet !== "function" || typeof apiPost !== "function") {
+    throw new Error("AstrBot 页面桥接缺少 apiGet/apiPost，请升级 AstrBot 或刷新页面。");
+  }
+  return {
+    apiGet: async (path) => unwrapBridgeResponse(await apiGet.call(rawBridge, path)),
+    apiPost: async (path, payload) => unwrapBridgeResponse(await apiPost.call(rawBridge, path, payload)),
+  };
+}
+
+function unwrapBridgeResponse(response) {
+  if (response && typeof response === "object" && "status" in response) {
+    if (response.status === "ok") return response.data ?? {};
+    if (response.status === "error") throw new Error(response.message || "请求失败");
+  }
+  return response ?? {};
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 async function loadMenus(preferredId) {
@@ -182,6 +247,7 @@ async function loadMenus(preferredId) {
     setStatus("正在加载菜单...");
     const data = await bridge.apiGet("menus");
     state.menus = data.menus || [];
+    state.unsavedMenuIds.clear();
     state.defaultMenuId = data.default_menu_id || "default";
     const target = preferredId || state.currentId || state.defaultMenuId || state.menus[0]?.id;
     refreshSchemeSelect();
@@ -197,9 +263,10 @@ async function selectMenu(id) {
   if (!menu) return;
   state.currentId = menu.id;
   state.backgroundEditMode = false;
-  const serverMenu = structuredClone(menu);
-  state.menu = maybeRestoreDraft(serverMenu);
-  state.dirty = state.menu !== serverMenu;
+  const sourceMenu = structuredClone(menu);
+  const isUnsaved = state.unsavedMenuIds.has(menu.id);
+  state.menu = isUnsaved ? sourceMenu : maybeRestoreDraft(sourceMenu);
+  state.dirty = isUnsaved || state.menu !== sourceMenu;
   loadSearchState();
   refreshSchemeSelect();
   fillForm();
@@ -213,7 +280,10 @@ function refreshSchemeSelect() {
   state.menus.forEach((menu) => {
     const option = document.createElement("option");
     option.value = menu.id;
-    option.textContent = `${menu.name || menu.id} (${menu.id})${menu.id === state.defaultMenuId ? " · 默认" : ""}`;
+    const badges = [];
+    if (menu.id === state.defaultMenuId) badges.push("默认");
+    if (state.unsavedMenuIds.has(menu.id)) badges.push("未保存");
+    option.textContent = `${menu.name || menu.id} (${menu.id})${badges.length ? ` · ${badges.join(" · ")}` : ""}`;
     els.schemeSelect.append(option);
   });
   if (state.currentId) els.schemeSelect.value = state.currentId;
@@ -319,7 +389,7 @@ function renderSectionsEditor() {
         <div class="items-editor"></div>
       </div>`;
     const titleInput = card.querySelector("input");
-    titleInput.addEventListener("input", () => {
+    bindValueChange(titleInput, () => {
       section.title = titleInput.value;
       markDirty();
       renderPreview();
@@ -390,7 +460,7 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
   card.querySelector('[data-action="copy-item"]').addEventListener("click", () => copyItem(sectionIndex, itemIndex));
   card.querySelector('[data-action="remove-item"]').addEventListener("click", () => removeItem(sectionIndex, itemIndex));
   card.querySelectorAll("[data-key]").forEach((input) => {
-    input.addEventListener("input", () => {
+    bindValueChange(input, () => {
       const key = input.dataset.key;
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       markDirty();
@@ -494,7 +564,7 @@ function textInput(value, onInput, attrs = {}) {
     if (value === true) input.setAttribute(key, "");
     else input.setAttribute(key, value);
   });
-  input.addEventListener("input", () => onInput(input.value, input));
+  bindValueChange(input, () => onInput(input.value, input));
   return input;
 }
 
@@ -517,7 +587,7 @@ function checkboxInput(checked, onInput) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = checked;
-  input.addEventListener("input", () => onInput(input.checked, input));
+  bindValueChange(input, () => onInput(input.checked, input));
   return input;
 }
 
@@ -750,6 +820,10 @@ function openItemEditor(sectionIndex, itemIndex) {
 
 function openStyleEditor() {
   const style = ensureStyle(state.menu);
+  const updateStyle = (mutator) => {
+    mutator(ensureStyle(state.menu));
+    commitMenuChange();
+  };
   const body = document.createElement("div");
   body.className = "modal-grid";
   const themeCards = document.createElement("div");
@@ -761,30 +835,34 @@ function openStyleEditor() {
     button.style.cssText = `--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}`;
     button.innerHTML = `<span class="theme-swatch"></span><strong>${escapeHtml(preset.label)}</strong>`;
     button.addEventListener("click", () => {
-      Object.assign(style, { theme: key }, themeStylePatch(preset));
-      commitMenuChange();
+      updateStyle((currentStyle) => Object.assign(currentStyle, { theme: key }, themeStylePatch(preset)));
       openStyleEditor();
     });
     themeCards.append(button);
   });
   body.append(themeCards);
   body.append(
-    field("主题", selectInput(style.theme || "aurora", Object.entries(THEME_PRESETS).map(([value, preset]) => ({ value, label: preset.label })), (value) => { Object.assign(style, { theme: value }, themeStylePatch(THEME_PRESETS[value] || THEME_PRESETS.aurora)); commitMenuChange(); openStyleEditor(); })),
-    field("主色", textInput(toColor(style.primary_color, "#7c3aed"), (value) => { style.primary_color = value; commitMenuChange(); }, { type: "color" })),
-    field("背景色", textInput(toColor(style.background_color, "#f8fafc"), (value) => { style.background_color = value; commitMenuChange(); }, { type: "color" })),
-    field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { style.card_color = value; commitMenuChange(); }, { type: "color" })),
-    field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { style.text_color = value; commitMenuChange(); }, { type: "color" })),
-    field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { style.muted_color = value; commitMenuChange(); }, { type: "color" })),
+    field("主题", selectInput(style.theme || "aurora", Object.entries(THEME_PRESETS).map(([value, preset]) => ({ value, label: preset.label })), (value) => { updateStyle((currentStyle) => Object.assign(currentStyle, { theme: value }, themeStylePatch(THEME_PRESETS[value] || THEME_PRESETS.aurora))); openStyleEditor(); })),
+    field("主色", textInput(toColor(style.primary_color, "#7c3aed"), (value) => { updateStyle((currentStyle) => { currentStyle.primary_color = value; }); }, { type: "color" })),
+    field("背景色", textInput(toColor(style.background_color, "#f8fafc"), (value) => { updateStyle((currentStyle) => { currentStyle.background_color = value; }); }, { type: "color" })),
+    field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { updateStyle((currentStyle) => { currentStyle.card_color = value; }); }, { type: "color" })),
+    field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { updateStyle((currentStyle) => { currentStyle.text_color = value; }); }, { type: "color" })),
+    field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { updateStyle((currentStyle) => { currentStyle.muted_color = value; }); }, { type: "color" })),
   );
-  const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => { style.foreground_opacity = clampNumber(value, 0, 100, 92); input.previousElementSibling && (input.previousElementSibling.textContent = `${style.foreground_opacity}%`); commitMenuChange(); }, { type: "range", min: 0, max: 100, step: 1 });
+  const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => {
+    updateStyle((currentStyle) => {
+      currentStyle.foreground_opacity = clampNumber(value, 0, 100, 92);
+      if (input.previousElementSibling) input.previousElementSibling.textContent = `前景菜单透明度 ${currentStyle.foreground_opacity}%`;
+    });
+  }, { type: "range", min: 0, max: 100, step: 1 });
   body.append(field(`前景菜单透明度 ${clampNumber(style.foreground_opacity, 0, 100, 92)}%`, opacity, { wide: true }));
   appendLayoutFields(body, style);
   body.append(
-    field("圆角", textInput(style.radius ?? 24, (value) => { style.radius = clampNumber(value, 0, 48, 24); commitMenuChange(); }, { type: "number", min: 0, max: 48 })),
+    field("圆角", textInput(style.radius ?? 24, (value) => { updateStyle((currentStyle) => { currentStyle.radius = clampNumber(value, 0, 48, 24); }); }, { type: "number", min: 0, max: 48 })),
   );
   const updatedAt = document.createElement("label");
   updatedAt.className = "check wide";
-  updatedAt.append(checkboxInput(style.show_updated_at !== false, (checked) => { style.show_updated_at = checked; commitMenuChange(); }), document.createTextNode("显示实时预览/更新时间"));
+  updatedAt.append(checkboxInput(style.show_updated_at !== false, (checked) => { updateStyle((currentStyle) => { currentStyle.show_updated_at = checked; }); }), document.createTextNode("显示实时预览/更新时间"));
   body.append(updatedAt);
 
   const file = document.createElement("input");
@@ -797,9 +875,9 @@ function openStyleEditor() {
   });
   body.append(field("自定义背景图（不限制尺寸）", file, { wide: true, hint: style.background_image ? (style.background_image_name || "Custom background") : "未设置背景图" }));
   body.append(
-    field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { style.background_image_width = clampNumber(value, 10, 600, 100); commitMenuChange(); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
-    field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { style.background_image_x = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
-    field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { style.background_image_y = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
+    field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { updateStyle((currentStyle) => { currentStyle.background_image_width = clampNumber(value, 10, 600, 100); }); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
+    field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_x = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
+    field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_y = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
   );
   body.append(actionRow([
     { label: "居中背景", onClick: () => { centerBackgroundImage(); openStyleEditor(); } },
@@ -808,7 +886,7 @@ function openStyleEditor() {
   ]));
   openModal("编辑主题、背景与布局", body, [
     { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
-    { label: "未设置背景图", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
+    { label: "一键重置样式", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
     { label: "编辑全部分组", onClick: openMenuEditor },
   ]);
 }
@@ -1022,8 +1100,11 @@ async function saveMenu() {
     setStatus("正在保存...");
     const result = await bridge.apiPost("menus/save", { menu: state.menu });
     state.menus = result.menus || [result.menu];
+    state.unsavedMenuIds.clear();
     state.currentId = result.menu.id;
     state.menu = structuredClone(result.menu);
+    state.unsavedMenuIds.delete(draftIdBeforeSave);
+    state.unsavedMenuIds.delete(state.currentId);
     state.dirty = false;
     clearDraft(state.currentId);
     if (draftIdBeforeSave !== state.currentId) clearDraft(draftIdBeforeSave);
@@ -1051,8 +1132,10 @@ function newMenu() {
     sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
   state.currentId = id;
+  upsertMenuEntry(state.menu, { unsaved: true });
   markDirty();
   fillForm();
+  refreshSchemeSelect();
   renderAll();
   setStatus("已创建本地新菜单，保存后生效。");
 }
@@ -1063,8 +1146,10 @@ function copyMenu() {
   copy.name = `${copy.name || "菜单"} 副本`;
   state.menu = copy;
   state.currentId = copy.id;
+  upsertMenuEntry(state.menu, { unsaved: true });
   markDirty();
   fillForm();
+  refreshSchemeSelect();
   renderAll();
   setStatus("已复制为新菜单，保存后生效。");
 }
@@ -1075,7 +1160,7 @@ async function deleteMenu() {
     return;
   }
   const currentId = state.currentId || state.menu.id;
-  const isSavedMenu = state.menus.some((menu) => menu.id === currentId);
+  const isSavedMenu = state.menus.some((menu) => menu.id === currentId) && !state.unsavedMenuIds.has(currentId);
   if (!isSavedMenu) {
     if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
       setStatus("已取消删除。");
@@ -1112,6 +1197,9 @@ async function deleteMenu() {
 
 async function discardUnsavedMenu(menuId) {
   clearDraft(menuId);
+  removeMenuEntry(menuId);
+  state.unsavedMenuIds.delete(menuId);
+  refreshSchemeSelect();
   const nextId = state.defaultMenuId && state.menus.some((menu) => menu.id === state.defaultMenuId)
     ? state.defaultMenuId
     : state.menus[0]?.id;
@@ -1126,23 +1214,36 @@ async function discardUnsavedMenu(menuId) {
 }
 
 async function exportMenus() {
-  const data = await bridge.apiGet("export");
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "bot-menus.json";
-  link.click();
-  URL.revokeObjectURL(link.href);
+  try {
+    const data = await bridge.apiGet("export");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "bot-menus.json";
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+    setStatus("已导出菜单 JSON。", "success");
+  } catch (error) {
+    setStatus(`导出失败：${error.message}`, "error");
+  }
 }
 
 async function importMenus(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+  if (!(await confirmLeaveDirty())) {
+    event.target.value = "";
+    return;
+  }
   try {
     const data = JSON.parse(await file.text());
     const menus = Array.isArray(data) ? data : data.menus;
     const result = await bridge.apiPost("import", { menus, mode: "merge" });
     state.menus = result.menus || [];
+    state.unsavedMenuIds.clear();
     refreshSchemeSelect();
     await selectMenu(state.menus[0]?.id);
     setStatus("导入成功。");
@@ -1394,9 +1495,39 @@ function itemMatchesSearch(item, query) {
     .some((value) => String(value || "").toLowerCase().includes(query));
 }
 
+function upsertMenuEntry(menu, { unsaved = false, previousId = "" } = {}) {
+  if (!menu?.id) return;
+  if (previousId && previousId !== menu.id) {
+    removeMenuEntry(previousId);
+    state.unsavedMenuIds.delete(previousId);
+  }
+  const snapshot = structuredClone(menu);
+  const index = state.menus.findIndex((item) => item.id === snapshot.id);
+  if (index >= 0) state.menus[index] = snapshot;
+  else state.menus.push(snapshot);
+  if (unsaved) state.unsavedMenuIds.add(snapshot.id);
+  else state.unsavedMenuIds.delete(snapshot.id);
+}
+
+function removeMenuEntry(menuId) {
+  if (!menuId) return;
+  state.menus = state.menus.filter((menu) => menu.id !== menuId);
+}
+
+function syncUnsavedMenuEntry() {
+  if (!state.menu || !state.currentId || !state.unsavedMenuIds.has(state.currentId)) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId });
+  refreshSchemeSelect();
+}
+
 function markDirty() {
   if (!state.menu) return;
   state.dirty = true;
+  syncUnsavedMenuEntry();
   updateSaveState("dirty");
   saveDraft();
 }
