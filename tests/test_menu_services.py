@@ -5,7 +5,8 @@ import unittest
 from pathlib import Path
 
 from services.menu_model import MenuValidationError, normalize_menu
-from services.local_image import _build_browser_screenshot_command, image_file_to_data_url, render_menu_image
+from services.local_image import _build_browser_screenshot_command, _find_browser_executable, image_file_to_data_url, render_menu_image
+from services.render_cache import MenuRenderCache
 from services.renderer import build_preview_html, preview_width_for_menu
 from services.storage import MenuStorage
 
@@ -35,7 +36,16 @@ class MenuModelTests(unittest.TestCase):
         menu = normalize_menu(
             {
                 "id": "main",
-                "style": {"width_mode": "custom", "width": 680, "columns": 3},
+                "style": {
+                    "width_mode": "custom",
+                    "width": 680,
+                    "columns": 3,
+                    "foreground_opacity": 45,
+                    "background_image": "data:image/png;base64,AAAA",
+                    "background_image_x": -12,
+                    "background_image_y": 18,
+                    "background_image_width": 150,
+                },
                 "sections": [
                     {
                         "title": "功能",
@@ -47,6 +57,11 @@ class MenuModelTests(unittest.TestCase):
         self.assertEqual(menu["style"]["width_mode"], "custom")
         self.assertEqual(menu["style"]["width"], 680)
         self.assertEqual(menu["style"]["columns"], 3)
+        self.assertEqual(menu["style"]["foreground_opacity"], 45)
+        self.assertEqual(menu["style"]["background_image_x"], -12)
+        self.assertEqual(menu["style"]["background_image_y"], 18)
+        self.assertEqual(menu["style"]["background_image_width"], 150)
+        self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
     def test_normalize_menu_rejects_invalid_id(self):
@@ -98,14 +113,76 @@ class MenuStorageTests(unittest.TestCase):
             data_url = image_file_to_data_url(path)
             self.assertTrue(data_url.startswith("data:image/png;base64,"))
 
+    def test_render_cache_stores_and_invalidates_by_menu_fingerprint(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            rendered_path = render_menu_image(menu, tmp)
+            cache = MenuRenderCache(tmp)
+            cached_path = cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
+            self.assertEqual(cache.get_cached_path(menu, render_width=900, render_scale=4), cached_path)
+            changed_menu = {**menu, "title": "修改后的菜单"}
+            self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
+            self.assertTrue(Path(cached_path).is_file())
+
+    def test_commands_use_cached_render_before_scheduling_background_render(self):
+        main_py = Path("main.py").read_text(encoding="utf-8")
+        self.assertIn("cached_path = self._cached_menu_image(menu)", main_py)
+        self.assertIn("yield event.image_result(cached_path)", main_py)
+        self.assertIn("self._schedule_cache_render(menu)", main_py)
+        self.assertLess(
+            main_py.index("cached_path = self._cached_menu_image(menu)"),
+            main_py.index("yield event.image_result(cached_path)"),
+        )
+        self.assertIn("self._schedule_cache_render(menu)", main_py[main_py.index("async def api_save_menu") :])
+
     def test_pillow_renderer_can_output_high_resolution_png(self):
         from PIL import Image
 
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
-            path = render_menu_image(storage.get_menu("default"), tmp, output_scale=3)
+            menu = storage.get_menu("default")
+            path = render_menu_image(menu, tmp, output_scale=3)
             with Image.open(path) as image:
-                self.assertEqual(image.width, storage.get_menu("default")["style"]["width"] * 3)
+                self.assertEqual(image.width, preview_width_for_menu(menu) * 3)
+
+    def test_pillow_renderer_uses_auto_width_columns_and_banner_cards(self):
+        from PIL import Image
+
+        menu = normalize_menu(
+            {
+                "id": "layout",
+                "style": {"width_mode": "auto", "columns": 4, "foreground_opacity": 0},
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {"label": "横幅", "card_size": "banner"},
+                            *({"label": f"功能{i}", "card_size": "compact"} for i in range(4)),
+                        ],
+                    }
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = render_menu_image(menu, tmp, output_scale=2)
+            with Image.open(path) as image:
+                self.assertEqual(image.width, preview_width_for_menu(menu) * 2)
+
+    def test_release_metadata_readme_changelog_and_logo_are_consistent(self):
+        import re
+
+        metadata = Path("metadata.yaml").read_text(encoding="utf-8")
+        readme = Path("README.md").read_text(encoding="utf-8")
+        changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+        version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
+        author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
+        self.assertEqual(version, "0.2.0")
+        self.assertEqual(author, "雪碧bir")
+        self.assertIn(f"当前版本：`{version}`", readme)
+        self.assertIn(f"## {version} -", changelog)
+        with open("logo.png", "rb") as f:
+            self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
     def test_browser_screenshot_command_uses_high_scale_factor(self):
         command = _build_browser_screenshot_command(
@@ -118,6 +195,22 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertIn("--force-device-scale-factor=4", command)
 
+    def test_browser_discovery_uses_cross_platform_command_names(self):
+        import os
+        import shutil
+        from unittest.mock import patch
+
+        command_names: list[str] = []
+
+        def fake_which(name):
+            command_names.append(name)
+            return "/usr/bin/chromium-browser" if name == "chromium-browser" else None
+
+        with patch.dict(os.environ, {}, clear=True), patch.object(shutil, "which", side_effect=fake_which):
+            self.assertEqual(_find_browser_executable(), "/usr/bin/chromium-browser")
+        self.assertIn("google-chrome", command_names)
+        self.assertIn("chromium-browser", command_names)
+
     def test_preview_html_uses_page_preview_markup(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
@@ -128,6 +221,7 @@ class MenuStorageTests(unittest.TestCase):
             self.assertLess(width, 900)
             self.assertIn(f"--preview-width:{width}px", html)
             self.assertIn("--preview-columns:2", html)
+            self.assertIn("--preview-foreground-opacity:0.920", html)
             self.assertIn('class="preview-inner"', html)
             self.assertIn('class="preview-item size-standard', html)
             self.assertIn("实时预览", html)
@@ -143,6 +237,37 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertEqual(preview_width_for_menu(menu), 720)
         self.assertIn("--preview-columns:1", build_preview_html(menu))
+
+    def test_preview_html_embeds_custom_background(self):
+        menu = normalize_menu(
+            {
+                "id": "bg",
+                "style": {
+                    "background_image": "data:image/png;base64,AAAA",
+                    "background_image_x": 10,
+                    "background_image_y": -5,
+                    "background_image_width": 120,
+                    "foreground_opacity": 60,
+                },
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn('class="preview-bg-image"', html)
+        self.assertIn("left:10%;top:-5%;width:120%", html)
+        self.assertIn("--preview-foreground-opacity:0.600", html)
+
+    def test_page_reload_does_not_realign_saved_background_to_top(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        self.assertNotIn("fitBackgroundToCover(false)", app_js)
+        self.assertIn("fitBackgroundToCover(true)", app_js)
+
+    def test_editor_preview_column_has_independent_scroll_pane(self):
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        self.assertIn(".preview-stage {\n  min-width: 0;\n  min-height: 0;\n  height: 100%;\n  overflow-y: auto;", css)
+        self.assertIn(".preview-panel {\n  min-height: 100%;\n  display: flex;\n  flex-direction: column;\n  overflow: visible;", css)
+        self.assertIn(".app {\n  height: 100vh;\n  height: 100dvh;\n  min-height: 0;\n  overflow: hidden;", css)
+        self.assertIn("overscroll-behavior: contain;", css)
 
     def test_preview_width_grows_with_columns(self):
         one_column = normalize_menu(
