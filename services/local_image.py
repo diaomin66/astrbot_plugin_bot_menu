@@ -425,7 +425,7 @@ def _estimate_preview_height(menu: dict[str, Any]) -> int:
 
 def _section_gap_for_menu(menu: dict[str, Any], style: dict[str, Any]) -> int:
     if str(style.get("section_gap_mode") or "auto").strip().lower() == "custom":
-        return _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40)
+        return _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200)
     sections = menu.get("sections") if isinstance(menu.get("sections"), list) else []
     section_count = max(1, len(sections))
     item_count = sum(len(section.get("items", [])) for section in sections if isinstance(section, dict))

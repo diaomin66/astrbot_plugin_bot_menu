@@ -35,6 +35,7 @@ const state = {
   saveState: "saved",
   itemSearch: "",
   restoredDraftIds: new Set(),
+  collapsedKeys: new Set(),
   renderStatusTimer: 0,
 };
 
@@ -259,7 +260,7 @@ function syncFormToMenu({ mark = true } = {}) {
     columns: Number(els.columns.value) || 2,
     width: Number(els.width.value) || 760,
     section_gap_mode: els.sectionGapMode.value,
-    section_gap: Number(els.sectionGap.value) || 14,
+    section_gap: clampNumber(els.sectionGap.value, 0, 200, 14),
     radius: Number(els.radius.value) || 0,
     show_updated_at: els.showUpdatedAt.checked,
   };
@@ -312,7 +313,9 @@ function renderSectionsEditor() {
       renderPreview();
       validateMenu({ silent: true });
     });
-    card.querySelector('[data-action="toggle-section"]').addEventListener("click", () => {
+    card.querySelector('[data-action="toggle-section"]').addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
       setCollapsed("section", sectionIndex, null, !sectionCollapsed);
       renderSectionsEditor();
     });
@@ -364,7 +367,9 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
       </div>
       <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>
     </div>`;
-  card.querySelector('[data-action="toggle-item"]').addEventListener("click", () => {
+  card.querySelector('[data-action="toggle-item"]').addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
     setCollapsed("item", sectionIndex, itemIndex, !itemCollapsed);
     renderSectionsEditor();
   });
@@ -957,13 +962,22 @@ function collapseKey(type, sectionIndex, itemIndex = null) {
 }
 
 function isCollapsed(type, sectionIndex, itemIndex = null) {
-  try { return localStorage.getItem(collapseKey(type, sectionIndex, itemIndex)) === "1"; }
-  catch { return false; }
+  const key = collapseKey(type, sectionIndex, itemIndex);
+  if (state.collapsedKeys.has(key)) return true;
+  try {
+    const collapsed = localStorage.getItem(key) === "1";
+    if (collapsed) state.collapsedKeys.add(key);
+    return collapsed;
+  } catch {
+    return false;
+  }
 }
 
 function setCollapsed(type, sectionIndex, itemIndex, collapsed) {
+  const key = collapseKey(type, sectionIndex, itemIndex);
+  if (collapsed) state.collapsedKeys.add(key);
+  else state.collapsedKeys.delete(key);
   try {
-    const key = collapseKey(type, sectionIndex, itemIndex);
     if (collapsed) localStorage.setItem(key, "1");
     else localStorage.removeItem(key);
   } catch (error) {
@@ -1136,7 +1150,7 @@ function syncSectionGapControl() {
 function sectionGapForMenu(menu) {
   const style = ensureStyle(menu);
   if (style.section_gap_mode === "custom") {
-    return clampNumber(style.section_gap, 4, 40, 14);
+    return clampNumber(style.section_gap, 0, 200, 14);
   }
   const sectionCount = Math.max(1, menu.sections?.length || 1);
   const itemCount = (menu.sections || []).reduce((total, section) => total + (section.items?.length || 0), 0);

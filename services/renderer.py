@@ -352,7 +352,7 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
         "width": _clamp_int(style.get("width"), default=default_width, minimum=520, maximum=1400),
         "columns": _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4),
         "section_gap_mode": section_gap_mode,
-        "section_gap": _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40),
+        "section_gap": _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200),
         "show_updated_at": style.get("show_updated_at", True),
     }
 
@@ -364,7 +364,7 @@ def _card_size(value: Any) -> str:
 
 def _section_gap_for_menu(menu: dict[str, Any], style: dict[str, Any]) -> int:
     if style.get("section_gap_mode") == "custom":
-        return _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40)
+        return _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200)
     sections = menu.get("sections") if isinstance(menu.get("sections"), list) else []
     section_count = max(1, len(sections))
     item_count = sum(len(section.get("items", [])) for section in sections if isinstance(section, dict))

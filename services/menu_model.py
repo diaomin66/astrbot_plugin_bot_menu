@@ -171,7 +171,7 @@ def _normalize_style(raw_style: Any) -> dict[str, Any]:
     style["width"] = _clamp_int(style.get("width"), default=760, minimum=520, maximum=1400)
     style["columns"] = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
     style["section_gap_mode"] = _clean_choice(style.get("section_gap_mode"), SECTION_GAP_MODES, default="auto")
-    style["section_gap"] = _clamp_int(style.get("section_gap"), default=14, minimum=4, maximum=40)
+    style["section_gap"] = _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200)
     style["show_updated_at"] = bool(style.get("show_updated_at", True))
     return style
 
