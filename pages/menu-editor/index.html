@@ -59,11 +59,15 @@
         <details open class="style-box">
           <summary>样式设置</summary>
           <div class="form-grid style-grid">
-            <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option></select></label>
+            <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select></label>
             <label class="field"><span>主色</span><input id="primaryColor" type="color" /></label>
             <label class="field"><span>背景色</span><input id="backgroundColor" type="color" /></label>
             <label class="field"><span>卡片色</span><input id="cardColor" type="color" /></label>
-            <label class="field"><span>宽度</span><input id="width" type="number" min="520" max="1400" /></label>
+            <label class="field"><span>文字色</span><input id="textColor" type="color" /></label>
+            <label class="field"><span>辅助文字</span><input id="mutedColor" type="color" /></label>
+            <label class="field"><span>宽度模式</span><select id="widthMode"><option value="auto">智能自动</option><option value="custom">手动指定</option></select></label>
+            <label class="field"><span>每行卡片</span><select id="columns"><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label>
+            <label class="field"><span>手动宽度</span><input id="width" type="number" min="520" max="1400" /></label>
             <label class="field"><span>圆角</span><input id="radius" type="number" min="0" max="48" /></label>
             <label class="check"><input id="showUpdatedAt" type="checkbox" /> 显示更新时间</label>
           </div>
@@ -78,7 +82,10 @@
             <p class="kicker">Preview</p>
             <h2>实时预览</h2>
           </div>
-          <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
+          <div class="preview-actions">
+            <span id="previewMeta" class="preview-meta"></span>
+            <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
+          </div>
         </div>
         <div id="preview" class="menu-preview"></div>
         <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />

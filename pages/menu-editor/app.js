@@ -1,6 +1,21 @@
 const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
 
+const CARD_TEMPLATES = {
+  compact: { label: "紧凑", icon: "•", title: "快捷项", command: "/cmd", description: "", width: 190 },
+  standard: { label: "标准", icon: "✨", title: "新功能", command: "/command", description: "功能说明", width: 230 },
+  large: { label: "大卡", icon: "⭐", title: "重点功能", command: "/feature", description: "适合放较长描述或主推功能", width: 285 },
+  banner: { label: "横幅", icon: "📌", title: "公告入口", command: "/notice", description: "横跨整行，用于公告、主入口或高优先级操作", width: 360 },
+};
+
+const THEME_PRESETS = {
+  aurora: { primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
+  minimal: { primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
+  midnight: { primary_color: "#38bdf8", background_color: "#111827", card_color: "#1f2937", text_color: "#f8fafc", muted_color: "#cbd5e1" },
+  forest: { primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
+  sunrise: { primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
+};
+
 const state = {
   menus: [],
   defaultMenuId: "default",
@@ -23,10 +38,15 @@ const els = {
   primaryColor: $("primaryColor"),
   backgroundColor: $("backgroundColor"),
   cardColor: $("cardColor"),
+  textColor: $("textColor"),
+  mutedColor: $("mutedColor"),
+  widthMode: $("widthMode"),
+  columns: $("columns"),
   width: $("width"),
   radius: $("radius"),
   showUpdatedAt: $("showUpdatedAt"),
   serverPreview: $("serverPreview"),
+  previewMeta: $("previewMeta"),
 };
 
 await bridge.ready();
@@ -50,10 +70,13 @@ function bindEvents() {
     "menuTitle",
     "menuSubtitle",
     "menuFooter",
-    "theme",
     "primaryColor",
     "backgroundColor",
     "cardColor",
+    "textColor",
+    "mutedColor",
+    "widthMode",
+    "columns",
     "width",
     "radius",
     "showUpdatedAt",
@@ -62,6 +85,12 @@ function bindEvents() {
       syncFormToMenu();
       renderAll();
     });
+  });
+
+  els.theme.addEventListener("input", () => {
+    applyThemePreset(els.theme.value);
+    syncFormToMenu();
+    renderAll();
   });
 }
 
@@ -114,9 +143,14 @@ function fillForm() {
   els.primaryColor.value = toColor(style.primary_color, "#7c3aed");
   els.backgroundColor.value = toColor(style.background_color, "#f8fafc");
   els.cardColor.value = toColor(style.card_color, "#ffffff");
-  els.width.value = style.width || 900;
+  els.textColor.value = toColor(style.text_color, "#111827");
+  els.mutedColor.value = toColor(style.muted_color, "#6b7280");
+  els.widthMode.value = style.width_mode || "auto";
+  els.columns.value = style.columns || 2;
+  els.width.value = style.width || 760;
   els.radius.value = style.radius ?? 24;
   els.showUpdatedAt.checked = style.show_updated_at !== false;
+  syncWidthControl();
 }
 
 function syncFormToMenu() {
@@ -134,11 +168,17 @@ function syncFormToMenu() {
     primary_color: els.primaryColor.value,
     background_color: els.backgroundColor.value,
     card_color: els.cardColor.value,
-    width: Number(els.width.value) || 900,
+    text_color: els.textColor.value,
+    muted_color: els.mutedColor.value,
+    width_mode: els.widthMode.value,
+    columns: Number(els.columns.value) || 2,
+    width: Number(els.width.value) || 760,
     radius: Number(els.radius.value) || 0,
     show_updated_at: els.showUpdatedAt.checked,
   };
   state.dirty = true;
+  syncWidthControl();
+  els.serverPreview.hidden = true;
 }
 
 function renderAll() {
@@ -155,18 +195,29 @@ function renderSectionsEditor() {
       <div class="section-head">
         <input value="${escapeAttr(section.title)}" aria-label="分组标题" />
         <div class="actions">
-          <button type="button" data-action="add-item">添加项</button>
+          <button type="button" data-action="move-up" ${sectionIndex === 0 ? "disabled" : ""}>上移</button>
+          <button type="button" data-action="move-down" ${sectionIndex === state.menu.sections.length - 1 ? "disabled" : ""}>下移</button>
+          <button type="button" data-action="copy-section">复制</button>
           <button type="button" data-action="remove-section" class="danger">删除分组</button>
         </div>
+      </div>
+      <div class="template-actions">
+        ${Object.entries(CARD_TEMPLATES).map(([key, template]) => `<button type="button" data-template="${key}">${template.label}</button>`).join("")}
       </div>
       <div class="items-editor"></div>`;
     const titleInput = card.querySelector("input");
     titleInput.addEventListener("input", () => {
       section.title = titleInput.value;
       state.dirty = true;
+      els.serverPreview.hidden = true;
       renderPreview();
     });
-    card.querySelector('[data-action="add-item"]').addEventListener("click", () => addItem(sectionIndex));
+    card.querySelectorAll("[data-template]").forEach((button) => {
+      button.addEventListener("click", () => addItem(sectionIndex, button.dataset.template));
+    });
+    card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveSection(sectionIndex, -1));
+    card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveSection(sectionIndex, 1));
+    card.querySelector('[data-action="copy-section"]').addEventListener("click", () => copySection(sectionIndex));
     card.querySelector('[data-action="remove-section"]').addEventListener("click", () => removeSection(sectionIndex));
     const itemsEl = card.querySelector(".items-editor");
     section.items.forEach((item, itemIndex) => itemsEl.append(renderItemEditor(item, sectionIndex, itemIndex)));
@@ -176,22 +227,37 @@ function renderSectionsEditor() {
 
 function renderItemEditor(item, sectionIndex, itemIndex) {
   const card = document.createElement("article");
-  card.className = "item-card";
+  const currentSize = cardSize(item.card_size);
+  card.className = `item-card size-${currentSize}`;
   card.innerHTML = `
-    <div class="item-head"><strong>菜单项 ${itemIndex + 1}</strong><button type="button" class="danger">删除</button></div>
+    <div class="item-head">
+      <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1}</strong>
+      <div class="actions">
+        <button type="button" data-action="move-up" ${itemIndex === 0 ? "disabled" : ""}>上移</button>
+        <button type="button" data-action="move-down" ${itemIndex === state.menu.sections[sectionIndex].items.length - 1 ? "disabled" : ""}>下移</button>
+        <button type="button" data-action="copy-item">复制</button>
+        <button type="button" data-action="remove-item" class="danger">删除</button>
+      </div>
+    </div>
     <div class="item-grid">
       <label class="field"><span>图标</span><input data-key="icon" value="${escapeAttr(item.icon || "")}" /></label>
+      <label class="field"><span>模板</span><select data-key="card_size">${cardSizeOptions(currentSize)}</select></label>
       <label class="field"><span>名称</span><input data-key="label" value="${escapeAttr(item.label || "")}" /></label>
       <label class="field"><span>指令</span><input data-key="command" value="${escapeAttr(item.command || "")}" /></label>
       <label class="field wide"><span>描述</span><input data-key="description" value="${escapeAttr(item.description || "")}" /></label>
     </div>
     <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>`;
-  card.querySelector("button").addEventListener("click", () => removeItem(sectionIndex, itemIndex));
-  card.querySelectorAll("input[data-key]").forEach((input) => {
+  card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, -1));
+  card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, 1));
+  card.querySelector('[data-action="copy-item"]').addEventListener("click", () => copyItem(sectionIndex, itemIndex));
+  card.querySelector('[data-action="remove-item"]').addEventListener("click", () => removeItem(sectionIndex, itemIndex));
+  card.querySelectorAll("[data-key]").forEach((input) => {
     input.addEventListener("input", () => {
       const key = input.dataset.key;
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       state.dirty = true;
+      els.serverPreview.hidden = true;
+      if (key === "card_size") renderSectionsEditor();
       renderPreview();
     });
   });
@@ -201,8 +267,19 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
 function renderPreview() {
   const menu = state.menu;
   const style = ensureStyle(menu);
+  const layout = previewLayout(menu);
+  const previewStyle = [
+    `--preview-primary:${style.primary_color}`,
+    `--preview-bg:${style.background_color}`,
+    `--preview-card:${style.card_color}`,
+    `--preview-text:${style.text_color || "#111827"}`,
+    `--preview-muted:${style.muted_color || "#6b7280"}`,
+    `--preview-radius:${style.radius || 24}px`,
+    `--preview-width:${layout.width}px`,
+    `--preview-columns:${layout.columns}`,
+  ].join(";");
   els.preview.innerHTML = `
-    <div class="preview-card" style="--preview-primary:${style.primary_color};--preview-bg:${style.background_color};--preview-card:${style.card_color};--preview-text:${style.text_color || "#111827"};--preview-muted:${style.muted_color || "#6b7280"};--preview-radius:${style.radius || 24}px;--preview-width:${style.width || 760}px">
+    <div class="preview-card" style="${previewStyle}">
       <div class="preview-inner">
         <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
         <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
@@ -212,7 +289,7 @@ function renderPreview() {
             <h3>${escapeHtml(section.title || "分组")}</h3>
             <div class="preview-items">
               ${section.items.map((item) => `
-                <div class="preview-item ${item.enabled === false ? "disabled" : ""}">
+                <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""}">
                   <div>${escapeHtml(item.icon || "•")}</div>
                   <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
                 </div>`).join("")}
@@ -221,14 +298,16 @@ function renderPreview() {
         <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
       </div>
     </div>`;
+  els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
 }
 
 function addSection() {
   state.menu.sections.push({
     title: "新分组",
-    items: [{ label: "新功能", command: "/command", description: "功能说明", icon: "✨", enabled: true }],
+    items: [createItemFromTemplate("standard")],
   });
   state.dirty = true;
+  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -236,18 +315,54 @@ function removeSection(index) {
   if (state.menu.sections.length <= 1) return setStatus("至少保留一个分组。");
   state.menu.sections.splice(index, 1);
   state.dirty = true;
+  els.serverPreview.hidden = true;
   renderAll();
 }
 
-function addItem(sectionIndex) {
-  state.menu.sections[sectionIndex].items.push({
-    label: "新功能",
-    command: "/command",
-    description: "功能说明",
-    icon: "✨",
-    enabled: true,
-  });
+function moveSection(index, direction) {
+  const target = index + direction;
+  if (target < 0 || target >= state.menu.sections.length) return;
+  const [section] = state.menu.sections.splice(index, 1);
+  state.menu.sections.splice(target, 0, section);
   state.dirty = true;
+  els.serverPreview.hidden = true;
+  renderAll();
+}
+
+function copySection(index) {
+  const copy = structuredClone(state.menu.sections[index]);
+  copy.title = `${copy.title || "分组"} 副本`;
+  state.menu.sections.splice(index + 1, 0, copy);
+  state.dirty = true;
+  els.serverPreview.hidden = true;
+  renderAll();
+}
+
+function addItem(sectionIndex, templateKey = "standard") {
+  state.menu.sections[sectionIndex].items.push(createItemFromTemplate(templateKey));
+  state.dirty = true;
+  els.serverPreview.hidden = true;
+  renderAll();
+}
+
+function moveItem(sectionIndex, itemIndex, direction) {
+  const items = state.menu.sections[sectionIndex].items;
+  const target = itemIndex + direction;
+  if (target < 0 || target >= items.length) return;
+  const [item] = items.splice(itemIndex, 1);
+  items.splice(target, 0, item);
+  state.dirty = true;
+  els.serverPreview.hidden = true;
+  renderAll();
+}
+
+function copyItem(sectionIndex, itemIndex) {
+  const items = state.menu.sections[sectionIndex].items;
+  const copy = structuredClone(items[itemIndex]);
+  copy.label = `${copy.label || "菜单项"} 副本`;
+  items.splice(itemIndex + 1, 0, copy);
+  state.dirty = true;
+  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -256,6 +371,7 @@ function removeItem(sectionIndex, itemIndex) {
   if (items.length <= 1) return setStatus("每个分组至少保留一个菜单项。");
   items.splice(itemIndex, 1);
   state.dirty = true;
+  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -286,7 +402,7 @@ function newMenu() {
     subtitle: "发送下列指令即可使用对应功能",
     footer: "",
     style: defaultStyle(),
-    sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", enabled: true }] }],
+    sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
   state.currentId = id;
   fillForm();
@@ -361,7 +477,7 @@ async function importMenus(event) {
 }
 
 function ensureStyle(menu) {
-  menu.style ||= defaultStyle();
+  menu.style = { ...defaultStyle(), ...(menu.style || {}) };
   return menu.style;
 }
 
@@ -374,9 +490,88 @@ function defaultStyle() {
     text_color: "#111827",
     muted_color: "#6b7280",
     radius: 24,
-    width: 900,
+    width_mode: "auto",
+    width: 760,
+    columns: 2,
     show_updated_at: true,
   };
+}
+
+function syncWidthControl() {
+  const isAuto = els.widthMode.value !== "custom";
+  els.width.disabled = isAuto;
+  els.width.closest(".field")?.classList.toggle("is-disabled", isAuto);
+}
+
+function applyThemePreset(theme) {
+  const preset = THEME_PRESETS[theme] || THEME_PRESETS.aurora;
+  els.primaryColor.value = preset.primary_color;
+  els.backgroundColor.value = preset.background_color;
+  els.cardColor.value = preset.card_color;
+  els.textColor.value = preset.text_color;
+  els.mutedColor.value = preset.muted_color;
+}
+
+function previewLayout(menu) {
+  const style = ensureStyle(menu);
+  const columns = clampNumber(style.columns, 1, 4, 2);
+  const itemCount = menu.sections.reduce((total, section) => total + section.items.length, 0);
+  if (style.width_mode === "custom") {
+    return { width: clampNumber(style.width, 520, 1400, 760), columns, itemCount };
+  }
+
+  let desiredCardWidth = 190;
+  menu.sections.forEach((section) => {
+    section.items.forEach((item) => {
+      const template = CARD_TEMPLATES[cardSize(item.card_size)];
+      const textUnits = Math.max(
+        String(item.label || "").length,
+        String(item.command || "").length,
+        Math.floor(String(item.description || "").length / 2),
+      );
+      desiredCardWidth = Math.max(desiredCardWidth, template.width, 150 + Math.min(150, textUnits * 6));
+    });
+  });
+
+  const sectionTitleUnits = menu.sections.reduce((longest, section) => Math.max(longest, String(section.title || "").length), 0);
+  const contentUnits = Math.max(
+    String(menu.title || "").length,
+    Math.floor(String(menu.subtitle || "").length / 2),
+    sectionTitleUnits,
+  );
+  const chromeWidth = 24 * 2 + 22 * 2 + 15 * 2;
+  const gridWidth = columns * desiredCardWidth + Math.max(0, columns - 1) * 10;
+  const titleWidth = 260 + Math.min(260, contentUnits * 10);
+  return { width: clampNumber(Math.max(gridWidth + chromeWidth, titleWidth), 520, 1200, 760), columns, itemCount };
+}
+
+function createItemFromTemplate(templateKey) {
+  const key = cardSize(templateKey);
+  const template = CARD_TEMPLATES[key];
+  return {
+    label: template.title,
+    command: template.command,
+    description: template.description,
+    icon: template.icon,
+    card_size: key,
+    enabled: true,
+  };
+}
+
+function cardSize(value) {
+  return CARD_TEMPLATES[value] ? value : "standard";
+}
+
+function cardSizeOptions(selected) {
+  return Object.entries(CARD_TEMPLATES)
+    .map(([key, template]) => `<option value="${key}" ${key === selected ? "selected" : ""}>${template.label}</option>`)
+    .join("");
+}
+
+function clampNumber(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number)));
 }
 
 function uniqueId(prefix) {

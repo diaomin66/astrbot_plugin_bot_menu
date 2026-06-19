@@ -11,6 +11,8 @@ HEX_COLOR_PATTERN = re.compile(r"^#[0-9A-Fa-f]{6}$")
 MAX_SECTIONS = 24
 MAX_ITEMS_PER_SECTION = 64
 MAX_TOTAL_ITEMS = 256
+WIDTH_MODES = {"auto", "custom"}
+CARD_SIZES = {"compact", "standard", "large", "banner"}
 
 
 class MenuValidationError(ValueError):
@@ -25,7 +27,9 @@ DEFAULT_STYLE: dict[str, Any] = {
     "text_color": "#111827",
     "muted_color": "#6b7280",
     "radius": 24,
-    "width": 900,
+    "width_mode": "auto",
+    "width": 760,
+    "columns": 2,
     "show_updated_at": True,
 }
 
@@ -143,7 +147,9 @@ def _normalize_style(raw_style: Any) -> dict[str, Any]:
         style[key] = _clean_color(style.get(key), default=DEFAULT_STYLE[key])
 
     style["radius"] = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48)
-    style["width"] = _clamp_int(style.get("width"), default=900, minimum=520, maximum=1400)
+    style["width_mode"] = _clean_choice(style.get("width_mode"), WIDTH_MODES, default="auto")
+    style["width"] = _clamp_int(style.get("width"), default=760, minimum=520, maximum=1400)
+    style["columns"] = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
     style["show_updated_at"] = bool(style.get("show_updated_at", True))
     return style
 
@@ -185,6 +191,7 @@ def _normalize_item(raw_item: Any, section_title: str, index: int) -> dict[str, 
         "command": _clean_text(raw_item.get("command"), "item command", default="", max_length=120),
         "description": _clean_text(raw_item.get("description"), "item description", default="", max_length=240),
         "icon": _clean_text(raw_item.get("icon"), "item icon", default="", max_length=12),
+        "card_size": _clean_choice(raw_item.get("card_size"), CARD_SIZES, default="standard"),
         "enabled": bool(raw_item.get("enabled", True)),
     }
 
@@ -203,6 +210,11 @@ def _clean_text(value: Any, field_name: str, *, default: str = "", max_length: i
 def _clean_color(value: Any, *, default: str) -> str:
     raw = _clean_text(value, "color", default=default, max_length=32)
     return raw if HEX_COLOR_PATTERN.fullmatch(raw) else default
+
+
+def _clean_choice(value: Any, choices: set[str], *, default: str) -> str:
+    raw = _clean_text(value, "choice", default=default, max_length=32).lower()
+    return raw if raw in choices else default
 
 
 def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:

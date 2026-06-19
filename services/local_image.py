@@ -12,16 +12,23 @@ from pathlib import Path
 from typing import Any
 
 
-def render_menu_image(menu: dict[str, Any], output_dir: str | Path, *, default_width: int = 900) -> str:
+def render_menu_image(
+    menu: dict[str, Any],
+    output_dir: str | Path,
+    *,
+    default_width: int = 900,
+    output_scale: int = 2,
+) -> str:
     """Render a menu to a high-quality local PNG file without relying on AstrBot's remote T2I service."""
 
     from PIL import Image, ImageDraw
 
     output_path = _build_output_path(menu, output_dir)
     base_width = _clamp_int(menu.get("style", {}).get("width"), default=default_width, minimum=520, maximum=1400)
-    
+    output_scale = _clamp_int(output_scale, default=2, minimum=1, maximum=4)
+
     # SSAA (Super Sampling Anti-Aliasing) scale factor
-    scale = 2
+    scale = max(2, output_scale)
     width = base_width * scale
     style = menu.get("style", {})
     primary = _color(style.get("primary_color"), "#7c3aed")
@@ -129,8 +136,10 @@ def render_menu_image(menu: dict[str, Any], output_dir: str | Path, *, default_w
             right = f"更新：{updated}"
             draw.text((x + content_width - _text_width(font_small, right), footer_y), right, font=font_small, fill=muted)
 
-    if scale > 1:
-        image = image.resize((base_width, int(height / scale)), Image.Resampling.LANCZOS)
+    target_width = base_width * output_scale
+    target_height = int(height * output_scale / scale)
+    if image.size != (target_width, target_height):
+        image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
     image.save(output_path, format="PNG")
@@ -151,6 +160,8 @@ def render_menu_via_browser(
     html_content: str,
     *,
     default_width: int = 900,
+    viewport_width: int | None = None,
+    device_scale_factor: int = 4,
 ) -> str:
     """Render a menu to a high-quality local PNG using the system's Edge browser."""
 
@@ -166,23 +177,17 @@ def render_menu_via_browser(
     if not browser_path:
         raise RuntimeError("No suitable browser (Edge/Chrome) found for local rendering.")
 
-    width = _clamp_int(menu.get("style", {}).get("width"), default=default_width, minimum=520, maximum=1400)
+    width = _clamp_int(viewport_width, default=default_width, minimum=520, maximum=1400)
     height = _estimate_preview_height(menu)
 
-    cmd = [
+    cmd = _build_browser_screenshot_command(
         browser_path,
-        "--headless",
-        "--disable-gpu",
-        "--no-sandbox",
-        "--hide-scrollbars",
-        "--run-all-compositor-stages-before-draw",
-        "--virtual-time-budget=1000",
-        "--force-device-scale-factor=2",
-        f"--window-size={width},{height}",
-        "--default-background-color=00000000",
-        f"--screenshot={screenshot_path}",
-        html_path.resolve().as_uri(),
-    ]
+        screenshot_path,
+        html_path,
+        width=width,
+        height=height,
+        device_scale_factor=device_scale_factor,
+    )
 
     try:
         completed = subprocess.run(cmd, check=True, capture_output=True, timeout=30)
@@ -207,6 +212,32 @@ def render_menu_via_browser(
             pass
 
     return str(output_path)
+
+
+def _build_browser_screenshot_command(
+    browser_path: str,
+    screenshot_path: Path,
+    html_path: Path,
+    *,
+    width: int,
+    height: int,
+    device_scale_factor: int,
+) -> list[str]:
+    scale = _clamp_int(device_scale_factor, default=4, minimum=1, maximum=4)
+    return [
+        browser_path,
+        "--headless",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--hide-scrollbars",
+        "--run-all-compositor-stages-before-draw",
+        "--virtual-time-budget=1000",
+        f"--force-device-scale-factor={scale}",
+        f"--window-size={width},{height}",
+        "--default-background-color=00000000",
+        f"--screenshot={screenshot_path}",
+        html_path.resolve().as_uri(),
+    ]
 
 
 def _find_browser_executable() -> str | None:

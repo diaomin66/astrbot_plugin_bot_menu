@@ -4,6 +4,14 @@ from datetime import datetime
 from html import escape
 from typing import Any
 
+CARD_SIZE_WIDTHS = {
+    "compact": 190,
+    "standard": 230,
+    "large": 285,
+    "banner": 360,
+}
+CARD_SIZE_VALUES = set(CARD_SIZE_WIDTHS)
+
 MENU_TEMPLATE = r"""
 <!doctype html>
 <html lang="zh-CN">
@@ -165,27 +173,18 @@ MENU_TEMPLATE = r"""
 
 
 def build_render_payload(menu: dict[str, Any], *, default_width: int = 900) -> tuple[str, dict[str, Any], dict[str, Any]]:
-    style = menu.setdefault("style", {})
-    try:
-        width = int(style.get("width") or default_width)
-    except (TypeError, ValueError):
-        width = default_width
-    style["width"] = max(520, min(1400, width))
-    data = {
-        "menu": menu,
-        "generated_at": _format_time(menu.get("updated_at")),
-    }
     options = {
         "type": "png",
         "full_page": True,
         "omit_background": False,
         "animations": "disabled",
     }
-    return MENU_TEMPLATE, data, options
+    return build_preview_html(menu, default_width=default_width), {}, options
 
 
 def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str:
     style = _normalized_style(menu, default_width=default_width)
+    width = preview_width_for_menu(menu, default_width=default_width)
     sections = "\n".join(_render_preview_section(section) for section in menu.get("sections", []))
     footer_status = "" if style["show_updated_at"] is False else "实时预览"
     style_attr = (
@@ -195,7 +194,8 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-text:{style['text_color']};"
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
-        f"--preview-width:{style['width']}px"
+        f"--preview-width:{width}px;"
+        f"--preview-columns:{style['columns']}"
     )
 
     return f"""<!doctype html>
@@ -206,7 +206,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; background: transparent; }}
     body {{
-      width: {style['width']}px;
+      width: {width}px;
       font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
       color: #0f172a;
     }}
@@ -219,13 +219,18 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       border-radius: var(--preview-radius, 24px);
       color: var(--preview-text, #111827);
       background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
+      text-rendering: geometricPrecision;
+      -webkit-font-smoothing: antialiased;
     }}
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
-    .preview-inner {{ padding: 22px; border-radius: inherit; background: rgba(255,255,255,.76); box-shadow: 0 20px 50px rgba(15,23,42,.12); }}
+    .preview-inner {{ padding: 22px; border-radius: inherit; background: rgba(255,255,255,.92); box-shadow: 0 16px 34px rgba(15,23,42,.10); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
     .preview-section {{ margin-top: 14px; padding: 15px; border-radius: 18px; background: var(--preview-card, #fff); }}
-    .preview-items {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
-    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,.8); }}
+    .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: 10px; }}
+    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,.94); }}
+    .preview-item.size-compact {{ grid-template-columns: 28px 1fr; min-height: 58px; padding: 8px; }}
+    .preview-item.size-large {{ grid-template-columns: 42px 1fr; min-height: 104px; padding: 14px; }}
+    .preview-item.size-banner {{ grid-column: 1 / -1; grid-template-columns: 46px 1fr; min-height: 112px; padding: 16px; }}
     .preview-item.disabled {{ opacity: .45; }}
     .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 12px; }}
     .preview-desc, .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
@@ -259,14 +264,47 @@ def _render_preview_section(section: dict[str, Any]) -> str:
 
 def _render_preview_item(item: dict[str, Any]) -> str:
     disabled = " disabled" if item.get("enabled") is False else ""
-    return f"""<div class="preview-item{disabled}">
+    size = _card_size(item.get("card_size"))
+    return f"""<div class="preview-item size-{size}{disabled}">
             <div>{_escape(item.get("icon") or "•")}</div>
             <div><strong>{_escape(item.get("label") or "未命名")}</strong><div class="preview-command">{_escape(item.get("command") or "")}</div><div class="preview-desc">{_escape(item.get("description") or "")}</div></div>
           </div>"""
 
 
+def preview_width_for_menu(menu: dict[str, Any], *, default_width: int = 900) -> int:
+    style = _normalized_style(menu, default_width=default_width)
+    if style["width_mode"] == "custom":
+        return style["width"]
+
+    columns = style["columns"]
+    desired_card_width = 190
+    for section in menu.get("sections", []):
+        for item in section.get("items", []):
+            size = _card_size(item.get("card_size"))
+            text_units = max(
+                len(str(item.get("label") or "")),
+                len(str(item.get("command") or "")),
+                len(str(item.get("description") or "")) // 2,
+            )
+            desired_card_width = max(desired_card_width, CARD_SIZE_WIDTHS[size], 150 + min(150, text_units * 6))
+
+    content_ch = max(
+        len(str(menu.get("title") or "")),
+        len(str(menu.get("subtitle") or "")) // 2,
+        *(len(str(section.get("title") or "")) for section in menu.get("sections", [])),
+        0,
+    )
+    chrome_width = 24 * 2 + 22 * 2 + 15 * 2
+    grid_width = columns * desired_card_width + max(0, columns - 1) * 10
+    title_width = 260 + min(260, content_ch * 10)
+    return _clamp_int(max(grid_width + chrome_width, title_width), default=default_width, minimum=520, maximum=1200)
+
+
 def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, Any]:
     style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
+    width_mode = str(style.get("width_mode") or "auto").strip().lower()
+    if width_mode not in {"auto", "custom"}:
+        width_mode = "auto"
     return {
         "primary_color": style.get("primary_color") or "#7c3aed",
         "background_color": style.get("background_color") or "#f8fafc",
@@ -274,9 +312,16 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
         "text_color": style.get("text_color") or "#111827",
         "muted_color": style.get("muted_color") or "#6b7280",
         "radius": _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48),
+        "width_mode": width_mode,
         "width": _clamp_int(style.get("width"), default=default_width, minimum=520, maximum=1400),
+        "columns": _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4),
         "show_updated_at": style.get("show_updated_at", True),
     }
+
+
+def _card_size(value: Any) -> str:
+    size = str(value or "standard").strip().lower()
+    return size if size in CARD_SIZE_VALUES else "standard"
 
 
 def _escape(value: Any) -> str:

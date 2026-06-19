@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+from pathlib import Path
 
 from services.menu_model import MenuValidationError, normalize_menu
-from services.local_image import image_file_to_data_url, render_menu_image
-from services.renderer import build_preview_html
+from services.local_image import _build_browser_screenshot_command, image_file_to_data_url, render_menu_image
+from services.renderer import build_preview_html, preview_width_for_menu
 from services.storage import MenuStorage
 
 
@@ -26,6 +27,27 @@ class MenuModelTests(unittest.TestCase):
         )
         self.assertEqual(menu["id"], "main")
         self.assertTrue(menu["sections"][0]["items"][0]["enabled"])
+        self.assertEqual(menu["style"]["width_mode"], "auto")
+        self.assertEqual(menu["style"]["columns"], 2)
+        self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "standard")
+
+    def test_normalize_menu_accepts_layout_and_card_size(self):
+        menu = normalize_menu(
+            {
+                "id": "main",
+                "style": {"width_mode": "custom", "width": 680, "columns": 3},
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [{"label": "公告", "card_size": "banner"}],
+                    }
+                ],
+            }
+        )
+        self.assertEqual(menu["style"]["width_mode"], "custom")
+        self.assertEqual(menu["style"]["width"], 680)
+        self.assertEqual(menu["style"]["columns"], 3)
+        self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
     def test_normalize_menu_rejects_invalid_id(self):
         with self.assertRaises(MenuValidationError):
@@ -76,16 +98,68 @@ class MenuStorageTests(unittest.TestCase):
             data_url = image_file_to_data_url(path)
             self.assertTrue(data_url.startswith("data:image/png;base64,"))
 
+    def test_pillow_renderer_can_output_high_resolution_png(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            path = render_menu_image(storage.get_menu("default"), tmp, output_scale=3)
+            with Image.open(path) as image:
+                self.assertEqual(image.width, storage.get_menu("default")["style"]["width"] * 3)
+
+    def test_browser_screenshot_command_uses_high_scale_factor(self):
+        command = _build_browser_screenshot_command(
+            "browser.exe",
+            Path("out.png"),
+            Path("preview.html"),
+            width=660,
+            height=900,
+            device_scale_factor=4,
+        )
+        self.assertIn("--force-device-scale-factor=4", command)
+
     def test_preview_html_uses_page_preview_markup(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
-            html = build_preview_html(storage.get_menu("default"))
+            menu = storage.get_menu("default")
+            width = preview_width_for_menu(menu)
+            html = build_preview_html(menu)
             self.assertIn('class="preview-card"', html)
-            self.assertIn("--preview-width:900px", html)
+            self.assertLess(width, 900)
+            self.assertIn(f"--preview-width:{width}px", html)
+            self.assertIn("--preview-columns:2", html)
             self.assertIn('class="preview-inner"', html)
-            self.assertIn('class="preview-item', html)
+            self.assertIn('class="preview-item size-standard', html)
             self.assertIn("实时预览", html)
             self.assertNotIn("更新：", html)
+
+    def test_preview_width_can_be_customized(self):
+        menu = normalize_menu(
+            {
+                "id": "wide",
+                "style": {"width_mode": "custom", "width": 720, "columns": 1},
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        self.assertEqual(preview_width_for_menu(menu), 720)
+        self.assertIn("--preview-columns:1", build_preview_html(menu))
+
+    def test_preview_width_grows_with_columns(self):
+        one_column = normalize_menu(
+            {
+                "id": "one",
+                "style": {"width_mode": "auto", "columns": 1},
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        four_columns = normalize_menu(
+            {
+                "id": "four",
+                "style": {"width_mode": "auto", "columns": 4},
+                "sections": [{"title": "功能", "items": [{"label": "帮助"} for _ in range(4)]}],
+            }
+        )
+        self.assertLess(preview_width_for_menu(one_column), preview_width_for_menu(four_columns))
 
 
 if __name__ == "__main__":

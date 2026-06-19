@@ -6,8 +6,9 @@
 
 - 插件 Pages 页面：`menu-editor`
 - 多菜单方案：支持新建、复制、删除、导入、导出
-- 可视化编辑：标题、副标题、分组、菜单项、图标、指令、描述、启用状态
-- 样式配置：主题、主色、背景色、卡片色、宽度、圆角、更新时间
+- 可视化编辑：标题、副标题、分组、菜单项、图标、指令、描述、启用状态，支持分组和菜单项复制、上移、下移
+- 样式配置：主题预设、主色、背景色、卡片色、文字色、辅助文字色、智能/手动宽度、每行卡片数、圆角、更新时间
+- 卡片模板：支持紧凑、标准、大卡、横幅四种菜单项模板，并可在编辑器中随时切换
 - 聊天指令：
   - `/menu`：发送默认菜单
   - `/menu <方案ID>`：发送指定菜单
@@ -36,6 +37,7 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 
 - `default_menu_id`：默认菜单方案 ID。
 - `render_width`：默认渲染宽度。
+- `render_scale`：图片清晰度倍率，默认 `4`，用于 browser 截图和 Pillow 降级渲染。
 - `render_mode`：菜单图片渲染模式，默认 `browser`（调用系统 Edge/Chrome），可选 `auto`、`remote` 或 `pillow`。
 - `show_render_error_detail`：调试时在聊天侧显示详细渲染错误。
 
@@ -47,4 +49,4 @@ data/plugin_data/astrbot_plugin_bot_menu/menus.json
 
 ## 说明
 
-本插件默认调用 Windows 系统内置的 Edge 浏览器或 Chrome 进行无头高清截图（`browser` 模式），复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
+本插件默认调用 Windows 系统内置的 Edge 浏览器或 Chrome 进行 4x 无头高清截图（`browser` 模式），复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。Page 中的智能宽度会按标题、描述、卡片模板和每行卡片数自动计算图片宽度，避免少量内容渲染出过宽图片；需要固定尺寸时也可以切换为手动宽度。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。

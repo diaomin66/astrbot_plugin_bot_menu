@@ -14,6 +14,7 @@ from .services import (
     build_render_payload,
     image_file_to_data_url,
     normalize_menu,
+    preview_width_for_menu,
     render_menu_image,
     render_menu_via_browser,
 )
@@ -187,23 +188,32 @@ class BotMenuPlugin(Star):
 
     async def _render_menu(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
         default_width = self._config_int("render_width", 900)
+        render_scale = max(1, min(4, self._config_int("render_scale", 4)))
         if not render_mode:
             render_mode = str(self._config_get("render_mode", "browser") or "browser").strip().lower()
 
         if render_mode == "pillow":
-            return render_menu_image(menu, self.storage.data_dir, default_width=default_width)
+            return render_menu_image(menu, self.storage.data_dir, default_width=default_width, output_scale=render_scale)
 
         if render_mode in {"browser", "local", "auto"}:  # local is fallback mapping to browser for old configs
             try:
                 html_content = build_preview_html(menu, default_width=default_width)
-                return render_menu_via_browser(menu, self.storage.data_dir, html_content, default_width=default_width)
+                viewport_width = preview_width_for_menu(menu, default_width=default_width)
+                return render_menu_via_browser(
+                    menu,
+                    self.storage.data_dir,
+                    html_content,
+                    default_width=default_width,
+                    viewport_width=viewport_width,
+                    device_scale_factor=render_scale,
+                )
             except Exception as exc:
                 import traceback
                 if render_mode == "auto":
                     logger.warning("Local browser rendering failed, falling back to remote HTML render: %s\n%s", exc, traceback.format_exc())
                 else:
                     logger.warning("Local browser rendering failed, falling back to Pillow PNG: %s\n%s", exc, traceback.format_exc())
-                    return render_menu_image(menu, self.storage.data_dir, default_width=default_width)
+                    return render_menu_image(menu, self.storage.data_dir, default_width=default_width, output_scale=render_scale)
 
         template, data, options = build_render_payload(menu, default_width=default_width)
         try:
@@ -212,7 +222,7 @@ class BotMenuPlugin(Star):
             if render_mode == "remote":
                 raise
             logger.warning("Remote menu rendering failed, falling back to Pillow PNG: %s", exc)
-            return render_menu_image(menu, self.storage.data_dir, default_width=default_width)
+            return render_menu_image(menu, self.storage.data_dir, default_width=default_width, output_scale=render_scale)
 
     def _preview_image_url(self, image_url_or_path: str) -> str:
         """Return a URL that can be rendered inside the plugin Page iframe."""
