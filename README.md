@@ -36,7 +36,7 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 
 - `default_menu_id`：默认菜单方案 ID。
 - `render_width`：默认渲染宽度。
-- `render_mode`：菜单图片渲染模式，默认 `local`，可选 `auto` 或 `remote`。
+- `render_mode`：菜单图片渲染模式，默认 `browser`（调用系统 Edge/Chrome），可选 `auto`、`remote` 或 `pillow`。
 - `show_render_error_detail`：调试时在聊天侧显示详细渲染错误。
 
 菜单正文数据保存在：
@@ -47,4 +47,4 @@ data/plugin_data/astrbot_plugin_bot_menu/menus.json
 
 ## 说明
 
-本插件默认使用本地 PNG 渲染，避免 `/menu` 受远程 T2I 服务 502、超时或不可用影响。若需要使用 AstrBot 内置 `html_render()`，可将 `render_mode` 改为 `auto` 或 `remote`；其中 `auto` 会在远程 T2I 失败后回退到本地 PNG。插件 Web API 同时兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
+本插件默认调用 Windows 系统内置的 Edge 浏览器或 Chrome 进行无头高清截图（`browser` 模式），复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。

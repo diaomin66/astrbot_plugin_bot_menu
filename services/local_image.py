@@ -3,6 +3,9 @@ from __future__ import annotations
 import base64
 import hashlib
 import json
+import os
+import shutil
+import subprocess
 import textwrap
 from datetime import datetime
 from pathlib import Path
@@ -140,6 +143,128 @@ def image_file_to_data_url(path: str | Path) -> str:
     image_path = Path(path)
     raw = image_path.read_bytes()
     return f"data:image/png;base64,{base64.b64encode(raw).decode('ascii')}"
+
+
+def render_menu_via_browser(
+    menu: dict[str, Any],
+    output_dir: str | Path,
+    html_content: str,
+    *,
+    default_width: int = 900,
+) -> str:
+    """Render a menu to a high-quality local PNG using the system's Edge browser."""
+
+    output_path = _build_output_path(menu, output_dir, prefix="browser")
+    output_path.parent.mkdir(parents=True, exist_ok=True)
+    screenshot_path = output_path.resolve()
+
+    html_path = output_path.with_suffix(".html")
+    html_path.write_text(html_content, encoding="utf-8")
+
+    browser_path = _find_browser_executable()
+
+    if not browser_path:
+        raise RuntimeError("No suitable browser (Edge/Chrome) found for local rendering.")
+
+    width = _clamp_int(menu.get("style", {}).get("width"), default=default_width, minimum=520, maximum=1400)
+    height = _estimate_preview_height(menu)
+
+    cmd = [
+        browser_path,
+        "--headless",
+        "--disable-gpu",
+        "--no-sandbox",
+        "--hide-scrollbars",
+        "--run-all-compositor-stages-before-draw",
+        "--virtual-time-budget=1000",
+        "--force-device-scale-factor=2",
+        f"--window-size={width},{height}",
+        "--default-background-color=00000000",
+        f"--screenshot={screenshot_path}",
+        html_path.resolve().as_uri(),
+    ]
+
+    try:
+        completed = subprocess.run(cmd, check=True, capture_output=True, timeout=30)
+    except subprocess.CalledProcessError as exc:
+        stderr = _decode_process_output(exc.stderr)
+        stdout = _decode_process_output(exc.stdout)
+        detail = stderr or stdout or str(exc)
+        raise RuntimeError(f"Browser screenshot failed: {detail}") from exc
+    except subprocess.TimeoutExpired as exc:
+        raise RuntimeError("Browser screenshot timed out.") from exc
+    else:
+        if not screenshot_path.is_file():
+            stderr = _decode_process_output(completed.stderr)
+            stdout = _decode_process_output(completed.stdout)
+            detail = stderr or stdout or "browser did not create the screenshot file"
+            raise RuntimeError(f"Browser screenshot failed: {detail}")
+        _crop_transparent_padding(output_path)
+    finally:
+        try:
+            html_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+    return str(output_path)
+
+
+def _find_browser_executable() -> str | None:
+    env_browser = os.environ.get("BOT_MENU_BROWSER") or os.environ.get("BROWSER")
+    if env_browser and Path(env_browser).exists():
+        return env_browser
+
+    for name in ("msedge", "msedge.exe", "chrome", "chrome.exe", "chromium", "chromium.exe"):
+        found = shutil.which(name)
+        if found:
+            return found
+
+    browser_paths = [
+        r"C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files\Microsoft\Edge\Application\msedge.exe",
+        r"C:\Program Files (x86)\Google\Chrome\Application\chrome.exe",
+        r"C:\Program Files\Google\Chrome\Application\chrome.exe",
+    ]
+    return next((path for path in browser_paths if os.path.exists(path)), None)
+
+
+def _estimate_preview_height(menu: dict[str, Any]) -> int:
+    item_count = 0
+    section_count = 0
+    text_units = 0
+    for section in menu.get("sections", []):
+        section_count += 1
+        text_units += len(str(section.get("title") or ""))
+        for item in section.get("items", []):
+            item_count += 1
+            text_units += len(str(item.get("label") or ""))
+            text_units += len(str(item.get("command") or ""))
+            text_units += len(str(item.get("description") or ""))
+
+    estimated = 260 + section_count * 90 + item_count * 95 + (text_units // 28) * 24
+    return max(900, min(30000, estimated))
+
+
+def _crop_transparent_padding(path: Path) -> None:
+    try:
+        from PIL import Image
+    except ImportError:
+        return
+
+    with Image.open(path) as img:
+        rgba = img.convert("RGBA")
+        bbox = rgba.getbbox()
+        if not bbox or bbox == (0, 0, rgba.width, rgba.height):
+            return
+        rgba.crop(bbox).save(path, format="PNG")
+
+
+def _decode_process_output(value: bytes | str | None) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    return value.decode("utf-8", errors="replace").strip()
 
 
 def _draw_item(draw, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale) -> None:
@@ -293,8 +418,8 @@ def _format_time(value: Any) -> str:
     return value.replace("T", " ").replace("+00:00", " UTC")[:19]
 
 
-def _build_output_path(menu: dict[str, Any], output_dir: str | Path) -> Path:
+def _build_output_path(menu: dict[str, Any], output_dir: str | Path, prefix: str = "menu") -> Path:
     raw = json.dumps(menu, ensure_ascii=False, sort_keys=True).encode("utf-8")
     digest = hashlib.sha1(raw).hexdigest()[:12]
     safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
-    return Path(output_dir) / "rendered" / f"{safe_id}-{digest}.png"
+    return Path(output_dir) / "rendered" / f"{safe_id}-{prefix}-{digest}.png"

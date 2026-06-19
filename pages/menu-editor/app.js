@@ -202,7 +202,7 @@ function renderPreview() {
   const menu = state.menu;
   const style = ensureStyle(menu);
   els.preview.innerHTML = `
-    <div class="preview-card" style="--preview-primary:${style.primary_color};--preview-bg:${style.background_color};--preview-card:${style.card_color};--preview-text:${style.text_color || "#111827"};--preview-muted:${style.muted_color || "#6b7280"};--preview-radius:${style.radius || 24}px">
+    <div class="preview-card" style="--preview-primary:${style.primary_color};--preview-bg:${style.background_color};--preview-card:${style.card_color};--preview-text:${style.text_color || "#111827"};--preview-muted:${style.muted_color || "#6b7280"};--preview-radius:${style.radius || 24}px;--preview-width:${style.width || 760}px">
       <div class="preview-inner">
         <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
         <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>

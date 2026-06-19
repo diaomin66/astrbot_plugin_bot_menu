@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+from html import escape
 from typing import Any
 
 MENU_TEMPLATE = r"""
@@ -183,7 +184,114 @@ def build_render_payload(menu: dict[str, Any], *, default_width: int = 900) -> t
     return MENU_TEMPLATE, data, options
 
 
+def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str:
+    style = _normalized_style(menu, default_width=default_width)
+    sections = "\n".join(_render_preview_section(section) for section in menu.get("sections", []))
+    footer_status = "" if style["show_updated_at"] is False else "实时预览"
+    style_attr = (
+        f"--preview-primary:{style['primary_color']};"
+        f"--preview-bg:{style['background_color']};"
+        f"--preview-card:{style['card_color']};"
+        f"--preview-text:{style['text_color']};"
+        f"--preview-muted:{style['muted_color']};"
+        f"--preview-radius:{style['radius'] or 24}px;"
+        f"--preview-width:{style['width']}px"
+    )
+
+    return f"""<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <style>
+    * {{ box-sizing: border-box; }}
+    html, body {{ margin: 0; padding: 0; background: transparent; }}
+    body {{
+      width: {style['width']}px;
+      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      color: #0f172a;
+    }}
+    h1, h2, p {{ margin-top: 0; }}
+    .kicker {{ margin-bottom: 6px; color: var(--primary, #7c3aed); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }}
+    .preview-card {{
+      width: var(--preview-width, 760px);
+      margin: auto;
+      padding: 24px;
+      border-radius: var(--preview-radius, 24px);
+      color: var(--preview-text, #111827);
+      background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
+    }}
+    .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
+    .preview-inner {{ padding: 22px; border-radius: inherit; background: rgba(255,255,255,.76); box-shadow: 0 20px 50px rgba(15,23,42,.12); }}
+    .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
+    .preview-section {{ margin-top: 14px; padding: 15px; border-radius: 18px; background: var(--preview-card, #fff); }}
+    .preview-items {{ display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }}
+    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,.8); }}
+    .preview-item.disabled {{ opacity: .45; }}
+    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 12px; }}
+    .preview-desc, .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
+    .preview-footer {{ display: flex; justify-content: space-between; margin-top: 16px; font-size: 12px; }}
+  </style>
+</head>
+<body>
+  <div class="preview-card" style="{style_attr}">
+    <div class="preview-inner">
+      <div class="kicker">📋 {_escape(menu.get("name") or menu.get("id"))}</div>
+      <h1 class="preview-title">{_escape(menu.get("title") or "Bot 功能菜单")}</h1>
+      <div class="preview-sub">{_escape(menu.get("subtitle") or "")}</div>
+      {sections}
+      <div class="preview-footer"><span>{_escape(menu.get("footer") or "")}</span><span>{footer_status}</span></div>
+    </div>
+  </div>
+</body>
+</html>
+"""
+
+
+def _render_preview_section(section: dict[str, Any]) -> str:
+    items = "\n".join(_render_preview_item(item) for item in section.get("items", []))
+    return f"""<section class="preview-section">
+        <h3>{_escape(section.get("title") or "分组")}</h3>
+        <div class="preview-items">
+          {items}
+        </div>
+      </section>"""
+
+
+def _render_preview_item(item: dict[str, Any]) -> str:
+    disabled = " disabled" if item.get("enabled") is False else ""
+    return f"""<div class="preview-item{disabled}">
+            <div>{_escape(item.get("icon") or "•")}</div>
+            <div><strong>{_escape(item.get("label") or "未命名")}</strong><div class="preview-command">{_escape(item.get("command") or "")}</div><div class="preview-desc">{_escape(item.get("description") or "")}</div></div>
+          </div>"""
+
+
+def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, Any]:
+    style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
+    return {
+        "primary_color": style.get("primary_color") or "#7c3aed",
+        "background_color": style.get("background_color") or "#f8fafc",
+        "card_color": style.get("card_color") or "#ffffff",
+        "text_color": style.get("text_color") or "#111827",
+        "muted_color": style.get("muted_color") or "#6b7280",
+        "radius": _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48),
+        "width": _clamp_int(style.get("width"), default=default_width, minimum=520, maximum=1400),
+        "show_updated_at": style.get("show_updated_at", True),
+    }
+
+
+def _escape(value: Any) -> str:
+    return escape(str(value or ""), quote=True).replace("&#x27;", "&#39;")
+
+
 def _format_time(value: Any) -> str:
     if not isinstance(value, str) or not value:
         return datetime.now().strftime("%Y-%m-%d %H:%M")
     return value.replace("T", " ").replace("+00:00", " UTC")[:19]
+
+
+def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
+    try:
+        parsed = int(value)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(minimum, min(maximum, parsed))

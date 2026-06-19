@@ -5,6 +5,7 @@ import unittest
 
 from services.menu_model import MenuValidationError, normalize_menu
 from services.local_image import image_file_to_data_url, render_menu_image
+from services.renderer import build_preview_html
 from services.storage import MenuStorage
 
 
@@ -74,6 +75,17 @@ class MenuStorageTests(unittest.TestCase):
             path = render_menu_image(storage.get_menu("default"), tmp)
             data_url = image_file_to_data_url(path)
             self.assertTrue(data_url.startswith("data:image/png;base64,"))
+
+    def test_preview_html_uses_page_preview_markup(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            html = build_preview_html(storage.get_menu("default"))
+            self.assertIn('class="preview-card"', html)
+            self.assertIn("--preview-width:900px", html)
+            self.assertIn('class="preview-inner"', html)
+            self.assertIn('class="preview-item', html)
+            self.assertIn("实时预览", html)
+            self.assertNotIn("更新：", html)
 
 
 if __name__ == "__main__":
