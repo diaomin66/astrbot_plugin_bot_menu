@@ -8,53 +8,62 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
-      <div>
-        <p class="kicker">AstrBot Plugin Page</p>
-        <h1>Bot 菜单</h1>
-        <p class="muted">编辑菜单方案，实时预览聊天中发送的图片样式。</p>
-      </div>
-
-      <label class="field">
-        <span>菜单方案</span>
-        <select id="schemeSelect"></select>
-      </label>
-
-      <div class="button-grid">
-        <button id="newBtn" type="button">新建</button>
-        <button id="copyBtn" type="button">复制</button>
-        <button id="deleteBtn" type="button" class="danger">删除</button>
-        <button id="exportBtn" type="button">导出</button>
-      </div>
-
-      <label class="import-box">
-        <input id="importInput" type="file" accept="application/json,.json" />
-        <span>导入 JSON</span>
-      </label>
-
-      <div id="status" class="status">正在加载...</div>
-    </aside>
-
-    <main class="editor">
-      <section class="panel form-panel">
-        <div class="panel-head">
+    <main class="preview-stage">
+      <section class="panel preview-panel">
+        <div class="panel-head preview-head">
           <div>
-            <p class="kicker">Settings</p>
-            <h2>菜单内容</h2>
+            <p class="kicker">Live Preview</p>
+            <h1>菜单图片预览</h1>
           </div>
-          <div class="actions">
-            <button id="addSectionBtn" type="button">添加分组</button>
-            <button id="saveBtn" type="button" class="primary">保存</button>
+          <div class="preview-actions">
+            <span id="previewMeta" class="preview-meta"></span>
+            <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
           </div>
         </div>
+        <div id="preview" class="menu-preview"></div>
+        <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />
+      </section>
+    </main>
 
-        <div class="form-grid">
+    <aside class="editor-rail">
+      <section class="panel control-panel">
+        <div class="rail-head">
+          <div>
+            <p class="kicker">Editor</p>
+            <h2>Bot 菜单</h2>
+          </div>
+          <button id="saveBtn" type="button" class="primary">保存</button>
+        </div>
+
+        <label class="field">
+          <span>菜单方案</span>
+          <select id="schemeSelect"></select>
+        </label>
+
+        <div class="button-grid">
+          <button id="newBtn" type="button">新建</button>
+          <button id="copyBtn" type="button">复制</button>
+          <button id="deleteBtn" type="button" class="danger">删除</button>
+          <button id="exportBtn" type="button">导出</button>
+        </div>
+
+        <label class="import-box">
+          <input id="importInput" type="file" accept="application/json,.json" />
+          <span>导入 JSON</span>
+        </label>
+
+        <div id="status" class="status">正在加载...</div>
+
+        <details open class="style-box">
+          <summary>基础内容</summary>
+          <div class="form-grid">
           <label class="field"><span>方案 ID</span><input id="menuId" autocomplete="off" /></label>
           <label class="field"><span>方案名称</span><input id="menuName" /></label>
           <label class="field wide"><span>标题</span><input id="menuTitle" /></label>
           <label class="field wide"><span>副标题</span><input id="menuSubtitle" /></label>
           <label class="field wide"><span>页脚</span><input id="menuFooter" /></label>
-        </div>
+          </div>
+        </details>
 
         <details open class="style-box">
           <summary>样式设置</summary>
@@ -73,24 +82,13 @@
           </div>
         </details>
 
+        <div class="section-toolbar">
+          <span>菜单分组</span>
+          <button id="addSectionBtn" type="button">添加分组</button>
+        </div>
         <div id="sections" class="sections-editor"></div>
       </section>
-
-      <section class="panel preview-panel">
-        <div class="panel-head">
-          <div>
-            <p class="kicker">Preview</p>
-            <h2>实时预览</h2>
-          </div>
-          <div class="preview-actions">
-            <span id="previewMeta" class="preview-meta"></span>
-            <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
-          </div>
-        </div>
-        <div id="preview" class="menu-preview"></div>
-        <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />
-      </section>
-    </main>
+    </aside>
   </div>
   <script type="module" src="./app.js"></script>
 </body>

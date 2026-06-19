@@ -63,6 +63,11 @@ function bindEvents() {
   $("serverPreviewBtn").addEventListener("click", serverPreview);
   $("exportBtn").addEventListener("click", exportMenus);
   $("importInput").addEventListener("change", importMenus);
+  if (window.ResizeObserver) {
+    new ResizeObserver(fitPreviewToStage).observe(els.preview);
+  } else {
+    window.addEventListener("resize", fitPreviewToStage);
+  }
 
   [
     "menuId",
@@ -279,26 +284,45 @@ function renderPreview() {
     `--preview-columns:${layout.columns}`,
   ].join(";");
   els.preview.innerHTML = `
-    <div class="preview-card" style="${previewStyle}">
-      <div class="preview-inner">
-        <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
-        <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
-        <div class="preview-sub">${escapeHtml(menu.subtitle || "")}</div>
-        ${menu.sections.map((section) => `
-          <section class="preview-section">
-            <h3>${escapeHtml(section.title || "分组")}</h3>
-            <div class="preview-items">
-              ${section.items.map((item) => `
-                <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""}">
-                  <div>${escapeHtml(item.icon || "•")}</div>
-                  <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
-                </div>`).join("")}
-            </div>
-          </section>`).join("")}
-        <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
+    <div class="preview-fit" style="--preview-scale:1">
+      <div class="preview-card" style="${previewStyle}">
+        <div class="preview-inner">
+          <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
+          <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
+          <div class="preview-sub">${escapeHtml(menu.subtitle || "")}</div>
+          ${menu.sections.map((section) => `
+            <section class="preview-section">
+              <h3>${escapeHtml(section.title || "分组")}</h3>
+              <div class="preview-items">
+                ${section.items.map((item) => `
+                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""}">
+                    <div>${escapeHtml(item.icon || "•")}</div>
+                    <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
+                  </div>`).join("")}
+              </div>
+            </section>`).join("")}
+          <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
+        </div>
       </div>
     </div>`;
   els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  fitPreviewToStage();
+}
+
+function fitPreviewToStage() {
+  requestAnimationFrame(() => {
+    const fit = els.preview.querySelector(".preview-fit");
+    const card = els.preview.querySelector(".preview-card");
+    if (!fit || !card) return;
+    fit.style.setProperty("--preview-scale", "1");
+    const previewStyles = getComputedStyle(els.preview);
+    const horizontalPadding = parseFloat(previewStyles.paddingLeft) + parseFloat(previewStyles.paddingRight);
+    const availableWidth = Math.max(1, els.preview.clientWidth - horizontalPadding);
+    const naturalWidth = card.offsetWidth || parseFloat(getComputedStyle(card).width) || availableWidth;
+    const scale = Math.min(1, availableWidth / naturalWidth);
+    fit.style.setProperty("--preview-scale", scale.toFixed(4));
+    els.preview.classList.toggle("is-scaled", scale < 0.999);
+  });
 }
 
 function addSection() {
