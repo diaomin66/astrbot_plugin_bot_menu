@@ -125,7 +125,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .compact-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
 .compact-head h2 { margin: 0; font-size: 18px; }
 .preview-actions { display: flex; align-items: center; justify-content: flex-end; flex-wrap: wrap; gap: 8px; }
-.hint-pill, .preview-meta {
+.hint-pill, .preview-meta, .bg-edit-toggle {
   display: inline-flex;
   align-items: center;
   min-height: 26px;
@@ -137,6 +137,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
   font-size: 12px;
   font-weight: 800;
 }
+.bg-edit-toggle {
+  min-height: 26px;
+  padding: 5px 10px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 900;
+}
+.bg-edit-toggle.is-active {
+  color: #fff;
+  border-color: transparent;
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  box-shadow: 0 10px 24px rgba(217, 119, 6, .22);
+}
+.preview-card.is-bg-editing { outline: 3px solid rgba(245, 158, 11, .42); outline-offset: 5px; }
+.preview-card.is-bg-editing .preview-inner { pointer-events: none; }
 .status { padding: 9px 11px; border-radius: 14px; background: rgba(124,58,237,.08); color: var(--muted); white-space: pre-wrap; font-size: 13px; }
 .status[data-tone="success"] { color: #047857; background: rgba(16,185,129,.12); }
 .status[data-tone="warning"] { color: #b45309; background: rgba(245,158,11,.13); }
@@ -226,7 +241,6 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .resize-handle.ne { right: -8px; top: -8px; cursor: nesw-resize; }
 .resize-handle.sw { left: -8px; bottom: -8px; cursor: nesw-resize; }
 .resize-handle.se { right: -8px; bottom: -8px; cursor: nwse-resize; }
-.server-preview { width: 100%; max-height: 34vh; object-fit: contain; border-radius: 18px; border: 1px solid var(--line); }
 .modal { position: fixed; inset: 0; z-index: 100; display: grid; place-items: center; padding: 18px; }
 .modal[hidden] { display: none; }
 .modal-backdrop { position: absolute; inset: 0; background: rgba(15,23,42,.42); backdrop-filter: blur(8px); }

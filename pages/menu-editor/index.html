@@ -31,7 +31,6 @@
           <input id="importInput" type="file" accept="application/json,.json" />
           <span>导入</span>
         </label>
-        <button id="serverPreviewBtn" type="button">服务端预览</button>
         <button id="saveBtn" type="button" class="primary">保存</button>
       </div>
     </header>
@@ -48,6 +47,7 @@
             <span class="hint-pill">内容层=全部分组</span>
             <span class="hint-pill">分组=卡片列表</span>
             <span class="hint-pill">小卡片=内容</span>
+            <button id="backgroundEditToggleBtn" type="button" class="bg-edit-toggle" aria-pressed="false">编辑背景图</button>
             <span id="previewMeta" class="preview-meta"></span>
           </div>
         </div>
@@ -55,7 +55,6 @@
         <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
         <div id="status" class="status">正在加载...</div>
         <div id="preview" class="menu-preview"></div>
-        <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />
       </section>
     </main>
   </div>

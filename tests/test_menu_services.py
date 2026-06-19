@@ -259,6 +259,19 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('id="sectionGap" type="number" min="0" max="200"', index_html)
         self.assertIn("theme-preset-cards", css)
         self.assertIn("validation-summary", css)
+        self.assertIn("discardUnsavedMenu", app_js)
+        self.assertIn("backgroundEditMode", app_js)
+        self.assertIn("toggleBackgroundEditMode", app_js)
+        self.assertIn('id="backgroundEditToggleBtn"', index_html)
+        self.assertIn("is-bg-editing", css)
+        self.assertNotIn("serverPreview", app_js + index_html + css)
+        self.assertNotIn("menus/preview", app_js)
+
+    def test_server_preview_api_is_removed(self):
+        main_py = Path("main.py").read_text(encoding="utf-8")
+        self.assertNotIn("menus/preview", main_py)
+        self.assertNotIn("api_preview_menu", main_py)
+        self.assertNotIn("_preview_image_url", main_py)
 
     def test_browser_screenshot_command_uses_high_scale_factor(self):
         command = _build_browser_screenshot_command(

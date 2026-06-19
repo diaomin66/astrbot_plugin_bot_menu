@@ -37,6 +37,7 @@ const state = {
   restoredDraftIds: new Set(),
   collapsedKeys: new Set(),
   renderStatusTimer: 0,
+  backgroundEditMode: false,
 };
 
 const els = {
@@ -44,6 +45,8 @@ const els = {
   status: $("status"),
   saveState: $("saveState"),
   saveBtn: $("saveBtn"),
+  deleteBtn: $("deleteBtn"),
+  backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
   renderStatus: $("renderStatus"),
   validationSummary: $("validationSummary"),
   sections: $("sections"),
@@ -79,7 +82,6 @@ const els = {
   radius: $("radius"),
   showUpdatedAt: $("showUpdatedAt"),
   itemSearch: $("itemSearch"),
-  serverPreview: $("serverPreview"),
   previewMeta: $("previewMeta"),
   editorModal: $("editorModal"),
   modalTitle: $("modalTitle"),
@@ -102,12 +104,12 @@ function bindEvents() {
   });
   $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
   $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
-  $("deleteBtn").addEventListener("click", deleteMenu);
+  els.deleteBtn.addEventListener("click", deleteMenu);
+  els.backgroundEditToggleBtn.addEventListener("click", toggleBackgroundEditMode);
   $("saveBtn").addEventListener("click", saveMenu);
   $("copyStyleBtn").addEventListener("click", copyStyleToMenus);
   $("resetStyleBtn").addEventListener("click", resetCurrentStyle);
   $("addSectionBtn").addEventListener("click", addSection);
-  $("serverPreviewBtn").addEventListener("click", serverPreview);
   $("exportBtn").addEventListener("click", exportMenus);
   $("importInput").addEventListener("change", importMenus);
   if (window.ResizeObserver) {
@@ -189,6 +191,7 @@ async function selectMenu(id) {
   const menu = state.menus.find((item) => item.id === id) || state.menus[0];
   if (!menu) return;
   state.currentId = menu.id;
+  state.backgroundEditMode = false;
   const serverMenu = structuredClone(menu);
   state.menu = maybeRestoreDraft(serverMenu);
   state.dirty = state.menu !== serverMenu;
@@ -274,7 +277,6 @@ function syncFormToMenu({ mark = true } = {}) {
   els.foregroundOpacityValue.textContent = `${state.menu.style.foreground_opacity}%`;
   syncWidthControl();
   syncSectionGapControl();
-  els.serverPreview.hidden = true;
 }
 
 function renderAll() {
@@ -315,7 +317,6 @@ function renderSectionsEditor() {
     titleInput.addEventListener("input", () => {
       section.title = titleInput.value;
       markDirty();
-      els.serverPreview.hidden = true;
       renderPreview();
       validateMenu({ silent: true });
     });
@@ -388,7 +389,6 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
       const key = input.dataset.key;
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       markDirty();
-      els.serverPreview.hidden = true;
       if (key === "card_size") renderSectionsEditor();
       renderPreview();
       validateMenu({ silent: true });
@@ -403,6 +403,12 @@ function bindPreviewInteractions() {
   els.preview.addEventListener("click", (event) => {
     if (!state.menu || event.defaultPrevented) return;
     if (event.target.closest(".background-transform-box, .resize-handle")) return;
+    if (state.backgroundEditMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      setStatus("当前处于背景图编辑模式。请先点击“锁定背景图”再编辑卡片。", "warning");
+      return;
+    }
     const target = event.target.closest("[data-edit]");
     if (!target || !els.preview.contains(target)) return;
     event.preventDefault();
@@ -454,7 +460,6 @@ function closeModal() {
 function commitMenuChange({ keepModal = true } = {}) {
   markDirty();
   fillForm();
-  els.serverPreview.hidden = true;
   renderAll();
   validateMenu({ silent: true });
   if (!keepModal) closeModal();
@@ -721,15 +726,15 @@ function renderPreview() {
   ].join(";");
   const backgroundMarkup = style.background_image ? `
         <img class="preview-bg-image" alt="" src="${escapeAttr(style.background_image)}" style="left:${style.background_image_x || 0}%;top:${style.background_image_y || 0}%;width:${style.background_image_width || 100}%;" />
-        <div class="background-transform-box" aria-label="拖动或拉伸背景图">
+        ${state.backgroundEditMode ? `<div class="background-transform-box" aria-label="拖动或拉伸背景图">
           <span class="resize-handle nw" data-handle="nw"></span>
           <span class="resize-handle ne" data-handle="ne"></span>
           <span class="resize-handle sw" data-handle="sw"></span>
           <span class="resize-handle se" data-handle="se"></span>
-        </div>` : "";
+        </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""}" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
         ${backgroundMarkup}
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
           <div class="kicker">Menu ${escapeHtml(menu.name || menu.id)}</div>
@@ -757,8 +762,38 @@ function renderPreview() {
       </div>
     </div>`;
   els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  updateBackgroundEditToggle();
   attachBackgroundEditor();
   fitPreviewToStage();
+}
+
+function toggleBackgroundEditMode() {
+  if (!state.menu) return;
+  const style = ensureStyle(state.menu);
+  if (!style.background_image) {
+    state.backgroundEditMode = false;
+    updateBackgroundEditToggle();
+    setStatus("当前菜单还没有背景图。请点击外框打开主题与背景设置后上传背景图。", "warning");
+    return;
+  }
+  state.backgroundEditMode = !state.backgroundEditMode;
+  renderPreview();
+  setStatus(
+    state.backgroundEditMode
+      ? "已进入背景图编辑模式：拖动背景或拉伸边框，卡片编辑已暂时锁定。"
+      : "已锁定背景图：现在可以点击分组和卡片进行编辑。",
+    state.backgroundEditMode ? "warning" : "success",
+  );
+}
+
+function updateBackgroundEditToggle() {
+  if (!els.backgroundEditToggleBtn) return;
+  const hasBackground = Boolean(state.menu && ensureStyle(state.menu).background_image);
+  if (!hasBackground) state.backgroundEditMode = false;
+  els.backgroundEditToggleBtn.hidden = !hasBackground;
+  els.backgroundEditToggleBtn.textContent = state.backgroundEditMode ? "锁定背景图" : "编辑背景图";
+  els.backgroundEditToggleBtn.setAttribute("aria-pressed", state.backgroundEditMode ? "true" : "false");
+  els.backgroundEditToggleBtn.classList.toggle("is-active", state.backgroundEditMode);
 }
 
 function fitPreviewToStage() {
@@ -783,7 +818,6 @@ function addSection() {
     items: [createItemFromTemplate("standard")],
   });
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -791,7 +825,6 @@ function removeSection(index) {
   if (state.menu.sections.length <= 1) return setStatus("至少保留一个分组。");
   state.menu.sections.splice(index, 1);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -801,7 +834,6 @@ function moveSection(index, direction) {
   const [section] = state.menu.sections.splice(index, 1);
   state.menu.sections.splice(target, 0, section);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -810,14 +842,12 @@ function copySection(index) {
   copy.title = `${copy.title || "分组"} 副本`;
   state.menu.sections.splice(index + 1, 0, copy);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
 function addItem(sectionIndex, templateKey = "standard") {
   state.menu.sections[sectionIndex].items.push(createItemFromTemplate(templateKey));
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -828,7 +858,6 @@ function moveItem(sectionIndex, itemIndex, direction) {
   const [item] = items.splice(itemIndex, 1);
   items.splice(target, 0, item);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -838,7 +867,6 @@ function copyItem(sectionIndex, itemIndex) {
   copy.label = `${copy.label || "菜单项"} 副本`;
   items.splice(itemIndex + 1, 0, copy);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -847,7 +875,6 @@ function removeItem(sectionIndex, itemIndex) {
   if (items.length <= 1) return setStatus("每个分组至少保留一个菜单项。");
   items.splice(itemIndex, 1);
   markDirty();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -911,29 +938,58 @@ function copyMenu() {
 }
 
 async function deleteMenu() {
-  if (!state.currentId) return;
-  if (!confirm(`确定删除菜单方案 ${state.currentId}？`)) return;
+  if (!state.menu) {
+    setStatus("没有可删除的菜单。", "warning");
+    return;
+  }
+  const currentId = state.currentId || state.menu.id;
+  const isSavedMenu = state.menus.some((menu) => menu.id === currentId);
+  if (!isSavedMenu) {
+    if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
+      setStatus("已取消删除。");
+      return;
+    }
+    discardUnsavedMenu(currentId);
+    return;
+  }
+  if (state.menus.length <= 1) {
+    setStatus("至少保留一个菜单方案，无法删除最后一个菜单。", "warning");
+    return;
+  }
+  if (!confirm(`确定永久删除菜单方案 ${currentId}？`)) {
+    setStatus("已取消删除。");
+    return;
+  }
+  const fallbackId = state.menus.find((menu) => menu.id !== currentId)?.id;
   try {
-    const result = await bridge.apiPost("menus/delete", { id: state.currentId });
-    state.menus = result.menus || [];
-    state.currentId = result.default_menu_id || state.menus[0]?.id;
-    await selectMenu(state.currentId);
-    setStatus("删除成功。");
+    setStatus("正在删除菜单...");
+    const result = await bridge.apiPost("menus/delete", { id: currentId });
+    state.menus = result.menus || state.menus.filter((menu) => menu.id !== currentId);
+    clearDraft(currentId);
+    const nextId = result.default_menu_id || fallbackId || state.menus[0]?.id;
+    state.currentId = nextId;
+    state.dirty = false;
+    if (nextId) await selectMenu(nextId);
+    refreshSchemeSelect();
+    updateSaveState("saved");
+    setStatus("删除成功。", "success");
   } catch (error) {
-    setStatus(`删除失败：${error.message}`);
+    setStatus(`删除失败：${error.message}`, "error");
   }
 }
 
-async function serverPreview() {
-  syncFormToMenu({ mark: false });
-  try {
-    setStatus("正在请求服务端渲染...");
-    const result = await bridge.apiPost("menus/preview", { menu: state.menu });
-    els.serverPreview.src = result.url;
-    els.serverPreview.hidden = false;
-    setStatus("服务端渲染完成。");
-  } catch (error) {
-    setStatus(`服务端预览失败：${error.message}`);
+async function discardUnsavedMenu(menuId) {
+  clearDraft(menuId);
+  const nextId = state.defaultMenuId && state.menus.some((menu) => menu.id === state.defaultMenuId)
+    ? state.defaultMenuId
+    : state.menus[0]?.id;
+  state.dirty = false;
+  if (nextId) {
+    await selectMenu(nextId);
+    setStatus("已丢弃未保存菜单草稿。", "success");
+  } else {
+    newMenu();
+    setStatus("已丢弃未保存菜单草稿，并创建新的本地菜单。", "warning");
   }
 }
 
@@ -988,7 +1044,6 @@ async function handleBackgroundUpload(event) {
   markDirty();
   els.backgroundImageName.textContent = file.name;
   syncBackgroundControls();
-  els.serverPreview.hidden = true;
   renderAll();
   fitBackgroundToCover(true);
   event.target.value = "";
@@ -996,6 +1051,7 @@ async function handleBackgroundUpload(event) {
 
 function clearBackgroundImage() {
   const style = ensureStyle(state.menu);
+  state.backgroundEditMode = false;
   Object.assign(style, {
     background_image: "",
     background_image_name: "",
@@ -1006,7 +1062,6 @@ function clearBackgroundImage() {
   markDirty();
   els.backgroundImageName.textContent = "No background image";
   syncBackgroundControls();
-  els.serverPreview.hidden = true;
   renderAll();
 }
 
@@ -1071,8 +1126,7 @@ function attachBackgroundEditor() {
       }
       markDirty();
       syncBackgroundControls();
-      els.serverPreview.hidden = true;
-      updateImage();
+          updateImage();
     };
 
     const onUp = () => {
@@ -1115,7 +1169,6 @@ function updateBackgroundFromControls() {
   style.background_image_y = clampNumber(els.backgroundImageY.value, -300, 300, 0);
   syncBackgroundControls();
   markDirty();
-  els.serverPreview.hidden = true;
   renderPreview();
 }
 

@@ -15,8 +15,6 @@ from .services import (
     MenuValidationError,
     build_preview_html,
     build_render_payload,
-    image_file_to_data_url,
-    normalize_menu,
     preview_width_for_menu,
     render_menu_image,
     render_menu_via_browser,
@@ -175,24 +173,6 @@ class BotMenuPlugin(Star):
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
 
-    async def api_preview_menu(self):
-        payload = await read_json_body(default={})
-        try:
-            if isinstance(payload, dict) and isinstance(payload.get("menu"), dict):
-                menu = normalize_menu(payload["menu"])
-            else:
-                menu_id = str(payload.get("id", "")).strip() if isinstance(payload, dict) else ""
-                menu = self.storage.get_menu(menu_id or self._effective_default_menu_id())
-                if not menu:
-                    return error_response("menu not found", status_code=404)
-            image_url = await self._render_menu_uncached(menu)
-            return json_response({"url": self._preview_image_url(image_url)})
-        except MenuValidationError as exc:
-            return error_response(str(exc), status_code=400)
-        except Exception as exc:  # noqa: BLE001
-            logger.exception("Bot menu preview failed")
-            return error_response(f"render failed: {exc}", status_code=500)
-
     async def api_export_menus(self):
         return json_response(self.storage.export_data())
 
@@ -272,22 +252,11 @@ class BotMenuPlugin(Star):
                 output_scale=render_scale,
             )
 
-    def _preview_image_url(self, image_url_or_path: str) -> str:
-        """Return a URL that can be rendered inside the plugin Page iframe."""
-
-        if image_url_or_path.startswith(("http://", "https://", "data:")):
-            return image_url_or_path
-        path = Path(image_url_or_path)
-        if path.is_file():
-            return image_file_to_data_url(path)
-        return image_url_or_path
-
     def _register_web_apis(self, context: Context) -> None:
         routes = [
             (f"/{PLUGIN_NAME}/menus", self.api_list_menus, ["GET"], "List bot menus"),
             (f"/{PLUGIN_NAME}/menus/save", self.api_save_menu, ["POST"], "Save bot menu"),
             (f"/{PLUGIN_NAME}/menus/delete", self.api_delete_menu, ["POST"], "Delete bot menu"),
-            (f"/{PLUGIN_NAME}/menus/preview", self.api_preview_menu, ["POST"], "Preview bot menu"),
             (f"/{PLUGIN_NAME}/menus/render-status/<menu_id>", self.api_render_status, ["GET"], "Get bot menu render cache status"),
             (f"/{PLUGIN_NAME}/menus/<menu_id>", self.api_get_menu, ["GET"], "Get bot menu"),
             (f"/{PLUGIN_NAME}/export", self.api_export_menus, ["GET"], "Export bot menus"),
