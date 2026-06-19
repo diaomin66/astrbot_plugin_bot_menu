@@ -196,9 +196,17 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-text:{style['text_color']};"
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
+        f"--preview-font-family:{_css_font_family(style['font_family'])};"
         f"--preview-width:{width}px;"
         f"--preview-columns:{style['columns']};"
         f"--preview-section-gap:{section_gap}px;"
+        f"--preview-card-gap:{style['card_gap']}px;"
+        f"--preview-section-padding:{style['section_padding']}px;"
+        f"--preview-shadow-strength:{style['shadow_strength']};"
+        f"--preview-border-strength:{style['border_strength']};"
+        f"--preview-bg-overlay:{style['background_overlay'] / 100:.3f};"
+        f"--preview-bg-blur:{style['background_blur']}px;"
+        f"--preview-bg-brightness:{style['background_brightness'] / 100:.3f};"
         f"--preview-foreground-opacity:{foreground_opacity:.3f}"
     )
     background_markup = ""
@@ -231,6 +239,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       padding: 24px;
       border-radius: var(--preview-radius, 24px);
       color: var(--preview-text, #111827);
+      font-family: var(--preview-font-family, Inter, "PingFang SC", "Microsoft YaHei", sans-serif);
       background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
@@ -244,13 +253,15 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       height: auto;
       user-select: none;
       pointer-events: none;
+      filter: blur(var(--preview-bg-blur, 0)) brightness(var(--preview-bg-brightness, 1));
     }}
+    .preview-bg-overlay {{ position: absolute; inset: 0; z-index: 0; pointer-events: none; background: rgba(15,23,42,var(--preview-bg-overlay,0)); }}
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
-    .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); }}
+    .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
     .preview-sections {{ display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }}
-    .preview-section {{ padding: 15px; border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); }}
-    .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: 10px; }}
+    .preview-section {{ padding: var(--preview-section-padding, 15px); border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.16); }}
+    .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: var(--preview-card-gap, 10px); }}
     .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
     .preview-item.size-compact {{ grid-template-columns: 28px 1fr; min-height: 58px; padding: 8px; }}
     .preview-item.size-large {{ grid-template-columns: 42px 1fr; min-height: 104px; padding: 14px; }}
@@ -259,11 +270,13 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 12px; }}
     .preview-desc, .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
     .preview-footer {{ display: flex; justify-content: space-between; margin-top: 16px; font-size: 12px; }}
+    .preview-watermark {{ position: absolute; right: 22px; bottom: 16px; z-index: 2; pointer-events: none; color: var(--preview-muted); opacity: .24; font-size: 38px; font-weight: 900; transform: rotate(-8deg); }}
   </style>
 </head>
 <body>
   <div class="preview-card" style="{style_attr}">
     {background_markup}
+    <div class="preview-bg-overlay"></div>
     <div class="preview-inner">
       <div class="kicker">📋 {_escape(menu.get("name") or menu.get("id"))}</div>
       <h1 class="preview-title">{_escape(menu.get("title") or "Bot 功能菜单")}</h1>
@@ -273,6 +286,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       </div>
       <div class="preview-footer"><span>{_escape(menu.get("footer") or "")}</span><span>{footer_status}</span></div>
     </div>
+    {f'<div class="preview-watermark">{_escape(style["watermark"])}</div>' if style["watermark"] else ''}
   </div>
 </body>
 </html>
@@ -343,9 +357,13 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
         "background_image_x": _clamp_int(style.get("background_image_x"), default=0, minimum=-300, maximum=300),
         "background_image_y": _clamp_int(style.get("background_image_y"), default=0, minimum=-300, maximum=300),
         "background_image_width": _clamp_int(style.get("background_image_width"), default=100, minimum=10, maximum=600),
+        "background_overlay": _clamp_int(style.get("background_overlay"), default=0, minimum=0, maximum=100),
+        "background_blur": _clamp_int(style.get("background_blur"), default=0, minimum=0, maximum=40),
+        "background_brightness": _clamp_int(style.get("background_brightness"), default=100, minimum=20, maximum=200),
         "card_color": style.get("card_color") or "#ffffff",
         "text_color": style.get("text_color") or "#111827",
         "muted_color": style.get("muted_color") or "#6b7280",
+        "font_family": str(style.get("font_family") or "")[:120],
         "foreground_opacity": _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100),
         "radius": _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48),
         "width_mode": width_mode,
@@ -353,8 +371,20 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
         "columns": _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4),
         "section_gap_mode": section_gap_mode,
         "section_gap": _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200),
+        "card_gap": _clamp_int(style.get("card_gap"), default=10, minimum=0, maximum=60),
+        "section_padding": _clamp_int(style.get("section_padding"), default=15, minimum=0, maximum=80),
+        "shadow_strength": _clamp_int(style.get("shadow_strength"), default=1, minimum=0, maximum=5),
+        "border_strength": _clamp_int(style.get("border_strength"), default=1, minimum=0, maximum=5),
+        "watermark": str(style.get("watermark") or "")[:80],
         "show_updated_at": style.get("show_updated_at", True),
     }
+
+
+def _css_font_family(value: Any) -> str:
+    raw = str(value or "").replace('"', "").strip()
+    if not raw:
+        return 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
+    return f'"{raw}", Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
 
 
 def _card_size(value: Any) -> str:

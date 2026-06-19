@@ -17,17 +17,23 @@ const THEME_PRESETS = {
 };
 
 const STYLE_COPY_KEYS = [
-  "theme", "primary_color", "background_color", "background_image", "background_image_name",
-  "background_image_x", "background_image_y", "background_image_width", "card_color", "text_color",
+  "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
+  "background_image_x", "background_image_y", "background_image_width", "background_overlay", "background_blur", "background_brightness", "card_color", "text_color",
   "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns",
-  "section_gap_mode", "section_gap", "show_updated_at",
+  "section_gap_mode", "section_gap", "font_family", "card_gap", "section_padding", "shadow_strength", "border_strength", "watermark", "show_updated_at",
 ];
 const MENU_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
 const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
 const COLLAPSE_PREFIX = "astrbot_plugin_bot_menu:collapsed:";
+const DENSITY_KEY = "astrbot_plugin_bot_menu:density";
+const PREVIEW_DEVICE_KEY = "astrbot_plugin_bot_menu:preview-device";
+const HISTORY_LIMIT = 20;
 
 const state = {
   menus: [],
+  deletedMenus: [],
+  assets: [],
+  routing: null,
   defaultMenuId: "default",
   currentId: null,
   menu: null,
@@ -37,6 +43,12 @@ const state = {
   restoredDraftIds: new Set(),
   collapsedKeys: new Set(),
   unsavedMenuIds: new Set(),
+  selectedKeys: new Set(),
+  history: [],
+  historyIndex: -1,
+  historyPaused: false,
+  density: localStorage.getItem(DENSITY_KEY) || "standard",
+  previewDevice: localStorage.getItem(PREVIEW_DEVICE_KEY) || "group",
   renderStatusTimer: 0,
   backgroundEditMode: false,
 };
@@ -46,12 +58,30 @@ const els = {
   status: $("status"),
   saveState: $("saveState"),
   saveBtn: $("saveBtn"),
+  undoBtn: $("undoBtn"),
+  redoBtn: $("redoBtn"),
   deleteBtn: $("deleteBtn"),
+  commandPaletteBtn: $("commandPaletteBtn"),
+  assetCenterBtn: $("assetCenterBtn"),
+  historyBtn: $("historyBtn"),
+  trashBtn: $("trashBtn"),
+  routingBtn: $("routingBtn"),
   backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
   renderStatus: $("renderStatus"),
   validationSummary: $("validationSummary"),
+  batchToolbar: $("batchToolbar"),
+  batchCount: $("batchCount"),
+  batchEnableBtn: $("batchEnableBtn"),
+  batchDisableBtn: $("batchDisableBtn"),
+  batchCopyBtn: $("batchCopyBtn"),
+  batchDeleteBtn: $("batchDeleteBtn"),
+  batchMoveUpBtn: $("batchMoveUpBtn"),
+  batchMoveDownBtn: $("batchMoveDownBtn"),
+  batchClearBtn: $("batchClearBtn"),
   sections: $("sections"),
   preview: $("preview"),
+  densitySelect: $("densitySelect"),
+  previewDevice: $("previewDevice"),
   menuId: $("menuId"),
   menuName: $("menuName"),
   menuTitle: $("menuTitle"),
@@ -112,6 +142,13 @@ function bindEvents() {
   $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
   $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
   els.deleteBtn.addEventListener("click", deleteMenu);
+  els.commandPaletteBtn?.addEventListener("click", openCommandPalette);
+  els.undoBtn?.addEventListener("click", undoMenuChange);
+  els.redoBtn?.addEventListener("click", redoMenuChange);
+  els.assetCenterBtn?.addEventListener("click", openAssetCenter);
+  els.historyBtn?.addEventListener("click", openHistoryPanel);
+  els.trashBtn?.addEventListener("click", openTrashPanel);
+  els.routingBtn?.addEventListener("click", openRoutingPanel);
   els.backgroundEditToggleBtn.addEventListener("click", toggleBackgroundEditMode);
   $("saveBtn").addEventListener("click", saveMenu);
   $("copyStyleBtn").addEventListener("click", copyStyleToMenus);
@@ -119,6 +156,21 @@ function bindEvents() {
   $("addSectionBtn").addEventListener("click", addSection);
   $("exportBtn").addEventListener("click", exportMenus);
   $("importInput").addEventListener("change", importMenus);
+  els.batchEnableBtn?.addEventListener("click", () => batchSetEnabled(true));
+  els.batchDisableBtn?.addEventListener("click", () => batchSetEnabled(false));
+  els.batchCopyBtn?.addEventListener("click", batchCopySelection);
+  els.batchDeleteBtn?.addEventListener("click", batchDeleteSelection);
+  els.batchMoveUpBtn?.addEventListener("click", () => batchMoveSelection(-1));
+  els.batchMoveDownBtn?.addEventListener("click", () => batchMoveSelection(1));
+  els.batchClearBtn?.addEventListener("click", clearSelection);
+  if (els.densitySelect) {
+    els.densitySelect.value = state.density;
+    bindValueChange(els.densitySelect, () => setDensity(els.densitySelect.value));
+  }
+  if (els.previewDevice) {
+    els.previewDevice.value = state.previewDevice;
+    bindValueChange(els.previewDevice, () => setPreviewDevice(els.previewDevice.value));
+  }
   if (window.ResizeObserver) {
     new ResizeObserver(fitPreviewToStage).observe(els.preview);
   } else {
@@ -176,6 +228,8 @@ function bindEvents() {
   renderThemePresetCards();
   bindPreviewInteractions();
   bindModalChrome();
+  bindGlobalShortcuts();
+  applyDensity();
   updateSaveState("saved");
 }
 
@@ -247,6 +301,7 @@ async function loadMenus(preferredId) {
     setStatus("正在加载菜单...");
     const data = await bridge.apiGet("menus");
     state.menus = data.menus || [];
+    state.deletedMenus = data.deleted_menus || [];
     state.unsavedMenuIds.clear();
     state.defaultMenuId = data.default_menu_id || "default";
     const target = preferredId || state.currentId || state.defaultMenuId || state.menus[0]?.id;
@@ -270,6 +325,8 @@ async function selectMenu(id) {
   loadSearchState();
   refreshSchemeSelect();
   fillForm();
+  resetLocalHistory(state.menu);
+  state.selectedKeys.clear();
   renderAll();
   updateSaveState(state.dirty ? "dirty" : "saved");
   clearRenderStatus();
@@ -373,8 +430,10 @@ function renderSectionsEditor() {
     const card = document.createElement("section");
     card.className = `section-card ${sectionCollapsed ? "is-collapsed" : ""}`;
     card.dataset.errorKey = `section-${sectionIndex}`;
+    bindDragSort(card, selectionKey("section", sectionIndex));
     card.innerHTML = `
       <div class="section-head">
+        <label class="select-check" title="选择分组"><input type="checkbox" data-action="select-section" ${state.selectedKeys.has(selectionKey("section", sectionIndex)) ? "checked" : ""} /></label>
         <button type="button" class="collapse-toggle" data-action="toggle-section" aria-expanded="${!sectionCollapsed}" title="${sectionCollapsed ? "展开分组" : "折叠分组"}">${sectionCollapsed ? "▸" : "▾"}</button>
         <input class="section-title-input" data-error-key="section-${sectionIndex}-title" value="${escapeAttr(section.title)}" aria-label="分组标题" />
         <div class="actions">
@@ -401,6 +460,10 @@ function renderSectionsEditor() {
       setCollapsed("section", sectionIndex, null, !sectionCollapsed);
       renderSectionsEditor();
     });
+    card.querySelector('[data-action="select-section"]').addEventListener("change", (event) => {
+      event.stopPropagation();
+      toggleSelection(selectionKey("section", sectionIndex), event.target.checked);
+    });
     card.querySelector('[data-action="add-item"]').addEventListener("click", () => addItem(sectionIndex, "standard"));
     card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveSection(sectionIndex, -1));
     card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveSection(sectionIndex, 1));
@@ -420,6 +483,7 @@ function renderSectionsEditor() {
     els.sections.append(empty);
   }
   validateMenu({ silent: true });
+  updateBatchToolbar();
 }
 
 function renderItemEditor(item, sectionIndex, itemIndex) {
@@ -428,8 +492,10 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
   const itemCollapsed = isCollapsed("item", sectionIndex, itemIndex);
   card.className = `item-card size-${currentSize} ${itemCollapsed ? "is-collapsed" : ""}`;
   card.dataset.errorKey = `item-${sectionIndex}-${itemIndex}`;
+  bindDragSort(card, selectionKey("item", sectionIndex, itemIndex));
     card.innerHTML = `
     <div class="item-head">
+      <label class="select-check" title="选择卡片"><input type="checkbox" data-action="select-item" ${state.selectedKeys.has(selectionKey("item", sectionIndex, itemIndex)) ? "checked" : ""} /></label>
       <button type="button" class="collapse-toggle" data-action="toggle-item" aria-expanded="${!itemCollapsed}" title="${itemCollapsed ? "展开菜单项" : "折叠菜单项"}">${itemCollapsed ? "▸" : "▾"}</button>
       <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1} · ${escapeHtml(item.label || "未命名")}</strong>
       <div class="actions">
@@ -454,6 +520,10 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
     event.stopPropagation();
     setCollapsed("item", sectionIndex, itemIndex, !itemCollapsed);
     renderSectionsEditor();
+  });
+  card.querySelector('[data-action="select-item"]').addEventListener("change", (event) => {
+    event.stopPropagation();
+    toggleSelection(selectionKey("item", sectionIndex, itemIndex), event.target.checked);
   });
   card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, -1));
   card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, 1));
@@ -505,6 +575,90 @@ function bindModalChrome() {
   window.addEventListener("keydown", (event) => {
     if (event.key === "Escape" && !els.editorModal.hidden) closeModal();
   });
+}
+
+function bindGlobalShortcuts() {
+  window.addEventListener("keydown", (event) => {
+    const target = event.target;
+    const isTyping = target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName);
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      saveMenu();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoMenuChange();
+      else undoMenuChange();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      redoMenuChange();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && ["k", "p"].includes(event.key.toLowerCase())) {
+      event.preventDefault();
+      openCommandPalette();
+      return;
+    }
+    if (event.key === "/" && !isTyping) {
+      event.preventDefault();
+      els.itemSearch?.focus();
+      return;
+    }
+  });
+}
+
+function openCommandPalette() {
+  const body = document.createElement("div");
+  body.className = "command-palette";
+  const search = textInput("", () => filterCommandPalette(body, search.value), { placeholder: "搜索命令，例如：保存、背景、资产、导出" });
+  search.classList.add("wide");
+  body.append(field("命令搜索", search, { wide: true }));
+  const list = document.createElement("div");
+  list.className = "command-list wide";
+  body.append(list);
+  const commands = [
+    { label: "保存当前菜单", keywords: "save ctrl+s", action: saveMenu },
+    { label: "撤销", keywords: "undo ctrl+z", action: undoMenuChange },
+    { label: "重做", keywords: "redo ctrl+y", action: redoMenuChange },
+    { label: "添加分组", keywords: "section group", action: addSection },
+    { label: "添加卡片到第一个分组", keywords: "item card", action: () => addItem(0, "standard") },
+    { label: "打开主题与背景", keywords: "style theme background", action: openStyleEditor },
+    { label: "切换背景编辑模式", keywords: "background edit lock", action: toggleBackgroundEditMode },
+    { label: "打开资产中心", keywords: "asset images", action: openAssetCenter },
+    { label: "打开历史版本", keywords: "history restore", action: openHistoryPanel },
+    { label: "打开回收站", keywords: "trash restore delete", action: openTrashPanel },
+    { label: "打开默认菜单路由", keywords: "routing default group platform", action: openRoutingPanel },
+    { label: "导出菜单包", keywords: "export json", action: exportMenus },
+    { label: "聚焦菜单项搜索", keywords: "search /", action: () => els.itemSearch?.focus() },
+  ];
+  body._commands = commands;
+  body._list = list;
+  filterCommandPalette(body, "");
+  openModal("命令面板", body, []);
+  setTimeout(() => search.focus(), 0);
+}
+
+function filterCommandPalette(body, query) {
+  const list = body._list;
+  const commands = body._commands || [];
+  const normalized = String(query || "").trim().toLowerCase();
+  list.replaceChildren();
+  commands
+    .filter((command) => !normalized || `${command.label} ${command.keywords}`.toLowerCase().includes(normalized))
+    .forEach((command) => {
+      const button = document.createElement("button");
+      button.type = "button";
+      button.className = "command-item";
+      button.textContent = command.label;
+      button.addEventListener("click", () => {
+        closeModal();
+        command.action();
+      });
+      list.append(button);
+    });
 }
 
 function openModal(title, body, actions = []) {
@@ -735,6 +889,7 @@ function openMenuEditor() {
   body.append(
     field("方案 ID", textInput(menu.id, (value) => { menu.id = value.trim(); commitMenuChange(); }, { maxlength: 48 }), { errorKey: "menuId" }),
     field("方案名称", textInput(menu.name, (value) => { menu.name = value; commitMenuChange(); }, { maxlength: 80 }), { errorKey: "menuName" }),
+    field("别名（逗号分隔）", textInput((menu.aliases || []).join(", "), (value) => { menu.aliases = value.split(",").map((item) => item.trim()).filter(Boolean); commitMenuChange(); }, { maxlength: 220 }), { wide: true }),
     field("标题", textInput(menu.title, (value) => { menu.title = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: "menuTitle" }),
     field("副标题", textInput(menu.subtitle, (value) => { menu.subtitle = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuSubtitle" }),
     field("页脚", textInput(menu.footer, (value) => { menu.footer = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuFooter" }),
@@ -848,6 +1003,7 @@ function openStyleEditor() {
     field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { updateStyle((currentStyle) => { currentStyle.card_color = value; }); }, { type: "color" })),
     field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { updateStyle((currentStyle) => { currentStyle.text_color = value; }); }, { type: "color" })),
     field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { updateStyle((currentStyle) => { currentStyle.muted_color = value; }); }, { type: "color" })),
+    field("字体族", textInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }, { placeholder: "例如：Noto Sans CJK SC, Microsoft YaHei" }), { wide: true }),
   );
   const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => {
     updateStyle((currentStyle) => {
@@ -859,6 +1015,11 @@ function openStyleEditor() {
   appendLayoutFields(body, style);
   body.append(
     field("圆角", textInput(style.radius ?? 24, (value) => { updateStyle((currentStyle) => { currentStyle.radius = clampNumber(value, 0, 48, 24); }); }, { type: "number", min: 0, max: 48 })),
+    field("卡片间距", textInput(style.card_gap ?? 10, (value) => { updateStyle((currentStyle) => { currentStyle.card_gap = clampNumber(value, 0, 60, 10); }); }, { type: "number", min: 0, max: 60 })),
+    field("分组内边距", textInput(style.section_padding ?? 15, (value) => { updateStyle((currentStyle) => { currentStyle.section_padding = clampNumber(value, 0, 80, 15); }); }, { type: "number", min: 0, max: 80 })),
+    field("阴影强度", textInput(style.shadow_strength ?? 1, (value) => { updateStyle((currentStyle) => { currentStyle.shadow_strength = clampNumber(value, 0, 5, 1); }); }, { type: "number", min: 0, max: 5 })),
+    field("边框强度", textInput(style.border_strength ?? 1, (value) => { updateStyle((currentStyle) => { currentStyle.border_strength = clampNumber(value, 0, 5, 1); }); }, { type: "number", min: 0, max: 5 })),
+    field("水印文本", textInput(style.watermark || "", (value) => { updateStyle((currentStyle) => { currentStyle.watermark = value; }); }, { maxlength: 80 }), { wide: true }),
   );
   const updatedAt = document.createElement("label");
   updatedAt.className = "check wide";
@@ -878,17 +1039,24 @@ function openStyleEditor() {
     field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { updateStyle((currentStyle) => { currentStyle.background_image_width = clampNumber(value, 10, 600, 100); }); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
     field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_x = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
     field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_y = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
+    field("背景遮罩(%)", textInput(style.background_overlay || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_overlay = clampNumber(value, 0, 100, 0); }); }, { type: "number", min: 0, max: 100 })),
+    field("背景模糊(px)", textInput(style.background_blur || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_blur = clampNumber(value, 0, 40, 0); }); }, { type: "number", min: 0, max: 40 })),
+    field("背景亮度(%)", textInput(style.background_brightness ?? 100, (value) => { updateStyle((currentStyle) => { currentStyle.background_brightness = clampNumber(value, 20, 200, 100); }); }, { type: "number", min: 20, max: 200 })),
   );
   body.append(actionRow([
     { label: "居中背景", onClick: () => { centerBackgroundImage(); openStyleEditor(); } },
     { label: "铺满背景", onClick: () => { fitBackgroundToCover(true); openStyleEditor(); } },
+    { label: "适应背景", onClick: () => { fitBackgroundToContain(); openStyleEditor(); } },
     { label: "重置背景", onClick: () => { clearBackgroundImage(); openStyleEditor(); } },
   ]));
   openModal("编辑主题、背景与布局", body, [
     { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
+    { label: "一键修复颜色", onClick: () => { fixContrastColors(); openStyleEditor(); } },
     { label: "一键重置样式", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
     { label: "编辑全部分组", onClick: openMenuEditor },
   ]);
+  const contrast = contrastWarningText(style);
+  if (contrast) setStatus(contrast, "warning");
 }
 
 function themeStylePatch(preset) {
@@ -905,8 +1073,10 @@ async function applyBackgroundFile(file) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
   const dataUrl = await readFileAsDataUrl(file);
+  const asset = await saveBackgroundAsset(dataUrl, file.name);
   Object.assign(ensureStyle(state.menu), {
     background_image: dataUrl,
+    background_image_asset_id: asset?.id || "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -921,6 +1091,7 @@ function renderPreview() {
   if (!menu) return;
   const style = ensureStyle(menu);
   const layout = previewLayout(menu);
+  const deviceLabel = applyPreviewDeviceLayout(layout);
   const query = state.itemSearch || "";
   const previewStyle = [
     `--preview-primary:${style.primary_color}`,
@@ -929,9 +1100,17 @@ function renderPreview() {
     `--preview-text:${style.text_color || "#111827"}`,
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
+    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : "inherit"}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
+    `--preview-card-gap:${clampNumber(style.card_gap, 0, 60, 10)}px`,
+    `--preview-section-padding:${clampNumber(style.section_padding, 0, 80, 15)}px`,
+    `--preview-shadow-strength:${clampNumber(style.shadow_strength, 0, 5, 1)}`,
+    `--preview-border-strength:${clampNumber(style.border_strength, 0, 5, 1)}`,
+    `--preview-bg-overlay:${clampNumber(style.background_overlay, 0, 100, 0) / 100}`,
+    `--preview-bg-blur:${clampNumber(style.background_blur, 0, 40, 0)}px`,
+    `--preview-bg-brightness:${clampNumber(style.background_brightness, 20, 200, 100) / 100}`,
     `--preview-foreground-opacity:${clampNumber(style.foreground_opacity, 0, 100, 92) / 100}`,
   ].join(";");
   const backgroundMarkup = style.background_image ? `
@@ -946,6 +1125,7 @@ function renderPreview() {
     <div class="preview-fit" style="--preview-scale:1">
       <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""}" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
         ${backgroundMarkup}
+        <div class="preview-bg-overlay"></div>
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
           <div class="kicker">Menu ${escapeHtml(menu.name || menu.id)}</div>
           <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
@@ -969,9 +1149,10 @@ function renderPreview() {
           </div>
           <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
         </div>
+        ${style.watermark ? `<div class="preview-watermark">${escapeHtml(style.watermark)}</div>` : ""}
       </div>
     </div>`;
-  els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  els.previewMeta.textContent = `${deviceLabel} · ${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
   updateBackgroundEditToggle();
   attachBackgroundEditor();
   fitPreviewToStage();
@@ -1241,6 +1422,18 @@ async function importMenus(event) {
   try {
     const data = JSON.parse(await file.text());
     const menus = Array.isArray(data) ? data : data.menus;
+    const incoming = Array.isArray(menus) ? menus : [];
+    const existingIds = new Set(state.menus.map((menu) => menu.id));
+    const added = incoming.filter((menu) => menu?.id && !existingIds.has(menu.id)).map((menu) => menu.id);
+    const overwritten = incoming.filter((menu) => menu?.id && existingIds.has(menu.id)).map((menu) => menu.id);
+    const invalid = incoming.filter((menu) => !menu?.id).length;
+    const summary = [
+      `新增：${added.length}${added.length ? `（${added.join(", ")}）` : ""}`,
+      `覆盖：${overwritten.length}${overwritten.length ? `（${overwritten.join(", ")}）` : ""}`,
+      `无效项：${invalid}`,
+      `内联资产：${Array.isArray(data.assets) ? data.assets.length : 0}`,
+    ].join("\n");
+    if (!confirm(`导入预览：\n${summary}\n\n继续导入？`)) return;
     const result = await bridge.apiPost("import", { menus, mode: "merge" });
     state.menus = result.menus || [];
     state.unsavedMenuIds.clear();
@@ -1251,6 +1444,162 @@ async function importMenus(event) {
     setStatus(`导入失败：${error.message}`);
   } finally {
     event.target.value = "";
+  }
+}
+
+async function openAssetCenter() {
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  const list = document.createElement("div");
+  list.className = "asset-grid wide";
+  body.append(list);
+  openModal("资产中心", body, [
+    { label: "清理未引用资产", onClick: async () => { await bridge.apiPost("cleanup", {}); openAssetCenter(); } },
+    { label: "刷新", onClick: openAssetCenter },
+  ]);
+  try {
+    const data = await bridge.apiGet("assets");
+    state.assets = data.assets || [];
+    if (!state.assets.length) {
+      list.textContent = "还没有资产。上传背景图后会自动进入资产库。";
+      return;
+    }
+    state.assets.forEach((asset) => {
+      const card = document.createElement("article");
+      card.className = "asset-card";
+      card.innerHTML = `
+        ${asset.data_url ? `<img loading="lazy" src="${escapeAttr(asset.data_url)}" alt="${escapeAttr(asset.name || asset.id)}" />` : `<div class="asset-placeholder">No preview</div>`}
+        <strong>${escapeHtml(asset.name || asset.id)}</strong>
+        <small>${escapeHtml(asset.id)} · ${Math.round((asset.size || 0) / 1024)} KB</small>
+        <small>引用：${(asset.references || []).length ? asset.references.map(escapeHtml).join(", ") : "未使用"}</small>
+      `;
+      card.append(actionRow([
+        { label: "用于当前背景", onClick: () => {
+          const style = ensureStyle(state.menu);
+          style.background_image_asset_id = asset.id;
+          style.background_image = asset.data_url || style.background_image;
+          style.background_image_name = asset.name || asset.id;
+          markDirty();
+          renderAll();
+          closeModal();
+        } },
+        { label: "删除未使用", className: "danger", disabled: Boolean(asset.used), onClick: async () => {
+          try {
+            await bridge.apiPost(`assets/${encodeURIComponent(asset.id)}`, {});
+            openAssetCenter();
+          } catch (error) {
+            setStatus(`删除资产失败：${error.message}`, "error");
+          }
+        } },
+      ]));
+      list.append(card);
+    });
+  } catch (error) {
+    list.textContent = `资产加载失败：${error.message}`;
+  }
+}
+
+async function openHistoryPanel() {
+  if (!state.currentId) return;
+  const body = document.createElement("div");
+  body.className = "entity-list";
+  openModal("历史版本", body, [{ label: "刷新", onClick: openHistoryPanel }]);
+  try {
+    const data = await bridge.apiGet(`menus/history/${encodeURIComponent(state.currentId)}`);
+    const history = data.history || [];
+    if (!history.length) {
+      body.textContent = "暂无历史快照。保存或删除菜单前会自动创建快照。";
+      return;
+    }
+    history.forEach((snapshot) => {
+      const row = document.createElement("article");
+      row.className = "entity-row";
+      row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(snapshot.menu?.title || snapshot.menu_id)}</strong><small>${escapeHtml(snapshot.created_at || "")} · ${escapeHtml(snapshot.reason || "")}</small></div>`;
+      row.append(actionRow([
+        { label: "恢复此版本", className: "primary", onClick: async () => {
+          if (!confirm("确定恢复此历史版本？当前内容会先创建快照。")) return;
+          const result = await bridge.apiPost("menus/restore", { menu_id: snapshot.menu_id, snapshot_id: snapshot.id });
+          state.menus = result.menus || state.menus;
+          await selectMenu(result.menu?.id || snapshot.menu_id);
+          closeModal();
+        } },
+      ]));
+      body.append(row);
+    });
+  } catch (error) {
+    body.textContent = `历史加载失败：${error.message}`;
+  }
+}
+
+async function openTrashPanel() {
+  const data = await bridge.apiGet("menus");
+  state.deletedMenus = data.deleted_menus || [];
+  const body = document.createElement("div");
+  body.className = "entity-list";
+  openModal("回收站", body, [{ label: "刷新", onClick: openTrashPanel }]);
+  if (!state.deletedMenus.length) {
+    body.textContent = "回收站为空。";
+    return;
+  }
+  state.deletedMenus.forEach((menu) => {
+    const row = document.createElement("article");
+    row.className = "entity-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(menu.name || menu.id)}</strong><small>${escapeHtml(menu.id)} · 删除于 ${escapeHtml(menu.deleted_at || "")}</small></div>`;
+    row.append(actionRow([
+      { label: "恢复", className: "primary", onClick: async () => {
+        const result = await bridge.apiPost("menus/restore", { menu_id: menu.id, deleted: true });
+        state.menus = result.menus || state.menus;
+        state.deletedMenus = result.deleted_menus || [];
+        await selectMenu(menu.id);
+        closeModal();
+      } },
+      { label: "永久删除", className: "danger", onClick: async () => {
+        if (!confirm(`永久删除 ${menu.id}？此操作不可恢复。`)) return;
+        const result = await bridge.apiPost("menus/delete", { id: menu.id, permanent: true });
+        state.menus = result.menus || state.menus;
+        state.deletedMenus = result.deleted_menus || [];
+        openTrashPanel();
+      } },
+    ]));
+    body.append(row);
+  });
+}
+
+async function openRoutingPanel() {
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  openModal("默认菜单路由", body, []);
+  try {
+    const data = await bridge.apiGet("routing");
+    const routing = data.routing || { global_default: "", platforms: {}, contexts: {} };
+    const globalInput = textInput(routing.global_default || state.defaultMenuId || "", () => {}, { placeholder: "全局默认菜单 ID" });
+    const platformInput = textInput(JSON.stringify(routing.platforms || {}, null, 2), () => {}, { multiline: true });
+    const contextInput = textInput(JSON.stringify(routing.contexts || {}, null, 2), () => {}, { multiline: true });
+    body.append(
+      field("全局默认菜单", globalInput, { wide: true }),
+      field("平台默认菜单 JSON", platformInput, { wide: true, hint: '例如 {"telegram":"tg-menu"}' }),
+      field("群聊/上下文默认菜单 JSON", contextInput, { wide: true, hint: '例如 {"aiocqhttp:10001":"group-menu"}' }),
+    );
+    els.modalFooter.replaceChildren();
+    els.modalFooter.append(actionRow([
+      { label: "保存路由", className: "primary", onClick: async () => {
+        try {
+          const saved = await bridge.apiPost("routing", {
+            global_default: globalInput.value.trim(),
+            platforms: JSON.parse(platformInput.value || "{}"),
+            contexts: JSON.parse(contextInput.value || "{}"),
+          });
+          state.routing = saved.routing;
+          setStatus("默认菜单路由已保存。", "success");
+          closeModal();
+        } catch (error) {
+          setStatus(`保存路由失败：${error.message}`, "error");
+        }
+      } },
+      { label: "关闭", onClick: closeModal },
+    ]));
+  } catch (error) {
+    body.textContent = `路由加载失败：${error.message}`;
   }
 }
 
@@ -1266,9 +1615,11 @@ async function handleBackgroundUpload(event) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
   const dataUrl = await readFileAsDataUrl(file);
+  const asset = await saveBackgroundAsset(dataUrl, file.name);
   const style = ensureStyle(state.menu);
   Object.assign(style, {
     background_image: dataUrl,
+    background_image_asset_id: asset?.id || "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -1282,11 +1633,23 @@ async function handleBackgroundUpload(event) {
   event.target.value = "";
 }
 
+async function saveBackgroundAsset(dataUrl, name) {
+  try {
+    const result = await bridge.apiPost("assets", { data_url: dataUrl, name });
+    state.assets = result.assets || state.assets;
+    return result.asset || null;
+  } catch (error) {
+    setStatus(`背景已用于预览，但保存到资产库失败：${error.message}`, "warning");
+    return null;
+  }
+}
+
 function clearBackgroundImage() {
   const style = ensureStyle(state.menu);
   state.backgroundEditMode = false;
   Object.assign(style, {
     background_image: "",
+    background_image_asset_id: "",
     background_image_name: "",
     background_image_x: 0,
     background_image_y: 0,
@@ -1394,6 +1757,24 @@ function fitBackgroundToCover(forceReset) {
   renderPreview();
 }
 
+function fitBackgroundToContain() {
+  const style = ensureStyle(state.menu);
+  const img = els.preview.querySelector(".preview-bg-image");
+  const card = els.preview.querySelector(".preview-card");
+  if (!img || !card || !style.background_image) return;
+  if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
+    img.addEventListener("load", fitBackgroundToContain, { once: true });
+    return;
+  }
+  const widthByHeight = (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight);
+  style.background_image_width = clampNumber(Math.min(100, widthByHeight), 10, 600, 100);
+  style.background_image_x = clampNumber((100 - style.background_image_width) / 2, -300, 300, 0);
+  style.background_image_y = 0;
+  markDirty();
+  syncBackgroundControls();
+  renderPreview();
+}
+
 
 function updateBackgroundFromControls() {
   const style = ensureStyle(state.menu);
@@ -1490,9 +1871,269 @@ function resetCurrentStyle() {
   setStatus("已重置样式，保存后生效。", "success");
 }
 
+function contrastWarningText(style = ensureStyle(state.menu)) {
+  const ratio = contrastRatio(style.text_color || "#111827", style.card_color || "#ffffff");
+  return ratio < 4.5 ? `文字与卡片背景对比度不足（${ratio.toFixed(2)}），建议一键修复颜色。` : "";
+}
+
+function fixContrastColors() {
+  const style = ensureStyle(state.menu);
+  const bg = hexToRgb(style.card_color || "#ffffff");
+  if (!bg) return;
+  const luminance = relativeLuminance(bg);
+  style.text_color = luminance > 0.42 ? "#111827" : "#f8fafc";
+  style.muted_color = luminance > 0.42 ? "#475569" : "#cbd5e1";
+  markDirty();
+  renderAll();
+  setStatus("已自动修复文字对比度。", "success");
+}
+
+function contrastRatio(colorA, colorB) {
+  const a = hexToRgb(colorA);
+  const b = hexToRgb(colorB);
+  if (!a || !b) return 21;
+  const l1 = relativeLuminance(a);
+  const l2 = relativeLuminance(b);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance({ r, g, b }) {
+  const transform = (value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * transform(r) + 0.7152 * transform(g) + 0.0722 * transform(b);
+}
+
+function hexToRgb(value) {
+  const match = String(value || "").trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return null;
+  const raw = match[1];
+  return {
+    r: parseInt(raw.slice(0, 2), 16),
+    g: parseInt(raw.slice(2, 4), 16),
+    b: parseInt(raw.slice(4, 6), 16),
+  };
+}
+
 function itemMatchesSearch(item, query) {
   return [item.label, item.command, item.description]
     .some((value) => String(value || "").toLowerCase().includes(query));
+}
+
+function selectionKey(type, sectionIndex, itemIndex = null) {
+  return itemIndex === null ? `${type}:${sectionIndex}` : `${type}:${sectionIndex}:${itemIndex}`;
+}
+
+function parseSelectionKey(key) {
+  const [type, sectionRaw, itemRaw] = String(key).split(":");
+  return { type, sectionIndex: Number(sectionRaw), itemIndex: itemRaw === undefined ? null : Number(itemRaw) };
+}
+
+function toggleSelection(key, selected) {
+  if (selected) state.selectedKeys.add(key);
+  else state.selectedKeys.delete(key);
+  updateBatchToolbar();
+}
+
+function clearSelection() {
+  state.selectedKeys.clear();
+  renderSectionsEditor();
+}
+
+function selectedEntries() {
+  return [...state.selectedKeys]
+    .map(parseSelectionKey)
+    .filter((entry) => Number.isInteger(entry.sectionIndex) && entry.sectionIndex >= 0);
+}
+
+function updateBatchToolbar() {
+  if (!els.batchToolbar) return;
+  const count = state.selectedKeys.size;
+  els.batchToolbar.hidden = count === 0;
+  if (els.batchCount) els.batchCount.textContent = `已选择 ${count} 项`;
+}
+
+function batchSetEnabled(enabled) {
+  const entries = selectedEntries().filter((entry) => entry.type === "item");
+  if (!entries.length) return setStatus("请先选择需要启用/禁用的卡片。", "warning");
+  entries.forEach(({ sectionIndex, itemIndex }) => {
+    const item = state.menu.sections?.[sectionIndex]?.items?.[itemIndex];
+    if (item) item.enabled = enabled;
+  });
+  markDirty();
+  renderAll();
+}
+
+function batchCopySelection() {
+  const entries = selectedEntries();
+  if (!entries.length) return;
+  const sectionIndexes = entries
+    .filter((entry) => entry.type === "section")
+    .map((entry) => entry.sectionIndex)
+    .sort((a, b) => b - a);
+  sectionIndexes.forEach((sectionIndex) => {
+    const section = state.menu.sections?.[sectionIndex];
+    if (!section) return;
+    const copy = structuredClone(section);
+    copy.title = `${copy.title || "分组"} 副本`;
+    state.menu.sections.splice(sectionIndex + 1, 0, copy);
+  });
+
+  const itemEntries = entries
+    .filter((entry) => entry.type === "item")
+    .sort((a, b) => b.sectionIndex - a.sectionIndex || b.itemIndex - a.itemIndex);
+  itemEntries.forEach(({ sectionIndex, itemIndex }) => {
+    const items = state.menu.sections?.[sectionIndex]?.items;
+    const item = items?.[itemIndex];
+    if (!items || !item) return;
+    const copy = structuredClone(item);
+    copy.label = `${copy.label || "菜单项"} 副本`;
+    items.splice(itemIndex + 1, 0, copy);
+  });
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function batchDeleteSelection() {
+  if (!state.selectedKeys.size) return;
+  if (!confirm(`确定删除选中的 ${state.selectedKeys.size} 项？`)) return;
+  const entries = selectedEntries();
+  const sectionIndexes = entries
+    .filter((entry) => entry.type === "section")
+    .map((entry) => entry.sectionIndex)
+    .sort((a, b) => b - a);
+  const deletedSections = new Set(sectionIndexes);
+  entries
+    .filter((entry) => entry.type === "item" && !deletedSections.has(entry.sectionIndex))
+    .sort((a, b) => b.sectionIndex - a.sectionIndex || b.itemIndex - a.itemIndex)
+    .forEach(({ sectionIndex, itemIndex }) => {
+      const items = state.menu.sections?.[sectionIndex]?.items;
+      if (items && items.length > 1) items.splice(itemIndex, 1);
+    });
+  sectionIndexes.forEach((sectionIndex) => {
+    if (state.menu.sections.length > 1) state.menu.sections.splice(sectionIndex, 1);
+  });
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function batchMoveSelection(direction) {
+  const entries = selectedEntries();
+  if (entries.length !== 1) return setStatus("上移/下移一次只支持选择 1 个分组或 1 张卡片。", "warning");
+  const entry = entries[0];
+  if (entry.type === "section") moveSection(entry.sectionIndex, direction);
+  if (entry.type === "item") moveItem(entry.sectionIndex, entry.itemIndex, direction);
+  state.selectedKeys.clear();
+}
+
+function bindDragSort(node, key) {
+  node.draggable = true;
+  node.dataset.dragKey = key;
+  node.addEventListener("dragstart", (event) => {
+    if (event.target.closest("input, textarea, select, button, label")) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", key);
+    node.classList.add("is-dragging");
+  });
+  node.addEventListener("dragend", () => {
+    node.classList.remove("is-dragging");
+    document.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+  });
+  node.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    node.classList.add("is-drag-over");
+  });
+  node.addEventListener("dragleave", () => node.classList.remove("is-drag-over"));
+  node.addEventListener("drop", (event) => {
+    event.preventDefault();
+    node.classList.remove("is-drag-over");
+    const sourceKey = event.dataTransfer.getData("text/plain");
+    if (!sourceKey || sourceKey === key) return;
+    moveDraggedEntry(sourceKey, key);
+  });
+}
+
+function moveDraggedEntry(sourceKey, targetKey) {
+  const source = parseSelectionKey(sourceKey);
+  const target = parseSelectionKey(targetKey);
+  if (source.type !== target.type) return;
+  if (source.type === "section") {
+    const [section] = state.menu.sections.splice(source.sectionIndex, 1);
+    let targetIndex = target.sectionIndex;
+    if (source.sectionIndex < targetIndex) targetIndex -= 1;
+    state.menu.sections.splice(targetIndex, 0, section);
+  }
+  if (source.type === "item") {
+    const sourceItems = state.menu.sections?.[source.sectionIndex]?.items;
+    const targetItems = state.menu.sections?.[target.sectionIndex]?.items;
+    if (!sourceItems || !targetItems) return;
+    const [item] = sourceItems.splice(source.itemIndex, 1);
+    let targetIndex = target.itemIndex;
+    if (source.sectionIndex === target.sectionIndex && source.itemIndex < targetIndex) targetIndex -= 1;
+    targetItems.splice(targetIndex, 0, item);
+  }
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function resetLocalHistory(menu) {
+  state.history = [structuredClone(menu)];
+  state.historyIndex = 0;
+  updateHistoryButtons();
+}
+
+function captureLocalHistory() {
+  if (state.historyPaused || !state.menu) return;
+  const snapshot = structuredClone(state.menu);
+  const current = state.history[state.historyIndex];
+  if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
+  if (state.historyIndex < state.history.length - 1) {
+    state.history.splice(state.historyIndex + 1);
+  }
+  state.history.push(snapshot);
+  while (state.history.length > HISTORY_LIMIT) state.history.shift();
+  state.historyIndex = state.history.length - 1;
+  updateHistoryButtons();
+}
+
+function undoMenuChange() {
+  if (state.historyIndex <= 0) return;
+  state.historyPaused = true;
+  state.historyIndex -= 1;
+  state.menu = structuredClone(state.history[state.historyIndex]);
+  state.currentId = state.menu.id;
+  fillForm();
+  markDirty();
+  renderAll();
+  state.historyPaused = false;
+  updateHistoryButtons();
+}
+
+function redoMenuChange() {
+  if (state.historyIndex >= state.history.length - 1) return;
+  state.historyPaused = true;
+  state.historyIndex += 1;
+  state.menu = structuredClone(state.history[state.historyIndex]);
+  state.currentId = state.menu.id;
+  fillForm();
+  markDirty();
+  renderAll();
+  state.historyPaused = false;
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  if (els.undoBtn) els.undoBtn.disabled = state.historyIndex <= 0;
+  if (els.redoBtn) els.redoBtn.disabled = state.historyIndex >= state.history.length - 1;
 }
 
 function upsertMenuEntry(menu, { unsaved = false, previousId = "" } = {}) {
@@ -1528,6 +2169,7 @@ function markDirty() {
   if (!state.menu) return;
   state.dirty = true;
   syncUnsavedMenuEntry();
+  captureLocalHistory();
   updateSaveState("dirty");
   saveDraft();
 }
@@ -1762,13 +2404,18 @@ function defaultStyle() {
     primary_color: "#7c3aed",
     background_color: "#f8fafc",
     background_image: "",
+    background_image_asset_id: "",
     background_image_name: "",
     background_image_x: 0,
     background_image_y: 0,
     background_image_width: 100,
+    background_overlay: 0,
+    background_blur: 0,
+    background_brightness: 100,
     card_color: "#ffffff",
     text_color: "#111827",
     muted_color: "#6b7280",
+    font_family: "",
     foreground_opacity: 92,
     radius: 24,
     width_mode: "auto",
@@ -1776,6 +2423,11 @@ function defaultStyle() {
     columns: 2,
     section_gap_mode: "auto",
     section_gap: 14,
+    card_gap: 10,
+    section_padding: 15,
+    shadow_strength: 1,
+    border_strength: 1,
+    watermark: "",
     show_updated_at: true,
   };
 }
@@ -1846,6 +2498,37 @@ function previewLayout(menu) {
   const gridWidth = columns * desiredCardWidth + Math.max(0, columns - 1) * 10;
   const titleWidth = 260 + Math.min(260, contentUnits * 10);
   return { width: clampNumber(Math.max(gridWidth + chromeWidth, titleWidth), 520, 1200, 760), columns, itemCount };
+}
+
+function applyPreviewDeviceLayout(layout) {
+  if (state.previewDevice === "desktop") {
+    layout.width = Math.max(layout.width, 960);
+    return "桌面宽图";
+  }
+  if (state.previewDevice === "narrow") {
+    layout.width = Math.min(layout.width, 560);
+    layout.columns = Math.min(layout.columns, 1);
+    return "窄屏图";
+  }
+  return "群聊常规图";
+}
+
+function setPreviewDevice(value) {
+  state.previewDevice = ["desktop", "group", "narrow"].includes(value) ? value : "group";
+  try { localStorage.setItem(PREVIEW_DEVICE_KEY, state.previewDevice); } catch {}
+  if (els.previewDevice) els.previewDevice.value = state.previewDevice;
+  renderPreview();
+}
+
+function setDensity(value) {
+  state.density = ["compact", "standard", "comfortable"].includes(value) ? value : "standard";
+  try { localStorage.setItem(DENSITY_KEY, state.density); } catch {}
+  applyDensity();
+}
+
+function applyDensity() {
+  document.documentElement.dataset.density = state.density;
+  if (els.densitySelect) els.densitySelect.value = state.density;
 }
 
 function createItemFromTemplate(templateKey) {

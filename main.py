@@ -152,6 +152,7 @@ class BotMenuPlugin(Star):
         return json_response(
             {
                 "menus": self.storage.list_menus(),
+                "deleted_menus": self.storage.list_deleted_menus(),
                 "default_menu_id": self._effective_default_menu_id(),
             }
         )
@@ -186,15 +187,20 @@ class BotMenuPlugin(Star):
     async def api_delete_menu(self):
         payload = await read_json_body(default={})
         menu_id = str(payload.get("id", "")).strip() if isinstance(payload, dict) else ""
+        permanent = bool(payload.get("permanent")) if isinstance(payload, dict) else False
         if not menu_id:
             return error_response("missing menu id", status_code=400)
         try:
             self.history.snapshot(self.storage.get_menu(menu_id), reason="delete")
-            self.storage.delete_menu(menu_id)
+            if permanent:
+                self.storage.permanent_delete_menu(menu_id)
+            else:
+                self.storage.delete_menu(menu_id)
             return json_response(
                 {
                     "deleted": True,
                     "menus": self.storage.list_menus(),
+                    "deleted_menus": self.storage.list_deleted_menus(),
                     "default_menu_id": self._effective_default_menu_id(),
                 }
             )
@@ -202,7 +208,16 @@ class BotMenuPlugin(Star):
             return error_response(str(exc), status_code=400)
 
     async def api_export_menus(self):
-        return json_response(self.storage.export_data())
+        data = self.storage.export_data()
+        assets: list[dict[str, Any]] = []
+        for asset in self.assets.list_assets(self.storage.list_menus()):
+            try:
+                assets.append({**asset, "data_url": self.assets.data_url_for_asset(asset["id"])})
+            except MenuValidationError:
+                assets.append(asset)
+        data["assets"] = assets
+        data["asset_bundle"] = "inline"
+        return json_response(data)
 
     async def api_import_menus(self):
         payload = await read_json_body(default={})
@@ -210,6 +225,9 @@ class BotMenuPlugin(Star):
             if isinstance(payload, dict):
                 raw_menus = payload.get("menus")
                 mode = str(payload.get("mode", "merge"))
+                for asset in payload.get("assets") or []:
+                    if isinstance(asset, dict) and asset.get("data_url"):
+                        self.assets.save_data_url(str(asset.get("data_url")), name=str(asset.get("name") or ""))
             else:
                 raw_menus = payload
                 mode = "merge"
@@ -221,7 +239,14 @@ class BotMenuPlugin(Star):
             return error_response(str(exc), status_code=400)
 
     async def api_list_assets(self):
-        return json_response({"assets": self.assets.list_assets(self.storage.list_menus())})
+        assets = []
+        for asset in self.assets.list_assets(self.storage.list_menus()):
+            try:
+                asset = {**asset, "data_url": self.assets.data_url_for_asset(asset["id"])}
+            except MenuValidationError:
+                pass
+            assets.append(asset)
+        return json_response({"assets": assets})
 
     async def api_save_asset(self):
         payload = await read_json_body(default={})
@@ -250,6 +275,10 @@ class BotMenuPlugin(Star):
             snapshot_id = str(payload.get("snapshot_id") or "").strip() if isinstance(payload, dict) else ""
             if not menu_id:
                 raise MenuValidationError("missing menu id")
+            if payload.get("deleted") if isinstance(payload, dict) else False:
+                menu = self.storage.restore_menu(menu_id)
+                self.render_coordinator.schedule(menu, force=True)
+                return json_response({"menu": menu, "menus": self.storage.list_menus(), "deleted_menus": self.storage.list_deleted_menus()})
             restored = self.history.restore_snapshot(menu_id, snapshot_id or None)
             self.history.snapshot(self.storage.get_menu_including_deleted(menu_id), reason="restore")
             menu = self.storage.save_menu(restored)
@@ -298,6 +327,7 @@ class BotMenuPlugin(Star):
         return await self._render_menu_uncached(menu, render_mode="browser")
 
     async def _render_menu_uncached(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
+        menu = self._menu_with_resolved_assets(menu)
         default_width = self._config_int("render_width", 900)
         render_scale = max(1, min(4, self._config_int("render_scale", 4)))
         if not render_mode:
@@ -367,7 +397,7 @@ class BotMenuPlugin(Star):
             (f"/{PLUGIN_NAME}/menus/<menu_id>", self.api_get_menu, ["GET"], "Get bot menu"),
             (f"/{PLUGIN_NAME}/assets", self.api_list_assets, ["GET"], "List bot menu assets"),
             (f"/{PLUGIN_NAME}/assets", self.api_save_asset, ["POST"], "Save bot menu asset"),
-            (f"/{PLUGIN_NAME}/assets/<asset_id>", self.api_delete_asset, ["DELETE"], "Delete bot menu asset"),
+            (f"/{PLUGIN_NAME}/assets/<asset_id>", self.api_delete_asset, ["DELETE", "POST"], "Delete bot menu asset"),
             (f"/{PLUGIN_NAME}/routing", self.api_get_routing, ["GET"], "Get bot menu routing"),
             (f"/{PLUGIN_NAME}/routing", self.api_save_routing, ["POST"], "Save bot menu routing"),
             (f"/{PLUGIN_NAME}/cleanup", self.api_cleanup, ["POST"], "Clean bot menu cache and assets"),
@@ -454,6 +484,18 @@ class BotMenuPlugin(Star):
                 except Exception:
                     pass
         return platform, group_id
+
+    def _menu_with_resolved_assets(self, menu: dict[str, Any]) -> dict[str, Any]:
+        cloned = dict(menu)
+        style = dict(cloned.get("style") or {})
+        asset_id = str(style.get("background_image_asset_id") or "").strip()
+        if asset_id and not style.get("background_image"):
+            try:
+                style["background_image"] = self.assets.data_url_for_asset(asset_id)
+            except MenuValidationError:
+                pass
+        cloned["style"] = style
+        return cloned
 
     def _config_get(self, key: str, default: Any = None) -> Any:
         getter = getattr(self.config, "get", None)

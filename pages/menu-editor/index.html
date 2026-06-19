@@ -23,6 +23,13 @@
       </div>
 
       <div class="topbar-actions">
+        <button id="commandPaletteBtn" type="button">命令</button>
+        <button id="undoBtn" type="button" disabled>撤销</button>
+        <button id="redoBtn" type="button" disabled>重做</button>
+        <button id="assetCenterBtn" type="button">资产</button>
+        <button id="historyBtn" type="button">历史</button>
+        <button id="trashBtn" type="button">回收站</button>
+        <button id="routingBtn" type="button">路由</button>
         <button id="newBtn" type="button">新建</button>
         <button id="copyBtn" type="button">复制</button>
         <button id="deleteBtn" type="button" class="danger">删除</button>
@@ -43,6 +50,22 @@
             <h2>点击预览层直接编辑</h2>
           </div>
           <div class="preview-actions">
+            <label class="inline-select">
+              <span>密度</span>
+              <select id="densitySelect">
+                <option value="compact">紧凑</option>
+                <option value="standard">标准</option>
+                <option value="comfortable">宽松</option>
+              </select>
+            </label>
+            <label class="inline-select">
+              <span>预览</span>
+              <select id="previewDevice">
+                <option value="group">群聊常规图</option>
+                <option value="desktop">桌面宽图</option>
+                <option value="narrow">窄屏图</option>
+              </select>
+            </label>
             <span class="hint-pill">外框=主题</span>
             <span class="hint-pill">内容层=全部分组</span>
             <span class="hint-pill">分组=卡片列表</span>
@@ -52,6 +75,16 @@
           </div>
         </div>
         <div id="validationSummary" class="validation-summary" hidden></div>
+        <div id="batchToolbar" class="batch-toolbar" hidden>
+          <strong id="batchCount">已选择 0 项</strong>
+          <button id="batchEnableBtn" type="button">批量启用</button>
+          <button id="batchDisableBtn" type="button">批量禁用</button>
+          <button id="batchCopyBtn" type="button">批量复制</button>
+          <button id="batchDeleteBtn" type="button" class="danger">批量删除</button>
+          <button id="batchMoveUpBtn" type="button">上移选中</button>
+          <button id="batchMoveDownBtn" type="button">下移选中</button>
+          <button id="batchClearBtn" type="button">清除选择</button>
+        </div>
         <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
         <div id="status" class="status">正在加载...</div>
         <div id="preview" class="menu-preview"></div>

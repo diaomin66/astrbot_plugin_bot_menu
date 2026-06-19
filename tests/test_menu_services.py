@@ -132,6 +132,54 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('label: "一键重置样式"', app_js)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
+    def test_page_exposes_v040_operations_console_features(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+
+        for token in (
+            'id="commandPaletteBtn"',
+            'id="undoBtn"',
+            'id="redoBtn"',
+            'id="assetCenterBtn"',
+            'id="historyBtn"',
+            'id="trashBtn"',
+            'id="routingBtn"',
+            'id="densitySelect"',
+            'id="previewDevice"',
+            'id="batchToolbar"',
+        ):
+            self.assertIn(token, index_html)
+
+        for token in (
+            "openCommandPalette",
+            "bindGlobalShortcuts",
+            "undoMenuChange",
+            "redoMenuChange",
+            "batchSetEnabled",
+            "batchCopySelection",
+            "openAssetCenter",
+            "openHistoryPanel",
+            "openTrashPanel",
+            "openRoutingPanel",
+            "setDensity",
+            "setPreviewDevice",
+            "contrastWarningText",
+            "fixContrastColors",
+            "background_image_asset_id",
+            "font_family",
+            "card_gap",
+            "section_padding",
+            "shadow_strength",
+            "background_overlay",
+            "background_blur",
+            "watermark",
+        ):
+            self.assertIn(token, app_js)
+
+        for token in ("asset-grid", "batch-toolbar", "command-palette", "preview-watermark", "data-density"):
+            self.assertIn(token, css)
+
 
 class MenuStorageTests(unittest.TestCase):
     def test_storage_creates_default_menu(self):
@@ -494,6 +542,35 @@ class MenuStorageTests(unittest.TestCase):
         html = build_preview_html(menu)
         self.assertIn("--preview-section-gap:0px", html)
         self.assertIn('class="preview-sections"', html)
+
+    def test_preview_html_uses_v040_style_fields(self):
+        menu = normalize_menu(
+            {
+                "id": "ops",
+                "style": {
+                    "font_family": "Noto Sans CJK SC",
+                    "card_gap": 6,
+                    "section_padding": 12,
+                    "shadow_strength": 2,
+                    "border_strength": 3,
+                    "background_overlay": 15,
+                    "background_blur": 4,
+                    "background_brightness": 88,
+                    "watermark": "demo",
+                },
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn("--preview-font-family:", html)
+        self.assertIn("--preview-card-gap:6px", html)
+        self.assertIn("--preview-section-padding:12px", html)
+        self.assertIn("--preview-shadow-strength:2", html)
+        self.assertIn("--preview-border-strength:3", html)
+        self.assertIn("--preview-bg-overlay:0.150", html)
+        self.assertIn("--preview-bg-blur:4px", html)
+        self.assertIn("--preview-bg-brightness:0.880", html)
+        self.assertIn('class="preview-watermark"', html)
 
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
