@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -37,6 +38,7 @@ def render_menu_image(
     text = _color(style.get("text_color"), "#111827")
     muted = _color(style.get("muted_color"), "#6b7280")
     radius = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48) * scale
+    foreground_opacity = _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100) / 100
 
     font_regular = _font(20 * scale)
     font_small = _font(17 * scale)
@@ -86,15 +88,25 @@ def render_menu_image(
     y += 26 * scale if footer_text or style.get("show_updated_at", True) else 0
     height = int(y + margin + shell_pad)
 
-    image = Image.new("RGB", (width, height), bg)
+    image = Image.new("RGBA", (width, height), (*bg, 255))
+    _paste_custom_background(image, style, width, height, scale)
     draw = ImageDraw.Draw(image)
-    _draw_soft_background(draw, width, height, primary, bg, scale)
+    if not style.get("background_image"):
+        _draw_soft_background(draw, width, height, primary, bg, scale)
     shell = (margin, margin, width - margin, height - margin)
     
     # Soft shadow
     _draw_shadow(image, shell, radius, blur=12 * scale, offset_y=8 * scale, color=_mix(muted, bg, 0.4))
     
-    draw.rounded_rectangle(shell, radius=radius, fill=(255, 255, 255), outline=_mix(muted, (255, 255, 255), 0.72), width=1 * scale)
+    _draw_translucent_rounded_rectangle(
+        image,
+        shell,
+        radius=radius,
+        fill=(255, 255, 255),
+        opacity=foreground_opacity,
+        outline=_mix(muted, (255, 255, 255), 0.72),
+        width=1 * scale,
+    )
     draw.rounded_rectangle((margin, margin, width - margin, margin + 8 * scale + radius), radius=radius, fill=primary)
     draw.rectangle((margin, margin + 8 * scale, width - margin, margin + 8 * scale + radius), fill=(255, 255, 255))
 
@@ -116,7 +128,14 @@ def render_menu_image(
         section = layout["section"]
         top = y
         bottom = y + layout["height"]
-        draw.rounded_rectangle((x, top, x + content_width, bottom), radius=radius, fill=card, outline=_mix(muted, (255, 255, 255), 0.75))
+        _draw_translucent_rounded_rectangle(
+            image,
+            (x, top, x + content_width, bottom),
+            radius=radius,
+            fill=card,
+            opacity=foreground_opacity,
+            outline=_mix(muted, (255, 255, 255), 0.75),
+        )
         draw.rounded_rectangle((x + 22 * scale, y + 22 * scale, x + 32 * scale, y + 50 * scale), radius=5 * scale, fill=primary)
         draw.text((x + 44 * scale, y + 20 * scale), str(section.get("title") or "分组"), font=font_section, fill=text)
         y += 68 * scale
@@ -142,6 +161,7 @@ def render_menu_image(
         image = image.resize((target_width, target_height), Image.Resampling.LANCZOS)
 
     output_path.parent.mkdir(parents=True, exist_ok=True)
+    image = image.convert("RGB")
     image.save(output_path, format="PNG")
     return str(output_path)
 
@@ -296,6 +316,49 @@ def _decode_process_output(value: bytes | str | None) -> str:
     if isinstance(value, str):
         return value.strip()
     return value.decode("utf-8", errors="replace").strip()
+
+
+def _paste_custom_background(image, style: dict[str, Any], width: int, height: int, scale: int) -> None:
+    source = str(style.get("background_image") or "")
+    if not source.startswith("data:image/"):
+        return
+    try:
+        header, payload = source.split(",", 1)
+        if ";base64" not in header:
+            return
+        from PIL import Image
+
+        with Image.open(io.BytesIO(base64.b64decode(payload))) as bg_image:
+            bg_image = bg_image.convert("RGB")
+            image_width_pct = _clamp_int(style.get("background_image_width"), default=100, minimum=10, maximum=600)
+            target_width = max(1, int(width * image_width_pct / 100))
+            target_height = max(1, int(target_width * bg_image.height / bg_image.width))
+            bg_image = bg_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            x = int(width * _clamp_int(style.get("background_image_x"), default=0, minimum=-300, maximum=300) / 100)
+            y = int(height * _clamp_int(style.get("background_image_y"), default=0, minimum=-300, maximum=300) / 100)
+            image.paste(bg_image, (x, y))
+    except Exception:
+        return
+
+
+def _draw_translucent_rounded_rectangle(
+    image,
+    box,
+    *,
+    radius: int,
+    fill: tuple[int, int, int],
+    opacity: float,
+    outline: tuple[int, int, int] | None = None,
+    width: int = 1,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    alpha = max(0, min(255, int(255 * opacity)))
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    outline_rgba = (*outline, alpha) if outline else None
+    overlay_draw.rounded_rectangle(box, radius=radius, fill=(*fill, alpha), outline=outline_rgba, width=width)
+    image.alpha_composite(overlay)
 
 
 def _draw_item(draw, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale) -> None:

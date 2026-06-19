@@ -37,9 +37,14 @@ const els = {
   theme: $("theme"),
   primaryColor: $("primaryColor"),
   backgroundColor: $("backgroundColor"),
+  backgroundImageInput: $("backgroundImageInput"),
+  backgroundImageName: $("backgroundImageName"),
+  clearBackgroundBtn: $("clearBackgroundBtn"),
   cardColor: $("cardColor"),
   textColor: $("textColor"),
   mutedColor: $("mutedColor"),
+  foregroundOpacity: $("foregroundOpacity"),
+  foregroundOpacityValue: $("foregroundOpacityValue"),
   widthMode: $("widthMode"),
   columns: $("columns"),
   width: $("width"),
@@ -80,6 +85,7 @@ function bindEvents() {
     "cardColor",
     "textColor",
     "mutedColor",
+    "foregroundOpacity",
     "widthMode",
     "columns",
     "width",
@@ -97,6 +103,8 @@ function bindEvents() {
     syncFormToMenu();
     renderAll();
   });
+  els.backgroundImageInput.addEventListener("change", handleBackgroundUpload);
+  els.clearBackgroundBtn.addEventListener("click", clearBackgroundImage);
 }
 
 async function loadMenus(preferredId) {
@@ -147,9 +155,12 @@ function fillForm() {
   els.theme.value = style.theme || "aurora";
   els.primaryColor.value = toColor(style.primary_color, "#7c3aed");
   els.backgroundColor.value = toColor(style.background_color, "#f8fafc");
+  els.backgroundImageName.textContent = style.background_image ? (style.background_image_name || "Custom background") : "No background image";
   els.cardColor.value = toColor(style.card_color, "#ffffff");
   els.textColor.value = toColor(style.text_color, "#111827");
   els.mutedColor.value = toColor(style.muted_color, "#6b7280");
+  els.foregroundOpacity.value = style.foreground_opacity ?? 92;
+  els.foregroundOpacityValue.textContent = `${els.foregroundOpacity.value}%`;
   els.widthMode.value = style.width_mode || "auto";
   els.columns.value = style.columns || 2;
   els.width.value = style.width || 760;
@@ -175,6 +186,7 @@ function syncFormToMenu() {
     card_color: els.cardColor.value,
     text_color: els.textColor.value,
     muted_color: els.mutedColor.value,
+    foreground_opacity: Number(els.foregroundOpacity.value) || 0,
     width_mode: els.widthMode.value,
     columns: Number(els.columns.value) || 2,
     width: Number(els.width.value) || 760,
@@ -182,6 +194,7 @@ function syncFormToMenu() {
     show_updated_at: els.showUpdatedAt.checked,
   };
   state.dirty = true;
+  els.foregroundOpacityValue.textContent = `${state.menu.style.foreground_opacity}%`;
   syncWidthControl();
   els.serverPreview.hidden = true;
 }
@@ -282,10 +295,20 @@ function renderPreview() {
     `--preview-radius:${style.radius || 24}px`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
+    `--preview-foreground-opacity:${clampNumber(style.foreground_opacity, 0, 100, 92) / 100}`,
   ].join(";");
+  const backgroundMarkup = style.background_image ? `
+        <img class="preview-bg-image" alt="" src="${escapeAttr(style.background_image)}" style="left:${style.background_image_x || 0}%;top:${style.background_image_y || 0}%;width:${style.background_image_width || 100}%;" />
+        <div class="background-transform-box" aria-label="Background crop box">
+          <span class="resize-handle nw" data-handle="nw"></span>
+          <span class="resize-handle ne" data-handle="ne"></span>
+          <span class="resize-handle sw" data-handle="sw"></span>
+          <span class="resize-handle se" data-handle="se"></span>
+        </div>` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
       <div class="preview-card" style="${previewStyle}">
+        ${backgroundMarkup}
         <div class="preview-inner">
           <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
           <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
@@ -306,6 +329,7 @@ function renderPreview() {
       </div>
     </div>`;
   els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  attachBackgroundEditor();
   fitPreviewToStage();
 }
 
@@ -500,6 +524,142 @@ async function importMenus(event) {
   }
 }
 
+async function handleBackgroundUpload(event) {
+  const file = event.target.files?.[0];
+  if (!file) return;
+  if (!file.type.startsWith("image/")) {
+    setStatus("请选择图片文件作为背景。");
+    event.target.value = "";
+    return;
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  const style = ensureStyle(state.menu);
+  Object.assign(style, {
+    background_image: dataUrl,
+    background_image_name: file.name,
+    background_image_x: 0,
+    background_image_y: 0,
+    background_image_width: 100,
+  });
+  state.dirty = true;
+  els.backgroundImageName.textContent = file.name;
+  els.serverPreview.hidden = true;
+  renderAll();
+  fitBackgroundToCover(true);
+  event.target.value = "";
+}
+
+function clearBackgroundImage() {
+  const style = ensureStyle(state.menu);
+  Object.assign(style, {
+    background_image: "",
+    background_image_name: "",
+    background_image_x: 0,
+    background_image_y: 0,
+    background_image_width: 100,
+  });
+  state.dirty = true;
+  els.backgroundImageName.textContent = "No background image";
+  els.serverPreview.hidden = true;
+  renderAll();
+}
+
+function readFileAsDataUrl(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () => reject(reader.error || new Error("Failed to read background image"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function attachBackgroundEditor() {
+  const style = ensureStyle(state.menu);
+  const img = els.preview.querySelector(".preview-bg-image");
+  const box = els.preview.querySelector(".background-transform-box");
+  const card = els.preview.querySelector(".preview-card");
+  if (!img || !box || !card) return;
+
+  const updateBox = () => {
+    box.style.left = `${img.offsetLeft}px`;
+    box.style.top = `${img.offsetTop}px`;
+    box.style.width = `${img.offsetWidth}px`;
+    box.style.height = `${img.offsetHeight}px`;
+  };
+
+  const updateImage = () => {
+    img.style.left = `${style.background_image_x || 0}%`;
+    img.style.top = `${style.background_image_y || 0}%`;
+    img.style.width = `${style.background_image_width || 100}%`;
+    requestAnimationFrame(updateBox);
+  };
+
+  if (img.complete) updateBox();
+  img.addEventListener("load", () => {
+    fitBackgroundToCover(false);
+    updateBox();
+  }, { once: true });
+
+  box.addEventListener("pointerdown", (event) => {
+    const handle = event.target.dataset.handle;
+    const startX = event.clientX;
+    const startY = event.clientY;
+    const startLeft = Number(style.background_image_x) || 0;
+    const startTop = Number(style.background_image_y) || 0;
+    const startWidth = Number(style.background_image_width) || 100;
+    const cardRect = card.getBoundingClientRect();
+    box.setPointerCapture(event.pointerId);
+    box.classList.add("is-moving");
+
+    const onMove = (moveEvent) => {
+      const dxPct = ((moveEvent.clientX - startX) / cardRect.width) * 100;
+      const dyPct = ((moveEvent.clientY - startY) / cardRect.height) * 100;
+      if (handle) {
+        const fromLeft = handle.includes("w");
+        const nextWidth = clampNumber(startWidth + (fromLeft ? -dxPct : dxPct), 10, 600, startWidth);
+        style.background_image_width = nextWidth;
+        if (fromLeft) style.background_image_x = clampNumber(startLeft + (startWidth - nextWidth), -300, 300, startLeft);
+        if (handle.includes("n")) style.background_image_y = clampNumber(startTop + dyPct, -300, 300, startTop);
+      } else {
+        style.background_image_x = clampNumber(startLeft + dxPct, -300, 300, startLeft);
+        style.background_image_y = clampNumber(startTop + dyPct, -300, 300, startTop);
+      }
+      state.dirty = true;
+      els.serverPreview.hidden = true;
+      updateImage();
+    };
+
+    const onUp = () => {
+      box.classList.remove("is-moving");
+      box.removeEventListener("pointermove", onMove);
+      box.removeEventListener("pointerup", onUp);
+      box.removeEventListener("pointercancel", onUp);
+    };
+
+    box.addEventListener("pointermove", onMove);
+    box.addEventListener("pointerup", onUp);
+    box.addEventListener("pointercancel", onUp);
+  });
+}
+
+function fitBackgroundToCover(forceReset) {
+  const style = ensureStyle(state.menu);
+  const img = els.preview.querySelector(".preview-bg-image");
+  const card = els.preview.querySelector(".preview-card");
+  if (!img || !card || !style.background_image) return;
+  if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
+    img.addEventListener("load", () => fitBackgroundToCover(forceReset), { once: true });
+    return;
+  }
+  const requiredWidth = Math.max(100, (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight));
+  if (!forceReset && Number(style.background_image_width) >= requiredWidth) return;
+  style.background_image_width = clampNumber(requiredWidth, 10, 600, 100);
+  style.background_image_x = clampNumber((100 - style.background_image_width) / 2, -300, 300, 0);
+  style.background_image_y = 0;
+  state.dirty = true;
+  renderPreview();
+}
+
 function ensureStyle(menu) {
   menu.style = { ...defaultStyle(), ...(menu.style || {}) };
   return menu.style;
@@ -510,9 +670,15 @@ function defaultStyle() {
     theme: "aurora",
     primary_color: "#7c3aed",
     background_color: "#f8fafc",
+    background_image: "",
+    background_image_name: "",
+    background_image_x: 0,
+    background_image_y: 0,
+    background_image_width: 100,
     card_color: "#ffffff",
     text_color: "#111827",
     muted_color: "#6b7280",
+    foreground_opacity: 92,
     radius: 24,
     width_mode: "auto",
     width: 760,

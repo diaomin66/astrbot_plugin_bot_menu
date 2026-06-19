@@ -187,6 +187,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     width = preview_width_for_menu(menu, default_width=default_width)
     sections = "\n".join(_render_preview_section(section) for section in menu.get("sections", []))
     footer_status = "" if style["show_updated_at"] is False else "实时预览"
+    foreground_opacity = style["foreground_opacity"] / 100
     style_attr = (
         f"--preview-primary:{style['primary_color']};"
         f"--preview-bg:{style['background_color']};"
@@ -195,8 +196,18 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
         f"--preview-width:{width}px;"
-        f"--preview-columns:{style['columns']}"
+        f"--preview-columns:{style['columns']};"
+        f"--preview-foreground-opacity:{foreground_opacity:.3f}"
     )
+    background_markup = ""
+    if style["background_image"]:
+        background_markup = (
+            '<img class="preview-bg-image" alt="" '
+            f'src="{_escape(style["background_image"])}" '
+            f'style="left:{style["background_image_x"]}%;'
+            f'top:{style["background_image_y"]}%;'
+            f'width:{style["background_image_width"]}%;" />'
+        )
 
     return f"""<!doctype html>
 <html lang="zh-CN">
@@ -221,13 +232,23 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
+      position: relative;
+      overflow: hidden;
+    }}
+    .preview-bg-image {{
+      position: absolute;
+      z-index: 0;
+      max-width: none;
+      height: auto;
+      user-select: none;
+      pointer-events: none;
     }}
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
-    .preview-inner {{ padding: 22px; border-radius: inherit; background: rgba(255,255,255,.92); box-shadow: 0 16px 34px rgba(15,23,42,.10); }}
+    .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
-    .preview-section {{ margin-top: 14px; padding: 15px; border-radius: 18px; background: var(--preview-card, #fff); }}
+    .preview-section {{ margin-top: 14px; padding: 15px; border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); }}
     .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: 10px; }}
-    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,.94); }}
+    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
     .preview-item.size-compact {{ grid-template-columns: 28px 1fr; min-height: 58px; padding: 8px; }}
     .preview-item.size-large {{ grid-template-columns: 42px 1fr; min-height: 104px; padding: 14px; }}
     .preview-item.size-banner {{ grid-column: 1 / -1; grid-template-columns: 46px 1fr; min-height: 112px; padding: 16px; }}
@@ -239,6 +260,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
 </head>
 <body>
   <div class="preview-card" style="{style_attr}">
+    {background_markup}
     <div class="preview-inner">
       <div class="kicker">📋 {_escape(menu.get("name") or menu.get("id"))}</div>
       <h1 class="preview-title">{_escape(menu.get("title") or "Bot 功能菜单")}</h1>
@@ -308,9 +330,15 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
     return {
         "primary_color": style.get("primary_color") or "#7c3aed",
         "background_color": style.get("background_color") or "#f8fafc",
+        "background_image": style.get("background_image") or "",
+        "background_image_name": style.get("background_image_name") or "",
+        "background_image_x": _clamp_int(style.get("background_image_x"), default=0, minimum=-300, maximum=300),
+        "background_image_y": _clamp_int(style.get("background_image_y"), default=0, minimum=-300, maximum=300),
+        "background_image_width": _clamp_int(style.get("background_image_width"), default=100, minimum=10, maximum=600),
         "card_color": style.get("card_color") or "#ffffff",
         "text_color": style.get("text_color") or "#111827",
         "muted_color": style.get("muted_color") or "#6b7280",
+        "foreground_opacity": _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100),
         "radius": _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48),
         "width_mode": width_mode,
         "width": _clamp_int(style.get("width"), default=default_width, minimum=520, maximum=1400),

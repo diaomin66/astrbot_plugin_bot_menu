@@ -71,9 +71,12 @@
             <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select></label>
             <label class="field"><span>主色</span><input id="primaryColor" type="color" /></label>
             <label class="field"><span>背景色</span><input id="backgroundColor" type="color" /></label>
+            <label class="field wide background-upload"><span>自定义背景图（不限制尺寸）</span><input id="backgroundImageInput" type="file" accept="image/*" /><small id="backgroundImageName">No background image</small></label>
+            <button id="clearBackgroundBtn" type="button">清除背景图</button>
             <label class="field"><span>卡片色</span><input id="cardColor" type="color" /></label>
             <label class="field"><span>文字色</span><input id="textColor" type="color" /></label>
             <label class="field"><span>辅助文字</span><input id="mutedColor" type="color" /></label>
+            <label class="field wide"><span>前景菜单透明度 <output id="foregroundOpacityValue">92%</output></span><input id="foregroundOpacity" type="range" min="0" max="100" step="1" /></label>
             <label class="field"><span>宽度模式</span><select id="widthMode"><option value="auto">智能自动</option><option value="custom">手动指定</option></select></label>
             <label class="field"><span>每行卡片</span><select id="columns"><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label>
             <label class="field"><span>手动宽度</span><input id="width" type="number" min="520" max="1400" /></label>

@@ -23,9 +23,15 @@ DEFAULT_STYLE: dict[str, Any] = {
     "theme": "aurora",
     "primary_color": "#7c3aed",
     "background_color": "#f8fafc",
+    "background_image": "",
+    "background_image_name": "",
+    "background_image_x": 0,
+    "background_image_y": 0,
+    "background_image_width": 100,
     "card_color": "#ffffff",
     "text_color": "#111827",
     "muted_color": "#6b7280",
+    "foreground_opacity": 92,
     "radius": 24,
     "width_mode": "auto",
     "width": 760,
@@ -146,6 +152,17 @@ def _normalize_style(raw_style: Any) -> dict[str, Any]:
     for key in ("primary_color", "background_color", "card_color", "text_color", "muted_color"):
         style[key] = _clean_color(style.get(key), default=DEFAULT_STYLE[key])
 
+    style["background_image"] = _clean_background_image(style.get("background_image"))
+    style["background_image_name"] = _clean_text(
+        style.get("background_image_name"),
+        "background image name",
+        default="",
+        max_length=160,
+    )
+    style["background_image_x"] = _clamp_int(style.get("background_image_x"), default=0, minimum=-300, maximum=300)
+    style["background_image_y"] = _clamp_int(style.get("background_image_y"), default=0, minimum=-300, maximum=300)
+    style["background_image_width"] = _clamp_int(style.get("background_image_width"), default=100, minimum=10, maximum=600)
+    style["foreground_opacity"] = _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100)
     style["radius"] = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48)
     style["width_mode"] = _clean_choice(style.get("width_mode"), WIDTH_MODES, default="auto")
     style["width"] = _clamp_int(style.get("width"), default=760, minimum=520, maximum=1400)
@@ -210,6 +227,15 @@ def _clean_text(value: Any, field_name: str, *, default: str = "", max_length: i
 def _clean_color(value: Any, *, default: str) -> str:
     raw = _clean_text(value, "color", default=default, max_length=32)
     return raw if HEX_COLOR_PATTERN.fullmatch(raw) else default
+
+
+def _clean_background_image(value: Any) -> str:
+    if not value:
+        return ""
+    raw = str(value).strip()
+    if raw.startswith(("data:image/", "http://", "https://")):
+        return raw
+    return ""
 
 
 def _clean_choice(value: Any, choices: set[str], *, default: str) -> str:

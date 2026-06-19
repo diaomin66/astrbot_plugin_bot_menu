@@ -35,7 +35,16 @@ class MenuModelTests(unittest.TestCase):
         menu = normalize_menu(
             {
                 "id": "main",
-                "style": {"width_mode": "custom", "width": 680, "columns": 3},
+                "style": {
+                    "width_mode": "custom",
+                    "width": 680,
+                    "columns": 3,
+                    "foreground_opacity": 45,
+                    "background_image": "data:image/png;base64,AAAA",
+                    "background_image_x": -12,
+                    "background_image_y": 18,
+                    "background_image_width": 150,
+                },
                 "sections": [
                     {
                         "title": "功能",
@@ -47,6 +56,11 @@ class MenuModelTests(unittest.TestCase):
         self.assertEqual(menu["style"]["width_mode"], "custom")
         self.assertEqual(menu["style"]["width"], 680)
         self.assertEqual(menu["style"]["columns"], 3)
+        self.assertEqual(menu["style"]["foreground_opacity"], 45)
+        self.assertEqual(menu["style"]["background_image_x"], -12)
+        self.assertEqual(menu["style"]["background_image_y"], 18)
+        self.assertEqual(menu["style"]["background_image_width"], 150)
+        self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
     def test_normalize_menu_rejects_invalid_id(self):
@@ -128,6 +142,7 @@ class MenuStorageTests(unittest.TestCase):
             self.assertLess(width, 900)
             self.assertIn(f"--preview-width:{width}px", html)
             self.assertIn("--preview-columns:2", html)
+            self.assertIn("--preview-foreground-opacity:0.920", html)
             self.assertIn('class="preview-inner"', html)
             self.assertIn('class="preview-item size-standard', html)
             self.assertIn("实时预览", html)
@@ -143,6 +158,25 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertEqual(preview_width_for_menu(menu), 720)
         self.assertIn("--preview-columns:1", build_preview_html(menu))
+
+    def test_preview_html_embeds_custom_background(self):
+        menu = normalize_menu(
+            {
+                "id": "bg",
+                "style": {
+                    "background_image": "data:image/png;base64,AAAA",
+                    "background_image_x": 10,
+                    "background_image_y": -5,
+                    "background_image_width": 120,
+                    "foreground_opacity": 60,
+                },
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn('class="preview-bg-image"', html)
+        self.assertIn("left:10%;top:-5%;width:120%", html)
+        self.assertIn("--preview-foreground-opacity:0.600", html)
 
     def test_preview_width_grows_with_columns(self):
         one_column = normalize_menu(
