@@ -6,8 +6,10 @@ import io
 import json
 import os
 import shutil
+import struct
 import subprocess
 import textwrap
+import zlib
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -308,9 +310,14 @@ def _render_menu_via_playwright(
                     page.wait_for_load_state("networkidle", timeout=3000)
                 except PlaywrightError:
                     pass
-                page.screenshot(
+                card = page.locator(".preview-card").first
+                card.wait_for(state="visible", timeout=5000)
+                try:
+                    page.evaluate("() => document.fonts && document.fonts.ready ? document.fonts.ready.then(() => true) : true")
+                except Exception:
+                    pass
+                card.screenshot(
                     path=str(screenshot_path),
-                    full_page=True,
                     omit_background=True,
                     animations="disabled",
                     timeout=15000,
@@ -437,6 +444,7 @@ def _crop_transparent_padding(path: Path) -> None:
     try:
         from PIL import Image
     except ImportError:
+        _crop_transparent_padding_png(path)
         return
 
     with Image.open(path) as img:
@@ -445,6 +453,167 @@ def _crop_transparent_padding(path: Path) -> None:
         if not bbox or bbox == (0, 0, rgba.width, rgba.height):
             return
         rgba.crop(bbox).save(path, format="PNG")
+
+
+def _crop_transparent_padding_png(path: Path) -> bool:
+    """Crop transparent PNG padding without Pillow.
+
+    Linux deployments occasionally have Chromium available but do not have
+    Pillow importable in AstrBot's runtime.  Older/headless Chromium builds can
+    then save a viewport-sized transparent tail below the menu card.  Keeping a
+    small PNG-only fallback here ensures browser renders are still cropped even
+    when the optional Pillow crop path is unavailable.
+    """
+
+    cropped = _crop_transparent_png_bytes(path.read_bytes())
+    if cropped is None:
+        return False
+    path.write_bytes(cropped)
+    return True
+
+
+def _crop_transparent_png_bytes(raw: bytes) -> bytes | None:
+    signature = b"\x89PNG\r\n\x1a\n"
+    if not raw.startswith(signature):
+        return None
+
+    pos = len(signature)
+    width = height = bit_depth = color_type = interlace = None
+    idat_parts: list[bytes] = []
+    while pos + 12 <= len(raw):
+        length = int.from_bytes(raw[pos : pos + 4], "big")
+        chunk_type = raw[pos + 4 : pos + 8]
+        chunk_start = pos + 8
+        chunk_end = chunk_start + length
+        if chunk_end + 4 > len(raw):
+            return None
+        chunk_data = raw[chunk_start:chunk_end]
+        pos = chunk_end + 4
+
+        if chunk_type == b"IHDR":
+            width, height, bit_depth, color_type, _compression, _filter, interlace = struct.unpack(
+                ">IIBBBBB",
+                chunk_data,
+            )
+        elif chunk_type == b"IDAT":
+            idat_parts.append(chunk_data)
+        elif chunk_type == b"IEND":
+            break
+
+    if (
+        not width
+        or not height
+        or bit_depth != 8
+        or color_type not in {4, 6}
+        or interlace != 0
+        or not idat_parts
+    ):
+        return None
+
+    bytes_per_pixel = 4 if color_type == 6 else 2
+    alpha_offset = 3 if color_type == 6 else 1
+    try:
+        rows = _decode_png_rows(
+            zlib.decompress(b"".join(idat_parts)),
+            width=width,
+            height=height,
+            bytes_per_pixel=bytes_per_pixel,
+        )
+    except Exception:
+        return None
+    if rows is None:
+        return None
+
+    left, top, right, bottom = width, height, -1, -1
+    for y, row in enumerate(rows):
+        for x in range(width):
+            if row[x * bytes_per_pixel + alpha_offset]:
+                left = min(left, x)
+                top = min(top, y)
+                right = max(right, x)
+                bottom = max(bottom, y)
+
+    if right < left or (left, top, right, bottom) == (0, 0, width - 1, height - 1):
+        return None
+
+    new_width = right - left + 1
+    new_height = bottom - top + 1
+    scanlines = bytearray()
+    for row in rows[top : bottom + 1]:
+        scanlines.append(0)
+        if color_type == 6:
+            scanlines.extend(row[left * 4 : (right + 1) * 4])
+        else:
+            for x in range(left, right + 1):
+                offset = x * 2
+                gray = row[offset]
+                alpha = row[offset + 1]
+                scanlines.extend((gray, gray, gray, alpha))
+
+    return _encode_rgba_png(new_width, new_height, bytes(scanlines))
+
+
+def _decode_png_rows(data: bytes, *, width: int, height: int, bytes_per_pixel: int) -> list[bytes] | None:
+    stride = width * bytes_per_pixel
+    rows: list[bytes] = []
+    previous = bytearray(stride)
+    offset = 0
+    for _y in range(height):
+        if offset >= len(data):
+            return None
+        filter_type = data[offset]
+        offset += 1
+        row = bytearray(data[offset : offset + stride])
+        offset += stride
+        if len(row) != stride:
+            return None
+
+        for i in range(stride):
+            left = row[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+            up = previous[i]
+            upper_left = previous[i - bytes_per_pixel] if i >= bytes_per_pixel else 0
+            if filter_type == 1:
+                row[i] = (row[i] + left) & 0xFF
+            elif filter_type == 2:
+                row[i] = (row[i] + up) & 0xFF
+            elif filter_type == 3:
+                row[i] = (row[i] + ((left + up) // 2)) & 0xFF
+            elif filter_type == 4:
+                row[i] = (row[i] + _paeth(left, up, upper_left)) & 0xFF
+            elif filter_type != 0:
+                return None
+
+        rows.append(bytes(row))
+        previous = row
+    return rows
+
+
+def _paeth(left: int, up: int, upper_left: int) -> int:
+    estimate = left + up - upper_left
+    distance_left = abs(estimate - left)
+    distance_up = abs(estimate - up)
+    distance_upper_left = abs(estimate - upper_left)
+    if distance_left <= distance_up and distance_left <= distance_upper_left:
+        return left
+    if distance_up <= distance_upper_left:
+        return up
+    return upper_left
+
+
+def _encode_rgba_png(width: int, height: int, scanlines: bytes) -> bytes:
+    def chunk(chunk_type: bytes, payload: bytes) -> bytes:
+        crc = zlib.crc32(chunk_type)
+        crc = zlib.crc32(payload, crc) & 0xFFFFFFFF
+        return len(payload).to_bytes(4, "big") + chunk_type + payload + crc.to_bytes(4, "big")
+
+    return b"".join(
+        [
+            b"\x89PNG\r\n\x1a\n",
+            chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 6, 0, 0, 0)),
+            chunk(b"IDAT", zlib.compress(scanlines)),
+            chunk(b"IEND", b""),
+        ]
+    )
 
 
 def _decode_process_output(value: bytes | str | None) -> str:

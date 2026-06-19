@@ -5,7 +5,13 @@ import unittest
 from pathlib import Path
 
 from services.menu_model import MenuValidationError, normalize_menu
-from services.local_image import _build_browser_screenshot_command, _find_browser_executable, image_file_to_data_url, render_menu_image
+from services.local_image import (
+    _build_browser_screenshot_command,
+    _crop_transparent_padding_png,
+    _find_browser_executable,
+    image_file_to_data_url,
+    render_menu_image,
+)
 from services.render_cache import MenuRenderCache
 from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, preview_width_for_menu
@@ -299,6 +305,21 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual(_find_browser_executable(), "/usr/bin/chromium-browser")
         self.assertIn("google-chrome", command_names)
         self.assertIn("chromium-browser", command_names)
+
+    def test_png_crop_fallback_removes_transparent_browser_tail_without_pillow(self):
+        from PIL import Image
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "tail.png"
+            image = Image.new("RGBA", (8, 10), (0, 0, 0, 0))
+            for y in range(6):
+                for x in range(8):
+                    image.putpixel((x, y), (250, 250, 255, 255))
+            image.save(path, format="PNG")
+
+            self.assertTrue(_crop_transparent_padding_png(path))
+            with Image.open(path) as cropped:
+                self.assertEqual(cropped.size, (8, 6))
 
     def test_preview_html_uses_page_preview_markup(self):
         with tempfile.TemporaryDirectory() as tmp:
