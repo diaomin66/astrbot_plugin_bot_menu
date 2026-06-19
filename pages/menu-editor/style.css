@@ -269,6 +269,21 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .modal-head h2 { margin: 0; font-size: 20px; }
 .modal-body { min-height: 0; overflow: auto; padding: 16px 18px; }
 .modal-footer { display: flex; justify-content: flex-end; flex-wrap: wrap; gap: 10px; padding: 12px 18px 16px; border-top: 1px solid var(--line); }
+.confirm-dialog {
+  display: grid;
+  gap: 10px;
+  padding: 4px 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.7;
+}
+.confirm-dialog p {
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid rgba(220,38,38,.18);
+  border-radius: 16px;
+  background: rgba(220,38,38,.06);
+}
 .modal-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
 .modal-grid .wide { grid-column: 1 / -1; }
 .field { display: grid; gap: 6px; color: var(--muted); font-size: 12px; font-weight: 800; }

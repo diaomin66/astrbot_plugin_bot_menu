@@ -98,6 +98,7 @@ const state = {
   history: [],
   historyIndex: -1,
   historyPaused: false,
+  modalCloseHandler: null,
   renderStatusTimer: 0,
   backgroundEditMode: false,
   pendingBackgroundAsset: null,
@@ -751,7 +752,13 @@ function bindGlobalShortcuts() {
   });
 }
 
-function openModal(title, body, actions = []) {
+function openModal(title, body, actions = [], options = {}) {
+  if (state.modalCloseHandler) {
+    const previousCloseHandler = state.modalCloseHandler;
+    state.modalCloseHandler = null;
+    previousCloseHandler();
+  }
+  state.modalCloseHandler = typeof options.onClose === "function" ? options.onClose : null;
   els.modalTitle.textContent = title;
   replaceChildrenSafe(els.modalBody, body);
   replaceChildrenSafe(els.modalFooter);
@@ -774,6 +781,29 @@ function openModal(title, body, actions = []) {
 
 function closeModal() {
   if (els.editorModal) els.editorModal.hidden = true;
+  const handler = state.modalCloseHandler;
+  state.modalCloseHandler = null;
+  if (handler) handler();
+}
+
+function resolveAndCloseModal(resolve, value) {
+  state.modalCloseHandler = null;
+  resolve(value);
+  closeModal();
+}
+
+function confirmDialog(title, message, { confirmLabel = "确定", cancelLabel = "取消", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "confirm-dialog";
+    const text = document.createElement("p");
+    text.textContent = message;
+    body.append(text);
+    openModal(title, body, [
+      { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, false) },
+      { label: confirmLabel, className: danger ? "danger" : "primary", onClick: () => resolveAndCloseModal(resolve, true) },
+    ], { onClose: () => resolve(false) });
+  });
 }
 
 function commitMenuChange({ keepModal = true } = {}) {
@@ -1497,7 +1527,12 @@ async function deleteMenu() {
   const currentId = state.currentId || state.menu.id;
   const isSavedMenu = state.serverMenuIds.has(currentId);
   if (!isSavedMenu) {
-    if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
+    const confirmed = await confirmDialog(
+      "丢弃本地菜单？",
+      `当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。`,
+      { confirmLabel: "丢弃草稿", danger: true },
+    );
+    if (!confirmed) {
       setStatus("已取消删除。");
       return;
     }
@@ -1508,7 +1543,12 @@ async function deleteMenu() {
     setStatus("至少保留一个菜单方案，无法删除最后一个菜单。", "warning");
     return;
   }
-  if (!confirm(`确定删除菜单方案 ${currentId}？未保存修改会一并丢弃。`)) {
+  const confirmed = await confirmDialog(
+    "删除菜单方案？",
+    `确定删除菜单方案 ${currentId}？未保存修改会一并丢弃，删除前会由后端保留历史快照。`,
+    { confirmLabel: "确认删除", danger: true },
+  );
+  if (!confirmed) {
     setStatus("已取消删除。");
     return;
   }

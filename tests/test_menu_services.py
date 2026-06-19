@@ -131,6 +131,8 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("function stashActiveMenu()", app_js)
         self.assertIn("function activateLocalMenu(menu", app_js)
         self.assertIn("const isSavedMenu = state.serverMenuIds.has(currentId);", app_js)
+        self.assertIn("function confirmDialog(title, message", app_js)
+        self.assertIn("const confirmed = await confirmDialog(", app_js)
         self.assertIn('label: "一键重置样式"', app_js)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
@@ -185,7 +187,7 @@ class MenuEditorSourceTests(unittest.TestCase):
         ):
             self.assertIn(token, app_js)
 
-        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong"):
+        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong", "confirm-dialog"):
             self.assertIn(token, css)
 
 
