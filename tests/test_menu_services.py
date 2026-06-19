@@ -4,6 +4,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from services.asset_storage import AssetStorage
+from services.history_storage import MenuHistoryStorage
 from services.menu_model import MenuValidationError, normalize_menu
 from services.local_image import (
     _build_browser_screenshot_command,
@@ -15,6 +17,7 @@ from services.local_image import (
 from services.render_cache import MenuRenderCache
 from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, preview_width_for_menu
+from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
 
 
@@ -43,10 +46,20 @@ class MenuModelTests(unittest.TestCase):
         menu = normalize_menu(
             {
                 "id": "main",
+                "aliases": ["管理", "main"],
                 "style": {
                     "width_mode": "custom",
                     "width": 680,
                     "columns": 3,
+                    "background_image_asset_id": "asset123",
+                    "font_family": "Noto Sans CJK SC",
+                    "card_gap": 6,
+                    "section_padding": 12,
+                    "shadow_strength": 2,
+                    "border_strength": 3,
+                    "background_overlay": 15,
+                    "background_blur": 4,
+                    "watermark": "demo",
                     "foreground_opacity": 45,
                     "background_image": "data:image/png;base64,AAAA",
                     "background_image_x": -12,
@@ -63,9 +76,19 @@ class MenuModelTests(unittest.TestCase):
                 ],
             }
         )
+        self.assertEqual(menu["aliases"], ["管理"])
         self.assertEqual(menu["style"]["width_mode"], "custom")
         self.assertEqual(menu["style"]["width"], 680)
         self.assertEqual(menu["style"]["columns"], 3)
+        self.assertEqual(menu["style"]["background_image_asset_id"], "asset123")
+        self.assertEqual(menu["style"]["font_family"], "Noto Sans CJK SC")
+        self.assertEqual(menu["style"]["card_gap"], 6)
+        self.assertEqual(menu["style"]["section_padding"], 12)
+        self.assertEqual(menu["style"]["shadow_strength"], 2)
+        self.assertEqual(menu["style"]["border_strength"], 3)
+        self.assertEqual(menu["style"]["background_overlay"], 15)
+        self.assertEqual(menu["style"]["background_blur"], 4)
+        self.assertEqual(menu["style"]["watermark"], "demo")
         self.assertEqual(menu["style"]["foreground_opacity"], 45)
         self.assertEqual(menu["style"]["background_image_x"], -12)
         self.assertEqual(menu["style"]["background_image_y"], 18)
@@ -125,6 +148,57 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNotNone(storage.get_menu("main"))
             storage.delete_menu("main")
             self.assertIsNone(storage.get_menu("main"))
+            self.assertIsNotNone(storage.get_menu_including_deleted("main"))
+
+    def test_storage_resolves_aliases_and_restores_soft_deleted_menu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            storage.save_menu(
+                {
+                    "id": "admin",
+                    "name": "管理菜单",
+                    "aliases": ["管理", "tools"],
+                    "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+                }
+            )
+            self.assertEqual(storage.resolve_menu("管理")["id"], "admin")
+            storage.delete_menu("admin")
+            self.assertIsNone(storage.resolve_menu("管理"))
+            restored = storage.restore_menu("admin")
+            self.assertEqual(restored["id"], "admin")
+            self.assertEqual(storage.resolve_menu("tools")["id"], "admin")
+
+    def test_asset_storage_deduplicates_and_tracks_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = AssetStorage(tmp)
+            data_url = "data:image/png;base64,iVBORw0KGgo="
+            first = storage.save_data_url(data_url, name="bg.png")
+            second = storage.save_data_url(data_url, name="again.png")
+            self.assertEqual(first["id"], second["id"])
+            menus = [{"id": "main", "style": {"background_image_asset_id": first["id"]}}]
+            assets = storage.list_assets(menus)
+            self.assertEqual(assets[0]["references"], ["main"])
+            with self.assertRaises(MenuValidationError):
+                storage.delete_asset(first["id"], menus)
+
+    def test_history_snapshot_restore_and_routing_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history = MenuHistoryStorage(tmp)
+            menu = normalize_menu({"id": "main", "title": "旧标题", "sections": [{"title": "功能", "items": [{"label": "帮助"}]}]})
+            snapshot = history.snapshot(menu, reason="save")
+            self.assertEqual(history.restore_snapshot("main", snapshot["id"])["title"], "旧标题")
+
+            routing = RoutingStorage(tmp)
+            routing.save_rules(
+                {
+                    "global_default": "main",
+                    "platforms": {"telegram": "tg"},
+                    "contexts": {"aiocqhttp:10001": "group-menu", "10002": "plain-group"},
+                }
+            )
+            self.assertEqual(routing.resolve_default(platform="aiocqhttp", group_id="10001", global_default="default"), "group-menu")
+            self.assertEqual(routing.resolve_default(platform="telegram", group_id="", global_default="default"), "tg")
+            self.assertEqual(routing.resolve_default(platform="qq", group_id="", global_default="default"), "main")
 
     def test_import_replace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -167,16 +241,21 @@ class MenuStorageTests(unittest.TestCase):
             storage = MenuStorage(tmp)
             menu = storage.get_menu("default")
             cache = MenuRenderCache(tmp)
-            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "missing")
+            missing = cache.get_status(menu, render_width=900, render_scale=4)
+            self.assertEqual(missing["status"], "missing")
+            self.assertIn("fingerprint", missing)
 
             cache.mark_rendering(menu, render_width=900, render_scale=4)
-            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "rendering")
+            rendering = cache.get_status(menu, render_width=900, render_scale=4)
+            self.assertEqual(rendering["status"], "rendering")
+            self.assertEqual(rendering["attempts"], 1)
 
             rendered_path = render_menu_image(menu, tmp)
             cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
             ready = cache.get_status(menu, render_width=900, render_scale=4)
             self.assertEqual(ready["status"], "ready")
             self.assertIsNotNone(ready["rendered_at"])
+            self.assertGreater(ready["cache_size"], 0)
 
             changed_menu = {**menu, "title": "修改后的菜单"}
             self.assertEqual(cache.get_status(changed_menu, render_width=900, render_scale=4)["status"], "missing")
@@ -222,6 +301,14 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertIn("self.render_coordinator.schedule(menu)", main_py[main_py.index("async def api_save_menu") :])
         self.assertIn("menus/render-status/<menu_id>", main_py)
+        self.assertIn("self.storage.resolve_menu(menu_id)", main_py)
+        self.assertIn('command.casefold() == "list"', main_py)
+        self.assertIn('command.casefold() == "search"', main_py)
+        self.assertIn('command.casefold() == "refresh"', main_py)
+        self.assertIn("assets/<asset_id>", main_py)
+        self.assertIn("menus/history/<menu_id>", main_py)
+        self.assertIn("menus/render-refresh", main_py)
+        self.assertIn("routing", main_py)
 
     def test_pillow_renderer_can_output_high_resolution_png(self):
         from PIL import Image

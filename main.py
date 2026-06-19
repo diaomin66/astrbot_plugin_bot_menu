@@ -9,10 +9,13 @@ from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star
 
 from .services import (
+    AssetStorage,
+    MenuHistoryStorage,
     MenuStorage,
     MenuRenderCache,
     MenuRenderCoordinator,
     MenuValidationError,
+    RoutingStorage,
     build_preview_html,
     build_render_payload,
     preview_width_for_menu,
@@ -89,6 +92,9 @@ class BotMenuPlugin(Star):
         super().__init__(context, config)
         self.config = config or {}
         self.storage = MenuStorage(self._resolve_data_dir())
+        self.assets = AssetStorage(self.storage.data_dir)
+        self.history = MenuHistoryStorage(self.storage.data_dir)
+        self.routing = RoutingStorage(self.storage.data_dir)
         self.render_cache = MenuRenderCache(self.storage.data_dir)
         self.render_coordinator = MenuRenderCoordinator(
             storage=self.storage,
@@ -102,11 +108,29 @@ class BotMenuPlugin(Star):
         self.render_coordinator.schedule_prewarm()
 
     @filter.command("menu", alias={"菜单"})
-    async def show_menu(self, event: AstrMessageEvent, menu_id: str = ""):
-        """显示机器人菜单图片。用法：/menu 或 /menu <方案ID>。"""
-        menu_id = (menu_id or "").strip() or self._effective_default_menu_id()
+    async def show_menu(self, event: AstrMessageEvent, menu_id: str = "", keyword: str = ""):
+        """显示机器人菜单图片。用法：/menu、/menu <ID|别名>、/menu list/search/refresh。"""
+        command = (menu_id or "").strip()
         try:
-            menu = self.storage.get_menu(menu_id)
+            if command.casefold() == "list":
+                yield event.plain_result(self._format_menu_list())
+                return
+            if command.casefold() == "search":
+                term = (keyword or "").strip()
+                yield event.plain_result(self._search_menu_items(term))
+                return
+            if command.casefold() == "refresh":
+                target = (keyword or "").strip() or self._effective_default_menu_id(event)
+                menu = self.storage.resolve_menu(target)
+                if not menu:
+                    yield event.plain_result(f"未找到菜单方案：{target}")
+                    return
+                self.render_coordinator.schedule(menu, force=True)
+                yield event.plain_result(f"已提交菜单缓存刷新：{menu['id']}")
+                return
+
+            menu_id = command or self._effective_default_menu_id(event)
+            menu = self.storage.resolve_menu(menu_id)
             if not menu:
                 available = ", ".join(menu["id"] for menu in self.storage.list_menus())
                 yield event.plain_result(f"未找到菜单方案：{menu_id}\n可用方案：{available}")
@@ -144,6 +168,9 @@ class BotMenuPlugin(Star):
         if raw_menu is None:
             raw_menu = payload
         try:
+            if isinstance(raw_menu, dict):
+                existing = self.storage.get_menu_including_deleted(str(raw_menu.get("id", "")).strip())
+                self.history.snapshot(existing, reason="save")
             menu = self.storage.save_menu(raw_menu)
             self.render_coordinator.schedule(menu)
             return json_response({"menu": menu, "menus": self.storage.list_menus()})
@@ -162,6 +189,7 @@ class BotMenuPlugin(Star):
         if not menu_id:
             return error_response("missing menu id", status_code=400)
         try:
+            self.history.snapshot(self.storage.get_menu(menu_id), reason="delete")
             self.storage.delete_menu(menu_id)
             return json_response(
                 {
@@ -191,6 +219,80 @@ class BotMenuPlugin(Star):
             return json_response({"menus": menus})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
+
+    async def api_list_assets(self):
+        return json_response({"assets": self.assets.list_assets(self.storage.list_menus())})
+
+    async def api_save_asset(self):
+        payload = await read_json_body(default={})
+        try:
+            if not isinstance(payload, dict):
+                raise MenuValidationError("asset payload must be an object")
+            asset = self.assets.save_data_url(str(payload.get("data_url") or ""), name=str(payload.get("name") or ""))
+            return json_response({"asset": asset, "assets": self.assets.list_assets(self.storage.list_menus())})
+        except MenuValidationError as exc:
+            return error_response(str(exc), status_code=400)
+
+    async def api_delete_asset(self, asset_id: str):
+        try:
+            deleted = self.assets.delete_asset(str(asset_id or "").strip(), self.storage.list_menus())
+            return json_response({"deleted": deleted, "assets": self.assets.list_assets(self.storage.list_menus())})
+        except MenuValidationError as exc:
+            return error_response(str(exc), status_code=400)
+
+    async def api_menu_history(self, menu_id: str):
+        return json_response({"history": self.history.list_history(str(menu_id or "").strip())})
+
+    async def api_restore_menu(self):
+        payload = await read_json_body(default={})
+        try:
+            menu_id = str(payload.get("menu_id") or payload.get("id") or "").strip() if isinstance(payload, dict) else ""
+            snapshot_id = str(payload.get("snapshot_id") or "").strip() if isinstance(payload, dict) else ""
+            if not menu_id:
+                raise MenuValidationError("missing menu id")
+            restored = self.history.restore_snapshot(menu_id, snapshot_id or None)
+            self.history.snapshot(self.storage.get_menu_including_deleted(menu_id), reason="restore")
+            menu = self.storage.save_menu(restored)
+            self.render_coordinator.schedule(menu, force=True)
+            return json_response({"menu": menu, "menus": self.storage.list_menus()})
+        except MenuValidationError as exc:
+            return error_response(str(exc), status_code=400)
+
+    async def api_reorder_menus(self):
+        payload = await read_json_body(default={})
+        ordered_ids = payload.get("ids") if isinstance(payload, dict) else None
+        if not isinstance(ordered_ids, list):
+            return error_response("ids must be a list", status_code=400)
+        menus = self.storage.reorder_menus([str(menu_id).strip() for menu_id in ordered_ids])
+        return json_response({"menus": menus})
+
+    async def api_get_routing(self):
+        return json_response({"routing": self.routing.get_rules()})
+
+    async def api_save_routing(self):
+        payload = await read_json_body(default={})
+        if not isinstance(payload, dict):
+            return error_response("routing payload must be an object", status_code=400)
+        routing = self.routing.save_rules(payload.get("routing") if isinstance(payload.get("routing"), dict) else payload)
+        return json_response({"routing": routing})
+
+    async def api_render_refresh(self):
+        payload = await read_json_body(default={})
+        target = str(payload.get("id") or payload.get("menu_id") or "").strip() if isinstance(payload, dict) else ""
+        menus = [self.storage.resolve_menu(target)] if target else self.storage.list_menus()
+        scheduled: list[str] = []
+        for menu in menus:
+            if not menu:
+                continue
+            self.render_coordinator.schedule(menu, force=True)
+            scheduled.append(menu["id"])
+        return json_response({"scheduled": scheduled})
+
+    async def api_cleanup(self):
+        menus = self.storage.list_menus()
+        cache = self.render_cache.cleanup({menu["id"] for menu in menus})
+        assets = self.assets.cleanup_unused(menus)
+        return json_response({"cache": cache, "assets": assets})
 
     async def _render_menu_for_cache(self, menu: dict[str, Any]) -> str:
         return await self._render_menu_uncached(menu, render_mode="browser")
@@ -258,7 +360,17 @@ class BotMenuPlugin(Star):
             (f"/{PLUGIN_NAME}/menus/save", self.api_save_menu, ["POST"], "Save bot menu"),
             (f"/{PLUGIN_NAME}/menus/delete", self.api_delete_menu, ["POST"], "Delete bot menu"),
             (f"/{PLUGIN_NAME}/menus/render-status/<menu_id>", self.api_render_status, ["GET"], "Get bot menu render cache status"),
+            (f"/{PLUGIN_NAME}/menus/history/<menu_id>", self.api_menu_history, ["GET"], "Get bot menu history"),
+            (f"/{PLUGIN_NAME}/menus/restore", self.api_restore_menu, ["POST"], "Restore bot menu history"),
+            (f"/{PLUGIN_NAME}/menus/reorder", self.api_reorder_menus, ["POST"], "Reorder bot menus"),
+            (f"/{PLUGIN_NAME}/menus/render-refresh", self.api_render_refresh, ["POST"], "Refresh bot menu render cache"),
             (f"/{PLUGIN_NAME}/menus/<menu_id>", self.api_get_menu, ["GET"], "Get bot menu"),
+            (f"/{PLUGIN_NAME}/assets", self.api_list_assets, ["GET"], "List bot menu assets"),
+            (f"/{PLUGIN_NAME}/assets", self.api_save_asset, ["POST"], "Save bot menu asset"),
+            (f"/{PLUGIN_NAME}/assets/<asset_id>", self.api_delete_asset, ["DELETE"], "Delete bot menu asset"),
+            (f"/{PLUGIN_NAME}/routing", self.api_get_routing, ["GET"], "Get bot menu routing"),
+            (f"/{PLUGIN_NAME}/routing", self.api_save_routing, ["POST"], "Save bot menu routing"),
+            (f"/{PLUGIN_NAME}/cleanup", self.api_cleanup, ["POST"], "Clean bot menu cache and assets"),
             (f"/{PLUGIN_NAME}/export", self.api_export_menus, ["GET"], "Export bot menus"),
             (f"/{PLUGIN_NAME}/import", self.api_import_menus, ["POST"], "Import bot menus"),
         ]
@@ -274,11 +386,74 @@ class BotMenuPlugin(Star):
             base = Path.cwd() / "data"
         return base / "plugin_data" / PLUGIN_NAME
 
-    def _effective_default_menu_id(self) -> str:
+    def _format_menu_list(self) -> str:
+        lines = ["可用菜单："]
+        for menu in self.storage.list_menus():
+            status = self.render_coordinator.status_for_menu(menu)
+            aliases = ", ".join(menu.get("aliases") or [])
+            suffix = f"；别名：{aliases}" if aliases else ""
+            lines.append(f"- {menu['id']}｜{menu.get('name') or menu['id']}｜缓存：{status['status']}{suffix}")
+        return "\n".join(lines)
+
+    def _search_menu_items(self, keyword: str) -> str:
+        term = str(keyword or "").strip().casefold()
+        if not term:
+            return "请提供搜索关键词，例如：/menu search 帮助"
+        matches: list[str] = []
+        for menu in self.storage.list_menus():
+            for section in menu.get("sections", []):
+                for item in section.get("items", []):
+                    haystack = " ".join(
+                        str(item.get(key) or "")
+                        for key in ("label", "command", "description")
+                    ).casefold()
+                    if term not in haystack:
+                        continue
+                    command = f"｜{item.get('command')}" if item.get("command") else ""
+                    matches.append(f"[{menu['id']}/{section.get('title')}] {item.get('label')}{command}\n{item.get('description') or ''}".strip())
+                    if len(matches) >= 12:
+                        return "搜索结果（前 12 条）：\n" + "\n".join(matches)
+        return "没有找到匹配的菜单项。"
+
+    def _effective_default_menu_id(self, event: AstrMessageEvent | None = None) -> str:
+        platform, group_id = self._event_context(event)
+        routed = self.routing.resolve_default(
+            platform=platform,
+            group_id=group_id,
+            global_default=str(self._config_get("default_menu_id", "default") or "default").strip(),
+        )
+        if routed and self.storage.resolve_menu(routed):
+            return self.storage.resolve_menu(routed)["id"]
         configured = str(self._config_get("default_menu_id", "default") or "default").strip()
-        if configured and self.storage.get_menu(configured):
-            return configured
+        resolved = self.storage.resolve_menu(configured)
+        if resolved:
+            return resolved["id"]
         return self.storage.first_menu_id()
+
+    def _event_context(self, event: AstrMessageEvent | None) -> tuple[str, str]:
+        if event is None:
+            return "", ""
+        platform = ""
+        group_id = ""
+        for attr in ("get_platform_name", "get_platform"):
+            getter = getattr(event, attr, None)
+            if callable(getter):
+                try:
+                    platform = str(getter() or "")
+                    break
+                except Exception:
+                    pass
+        for attr in ("get_group_id", "get_session_id", "get_sender_id"):
+            getter = getattr(event, attr, None)
+            if callable(getter):
+                try:
+                    value = str(getter() or "")
+                    if value:
+                        group_id = value
+                        break
+                except Exception:
+                    pass
+        return platform, group_id
 
     def _config_get(self, key: str, default: Any = None) -> Any:
         getter = getattr(self.config, "get", None)

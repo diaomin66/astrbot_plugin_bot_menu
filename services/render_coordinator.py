@@ -47,12 +47,14 @@ class MenuRenderCoordinator:
         fingerprint = self.cache.fingerprint(menu, render_width=render_width, render_scale=render_scale)
         task = self._tasks.get(menu_id)
         is_rendering = bool(task and not task.done() and self._task_fingerprints.get(menu_id) == fingerprint)
-        return self.cache.get_status(
+        status = self.cache.get_status(
             menu,
             render_width=render_width,
             render_scale=render_scale,
             is_rendering=is_rendering,
         )
+        status["queue_length"] = sum(1 for task in self._tasks.values() if not task.done())
+        return status
 
     def status_for_menu_id(self, menu_id: str) -> dict[str, Any] | None:
         menu = self.storage.get_menu(menu_id)
@@ -73,7 +75,7 @@ class MenuRenderCoordinator:
             if not self.get_cached_path(menu):
                 self.schedule(menu)
 
-    def schedule(self, menu: dict[str, Any]) -> bool:
+    def schedule(self, menu: dict[str, Any], *, force: bool = False) -> bool:
         menu_id = str(menu.get("id") or "")
         if not menu_id:
             return False
@@ -81,7 +83,7 @@ class MenuRenderCoordinator:
         render_width = self.render_width()
         render_scale = self.render_scale()
         fingerprint = self.cache.fingerprint(menu, render_width=render_width, render_scale=render_scale)
-        if self.cache.get_cached_path(menu, render_width=render_width, render_scale=render_scale):
+        if not force and self.cache.get_cached_path(menu, render_width=render_width, render_scale=render_scale):
             return False
 
         current_task = self._tasks.get(menu_id)
@@ -112,7 +114,21 @@ class MenuRenderCoordinator:
     ) -> None:
         menu_id = str(menu.get("id") or "")
         try:
-            rendered_path = await self.render_menu(menu)
+            rendered_path = ""
+            last_error: Exception | None = None
+            for attempt in range(1, 3):
+                try:
+                    rendered_path = await self.render_menu(menu)
+                    last_error = None
+                    break
+                except asyncio.CancelledError:
+                    raise
+                except Exception as exc:  # noqa: BLE001
+                    last_error = exc
+                    if attempt < 2:
+                        await asyncio.sleep(0.4)
+            if last_error is not None:
+                raise last_error
             path = Path(rendered_path)
             if not path.is_file():
                 raise RuntimeError(f"cached render did not produce a local file: {rendered_path}")

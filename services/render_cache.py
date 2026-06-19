@@ -54,12 +54,24 @@ class MenuRenderCache:
 
         fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
         if is_rendering:
-            return {"status": "rendering", "rendered_at": None, "error": None}
+            with self._lock:
+                entry = self._read().get("menus", {}).get(str(menu.get("id") or ""))
+            attempts = entry.get("attempts", 0) if isinstance(entry, dict) else 0
+            queued_at = entry.get("queued_at") if isinstance(entry, dict) else None
+            return {
+                "status": "rendering",
+                "rendered_at": None,
+                "error": None,
+                "queued_at": queued_at,
+                "attempts": attempts,
+                "fingerprint": fingerprint,
+                "cache_size": None,
+            }
 
         with self._lock:
             entry = self._read().get("menus", {}).get(str(menu.get("id") or ""))
         if not isinstance(entry, dict) or entry.get("fingerprint") != fingerprint:
-            return {"status": "missing", "rendered_at": None, "error": None}
+            return self._missing_status(fingerprint)
 
         status = str(entry.get("status") or "missing")
         if status == "ready":
@@ -69,17 +81,33 @@ class MenuRenderCache:
                     "status": "ready",
                     "rendered_at": entry.get("rendered_at") or None,
                     "error": None,
+                    "queued_at": entry.get("queued_at") or None,
+                    "attempts": entry.get("attempts", 0),
+                    "fingerprint": fingerprint,
+                    "cache_size": path.stat().st_size,
                 }
-            return {"status": "missing", "rendered_at": None, "error": None}
+            return self._missing_status(fingerprint)
         if status == "rendering":
-            return {"status": "rendering", "rendered_at": None, "error": None}
+            return {
+                "status": "rendering",
+                "rendered_at": None,
+                "error": None,
+                "queued_at": entry.get("queued_at") or None,
+                "attempts": entry.get("attempts", 0),
+                "fingerprint": fingerprint,
+                "cache_size": None,
+            }
         if status == "error":
             return {
                 "status": "error",
                 "rendered_at": entry.get("rendered_at") or None,
                 "error": entry.get("error") or None,
+                "queued_at": entry.get("queued_at") or None,
+                "attempts": entry.get("attempts", 0),
+                "fingerprint": fingerprint,
+                "cache_size": None,
             }
-        return {"status": "missing", "rendered_at": None, "error": None}
+        return self._missing_status(fingerprint)
 
     def cache_path_for_menu(self, menu: dict[str, Any]) -> Path:
         safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
@@ -107,10 +135,15 @@ class MenuRenderCache:
             "path": str(target),
             "rendered_at": _now_iso(),
             "status": "ready",
+            "cache_size": target.stat().st_size,
         }
         with self._lock:
             data = self._read()
             menus = data.setdefault("menus", {})
+            previous = menus.get(str(menu.get("id") or ""))
+            if isinstance(previous, dict):
+                entry["queued_at"] = previous.get("queued_at")
+                entry["attempts"] = previous.get("attempts", 0)
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
         return str(target)
@@ -122,15 +155,19 @@ class MenuRenderCache:
         render_width: int,
         render_scale: int,
     ) -> None:
-        entry = {
-            "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
-            "path": str(self.cache_path_for_menu(menu)),
-            "rendered_at": None,
-            "status": "rendering",
-        }
         with self._lock:
             data = self._read()
             menus = data.setdefault("menus", {})
+            previous = menus.get(str(menu.get("id") or ""))
+            previous_attempts = previous.get("attempts", 0) if isinstance(previous, dict) else 0
+            entry = {
+                "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
+                "path": str(self.cache_path_for_menu(menu)),
+                "rendered_at": None,
+                "queued_at": _now_iso(),
+                "attempts": previous_attempts + 1,
+                "status": "rendering",
+            }
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
 
@@ -146,14 +183,58 @@ class MenuRenderCache:
             "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
             "path": str(self.cache_path_for_menu(menu)),
             "rendered_at": _now_iso(),
+            "queued_at": None,
+            "attempts": 1,
             "status": "error",
             "error": message[:500],
         }
         with self._lock:
             data = self._read()
             menus = data.setdefault("menus", {})
+            previous = menus.get(str(menu.get("id") or ""))
+            if isinstance(previous, dict):
+                entry["queued_at"] = previous.get("queued_at")
+                entry["attempts"] = previous.get("attempts", 0)
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
+
+    def cleanup(self, active_menu_ids: set[str], *, max_total_bytes: int | None = None) -> dict[str, Any]:
+        removed: list[str] = []
+        with self._lock:
+            data = self._read()
+            menus = data.setdefault("menus", {})
+            for menu_id, entry in list(menus.items()):
+                if menu_id in active_menu_ids:
+                    continue
+                removed.append(menu_id)
+                menus.pop(menu_id, None)
+                path = Path(str(entry.get("path") or "")) if isinstance(entry, dict) else None
+                try:
+                    if path and path.is_file() and path.parent == self.rendered_dir:
+                        path.unlink()
+                except OSError:
+                    pass
+            if max_total_bytes is not None:
+                ready_entries = [
+                    (menu_id, entry)
+                    for menu_id, entry in menus.items()
+                    if isinstance(entry, dict) and Path(str(entry.get("path") or "")).is_file()
+                ]
+                total = sum(Path(str(entry.get("path"))).stat().st_size for _, entry in ready_entries)
+                for menu_id, entry in sorted(ready_entries, key=lambda pair: str(pair[1].get("rendered_at") or "")):
+                    if total <= max_total_bytes:
+                        break
+                    path = Path(str(entry.get("path") or ""))
+                    size = path.stat().st_size
+                    try:
+                        path.unlink()
+                    except OSError:
+                        pass
+                    menus.pop(menu_id, None)
+                    removed.append(menu_id)
+                    total -= size
+            self._write(data)
+        return {"removed": removed, "count": len(removed)}
 
     def _read(self) -> dict[str, Any]:
         if not self.file_path.is_file():
@@ -166,6 +247,17 @@ class MenuRenderCache:
         if not isinstance(raw, dict) or not isinstance(raw.get("menus"), dict):
             return {"version": 1, "menus": {}}
         return {"version": 1, "menus": raw["menus"]}
+
+    def _missing_status(self, fingerprint: str) -> dict[str, Any]:
+        return {
+            "status": "missing",
+            "rendered_at": None,
+            "error": None,
+            "queued_at": None,
+            "attempts": 0,
+            "fingerprint": fingerprint,
+            "cache_size": None,
+        }
 
     def _write(self, data: dict[str, Any]) -> None:
         payload = {"version": 1, "menus": data.get("menus") if isinstance(data.get("menus"), dict) else {}}

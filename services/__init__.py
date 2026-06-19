@@ -1,18 +1,24 @@
 """Bot menu plugin service layer."""
 
 from .menu_model import DEFAULT_MENU_ID, MenuValidationError, normalize_menu
+from .asset_storage import AssetStorage
+from .history_storage import MenuHistoryStorage
 from .local_image import image_file_to_data_url, render_menu_image, render_menu_via_browser
 from .renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from .render_cache import MenuRenderCache
 from .render_coordinator import MenuRenderCoordinator
+from .routing_storage import RoutingStorage
 from .storage import MenuStorage
 
 __all__ = [
+    "AssetStorage",
     "DEFAULT_MENU_ID",
+    "MenuHistoryStorage",
     "MenuRenderCache",
     "MenuRenderCoordinator",
     "MenuStorage",
     "MenuValidationError",
+    "RoutingStorage",
     "build_render_payload",
     "build_preview_html",
     "image_file_to_data_url",
