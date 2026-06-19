@@ -117,9 +117,48 @@ class MenuStorageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
-            path = render_menu_image(storage.get_menu("default"), tmp, output_scale=3)
+            menu = storage.get_menu("default")
+            path = render_menu_image(menu, tmp, output_scale=3)
             with Image.open(path) as image:
-                self.assertEqual(image.width, storage.get_menu("default")["style"]["width"] * 3)
+                self.assertEqual(image.width, preview_width_for_menu(menu) * 3)
+
+    def test_pillow_renderer_uses_auto_width_columns_and_banner_cards(self):
+        from PIL import Image
+
+        menu = normalize_menu(
+            {
+                "id": "layout",
+                "style": {"width_mode": "auto", "columns": 4, "foreground_opacity": 0},
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {"label": "横幅", "card_size": "banner"},
+                            *({"label": f"功能{i}", "card_size": "compact"} for i in range(4)),
+                        ],
+                    }
+                ],
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            path = render_menu_image(menu, tmp, output_scale=2)
+            with Image.open(path) as image:
+                self.assertEqual(image.width, preview_width_for_menu(menu) * 2)
+
+    def test_release_metadata_readme_changelog_and_logo_are_consistent(self):
+        import re
+
+        metadata = Path("metadata.yaml").read_text(encoding="utf-8")
+        readme = Path("README.md").read_text(encoding="utf-8")
+        changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
+        version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
+        author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
+        self.assertEqual(version, "0.2.0")
+        self.assertEqual(author, "雪碧bir")
+        self.assertIn(f"当前版本：`{version}`", readme)
+        self.assertIn(f"## {version} -", changelog)
+        with open("logo.png", "rb") as f:
+            self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
     def test_browser_screenshot_command_uses_high_scale_factor(self):
         command = _build_browser_screenshot_command(

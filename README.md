@@ -1,6 +1,11 @@
 # AstrBot Bot 菜单插件
 
+![插件图标](./logo.png)
+
 一个用于自定义机器人菜单的 AstrBot 插件：在 WebUI 中编辑多套菜单方案，实时预览，并通过聊天指令发送渲染后的菜单图片。
+
+- 当前版本：`0.2.0`
+- 作者：雪碧bir
 
 ## 功能
 
@@ -23,7 +28,7 @@
 AstrBot/data/plugins/astrbot_plugin_bot_menu/
 ```
 
-插件本地 PNG 渲染依赖 `Pillow` 与 `playwright`；`browser` 模式会优先使用 Playwright/Chromium，失败后再探测系统浏览器，AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
+插件本地 PNG 渲染依赖 `Pillow`、`playwright` 与 `jinja2`；AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
 
 ## 使用
 
@@ -31,6 +36,13 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 2. 进入插件详情页，打开 `Bot 菜单` 的 `menu-editor` 页面。
 3. 编辑菜单方案并保存。
 4. 在聊天中发送 `/menu` 或 `/menu default` 查看菜单图片。
+
+## 背景与透明度
+
+- 上传背景图不限制尺寸，编辑器会把图片保存为菜单配置中的 Data URL。
+- 在 Page 预览卡片中直接拖动背景可调整位置。
+- 拖动背景虚线边框的四角可调整缩放与裁剪区域。
+- “前景菜单透明度”支持 `0%` 到 `100%`，Page 预览、浏览器渲染和 Pillow 降级渲染保持一致。
 
 ## 配置
 
@@ -48,6 +60,10 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 data/plugin_data/astrbot_plugin_bot_menu/menus.json
 ```
 
-## 说明
+## 渲染说明
 
-本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。Page 中的智能宽度会按标题、描述、卡片模板和每行卡片数自动计算图片宽度，避免少量内容渲染出过宽图片；需要固定尺寸时也可以切换为手动宽度。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。插件 Web API 兼容带 `astrbot.api.web` 的新版 AstrBot，以及仍使用 Quart 插件路由的 AstrBot 4.25.x。
+本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。
+
+## 更新日志
+
+详见 [CHANGELOG.md](./CHANGELOG.md)。

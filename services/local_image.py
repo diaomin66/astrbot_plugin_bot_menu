@@ -25,7 +25,12 @@ def render_menu_image(
     from PIL import Image, ImageDraw
 
     output_path = _build_output_path(menu, output_dir)
-    base_width = _clamp_int(menu.get("style", {}).get("width"), default=default_width, minimum=520, maximum=1400)
+    try:
+        from .renderer import preview_width_for_menu
+
+        base_width = preview_width_for_menu(menu, default_width=default_width)
+    except Exception:
+        base_width = _clamp_int(menu.get("style", {}).get("width"), default=default_width, minimum=520, maximum=1400)
     output_scale = _clamp_int(output_scale, default=2, minimum=1, maximum=4)
 
     # SSAA (Super Sampling Anti-Aliasing) scale factor
@@ -39,6 +44,7 @@ def render_menu_image(
     muted = _color(style.get("muted_color"), "#6b7280")
     radius = _clamp_int(style.get("radius"), default=24, minimum=0, maximum=48) * scale
     foreground_opacity = _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100) / 100
+    columns = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
 
     font_regular = _font(20 * scale)
     font_small = _font(17 * scale)
@@ -54,7 +60,8 @@ def render_menu_image(
     inner_width = width - margin * 2
     content_width = inner_width - shell_pad * 2
     item_gap = 12 * scale
-    item_width = (content_width - item_gap) // 2
+    item_area_width = content_width - 44 * scale
+    item_width = (item_area_width - item_gap * max(0, columns - 1)) // columns
 
     # Measure dynamic height first, then paint once.
     y = margin + shell_pad + 12 * scale
@@ -67,19 +74,12 @@ def render_menu_image(
 
     section_layouts: list[dict[str, Any]] = []
     for section in menu.get("sections", []):
-        rows: list[list[dict[str, Any]]] = []
-        current_row: list[dict[str, Any]] = []
-        for item in section.get("items", []):
-            current_row.append(item)
-            if len(current_row) == 2:
-                rows.append(current_row)
-                current_row = []
-        if current_row:
-            rows.append(current_row)
+        rows = _layout_item_rows(section.get("items", []), columns)
 
         row_heights = []
         for row in rows:
-            row_heights.append(max(_item_height(item, item_width, font_mono, font_small, scale) for item in row))
+            row_width = _row_item_width(row, item_area_width, item_gap, columns)
+            row_heights.append(max(_item_height(item, row_width, font_mono, font_small, scale) for item in row))
         section_height = 22 * scale + 30 * scale + 16 * scale + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + 22 * scale
         section_layouts.append({"section": section, "rows": rows, "row_heights": row_heights, "height": int(section_height)})
         y += section_height + 18 * scale
@@ -107,8 +107,12 @@ def render_menu_image(
         outline=_mix(muted, (255, 255, 255), 0.72),
         width=1 * scale,
     )
-    draw.rounded_rectangle((margin, margin, width - margin, margin + 8 * scale + radius), radius=radius, fill=primary)
-    draw.rectangle((margin, margin + 8 * scale, width - margin, margin + 8 * scale + radius), fill=(255, 255, 255))
+    _draw_translucent_rectangle(
+        image,
+        (margin, margin, width - margin, margin + 8 * scale),
+        fill=primary,
+        opacity=foreground_opacity,
+    )
 
     x = margin + shell_pad
     y = margin + shell_pad + 12 * scale
@@ -141,9 +145,10 @@ def render_menu_image(
         y += 68 * scale
         for row, row_height in zip(layout["rows"], layout["row_heights"], strict=False):
             item_x = x + 22 * scale
+            row_width = _row_item_width(row, item_area_width, item_gap, columns)
             for item in row:
-                _draw_item(draw, item, item_x, y, item_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale)
-                item_x += item_width + item_gap
+                _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity)
+                item_x += row_width + item_gap
             y += row_height + item_gap
         y = bottom + 18 * scale
 
@@ -482,16 +487,84 @@ def _draw_translucent_rounded_rectangle(
     image.alpha_composite(overlay)
 
 
-def _draw_item(draw, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale) -> None:
+def _draw_translucent_rectangle(
+    image,
+    box,
+    *,
+    fill: tuple[int, int, int],
+    opacity: float,
+) -> None:
+    from PIL import Image, ImageDraw
+
+    alpha = max(0, min(255, int(255 * opacity)))
+    if alpha <= 0:
+        return
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    overlay_draw = ImageDraw.Draw(overlay)
+    overlay_draw.rectangle(box, fill=(*fill, alpha))
+    image.alpha_composite(overlay)
+
+
+def _layout_item_rows(items: list[dict[str, Any]], columns: int) -> list[list[dict[str, Any]]]:
+    rows: list[list[dict[str, Any]]] = []
+    current_row: list[dict[str, Any]] = []
+    for item in items:
+        if _card_size(item.get("card_size")) == "banner":
+            if current_row:
+                rows.append(current_row)
+                current_row = []
+            rows.append([item])
+            continue
+        current_row.append(item)
+        if len(current_row) == columns:
+            rows.append(current_row)
+            current_row = []
+    if current_row:
+        rows.append(current_row)
+    return rows
+
+
+def _row_item_width(row: list[dict[str, Any]], item_area_width: int, item_gap: int, columns: int) -> int:
+    if len(row) == 1 and _card_size(row[0].get("card_size")) == "banner":
+        return item_area_width
+    return max(1, (item_area_width - item_gap * max(0, columns - 1)) // columns)
+
+
+def _card_size(value: Any) -> str:
+    size = str(value or "standard").strip().lower()
+    return size if size in {"compact", "standard", "large", "banner"} else "standard"
+
+
+def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity) -> None:
+    from PIL import ImageDraw
+
+    draw = ImageDraw.Draw(image)
     enabled = item.get("enabled", True)
     fill = (246, 248, 252) if enabled else (238, 240, 244)
     fg = text if enabled else _mix(text, (255, 255, 255), 0.45)
     sub = muted if enabled else _mix(muted, (255, 255, 255), 0.5)
-    draw.rounded_rectangle((x, y, x + width, y + height), radius=max(14 * scale, radius - 8 * scale), fill=fill, outline=_mix(muted, (255, 255, 255), 0.82))
-    draw.rounded_rectangle((x + 14 * scale, y + 14 * scale, x + 58 * scale, y + 58 * scale), radius=14 * scale, fill=_mix(primary, (255, 255, 255), 0.88))
-    draw.text((x + 22 * scale, y + 21 * scale), str(item.get("icon") or "•")[:2], font=font_icon, fill=primary)
-    text_x = x + 70 * scale
-    line_y = y + 14 * scale
+    size = _card_size(item.get("card_size"))
+    icon_size = 36 * scale if size == "compact" else 44 * scale
+    icon_left = x + (10 if size == "compact" else 14) * scale
+    icon_top = y + (11 if size == "compact" else 14) * scale
+    text_x = x + (56 if size == "compact" else 70) * scale
+    line_y = y + (10 if size == "compact" else 14) * scale
+    _draw_translucent_rounded_rectangle(
+        image,
+        (x, y, x + width, y + height),
+        radius=max(12 * scale, radius - 8 * scale),
+        fill=fill,
+        opacity=opacity,
+        outline=_mix(muted, (255, 255, 255), 0.82),
+    )
+    _draw_translucent_rounded_rectangle(
+        image,
+        (icon_left, icon_top, icon_left + icon_size, icon_top + icon_size),
+        radius=12 * scale,
+        fill=_mix(primary, (255, 255, 255), 0.88),
+        opacity=opacity,
+    )
+    draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "•")[:2], font=font_icon, fill=primary)
     label = str(item.get("label") or "未命名")
     draw.text((text_x, line_y), label, font=font_label, fill=fg)
     command = str(item.get("command") or "")
@@ -511,9 +584,13 @@ def _draw_item(draw, item, x, y, width, height, radius, primary, text, muted, fo
 
 
 def _item_height(item, width, font_mono, font_small, scale) -> int:
-    desc_lines = len(_wrap(str(item.get("description") or ""), font_small, width - 84 * scale, max_lines=3))
-    command_lines = len(_wrap(str(item.get("command") or ""), font_mono, width - 84 * scale, max_lines=2))
-    return max(88 * scale, 28 * scale + 28 * scale + command_lines * 22 * scale + desc_lines * 22 * scale)
+    size = _card_size(item.get("card_size"))
+    text_width = width - (70 if size != "compact" else 56) * scale - 14 * scale
+    desc_lines = len(_wrap(str(item.get("description") or ""), font_small, text_width, max_lines=3))
+    command_lines = len(_wrap(str(item.get("command") or ""), font_mono, text_width, max_lines=2))
+    min_height = {"compact": 58, "standard": 88, "large": 104, "banner": 112}[size] * scale
+    vertical_pad = {"compact": 20, "standard": 28, "large": 34, "banner": 34}[size] * scale
+    return max(min_height, vertical_pad + 28 * scale + command_lines * 22 * scale + desc_lines * 22 * scale)
 
 
 def _draw_shadow(image, box, radius, blur, offset_y, color):
