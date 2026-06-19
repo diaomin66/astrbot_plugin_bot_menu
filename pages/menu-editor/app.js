@@ -9,12 +9,22 @@ const CARD_TEMPLATES = {
 };
 
 const THEME_PRESETS = {
-  aurora: { primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
-  minimal: { primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
-  midnight: { primary_color: "#38bdf8", background_color: "#111827", card_color: "#1f2937", text_color: "#f8fafc", muted_color: "#cbd5e1" },
-  forest: { primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
-  sunrise: { primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
+  aurora: { label: "极光紫", primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
+  minimal: { label: "清爽蓝", primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
+  midnight: { label: "午夜蓝", primary_color: "#38bdf8", background_color: "#111827", card_color: "#1f2937", text_color: "#f8fafc", muted_color: "#cbd5e1" },
+  forest: { label: "森林绿", primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
+  sunrise: { label: "日出橙", primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
 };
+
+const STYLE_COPY_KEYS = [
+  "theme", "primary_color", "background_color", "background_image", "background_image_name",
+  "background_image_x", "background_image_y", "background_image_width", "card_color", "text_color",
+  "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns",
+  "section_gap_mode", "section_gap", "show_updated_at",
+];
+const MENU_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
+const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
+const COLLAPSE_PREFIX = "astrbot_plugin_bot_menu:collapsed:";
 
 const state = {
   menus: [],
@@ -22,11 +32,23 @@ const state = {
   currentId: null,
   menu: null,
   dirty: false,
+  saveState: "saved",
+  itemSearch: "",
+  restoredDraftIds: new Set(),
+  collapsedKeys: new Set(),
+  renderStatusTimer: 0,
+  backgroundEditMode: false,
 };
 
 const els = {
   schemeSelect: $("schemeSelect"),
   status: $("status"),
+  saveState: $("saveState"),
+  saveBtn: $("saveBtn"),
+  deleteBtn: $("deleteBtn"),
+  backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
+  renderStatus: $("renderStatus"),
+  validationSummary: $("validationSummary"),
   sections: $("sections"),
   preview: $("preview"),
   menuId: $("menuId"),
@@ -35,10 +57,17 @@ const els = {
   menuSubtitle: $("menuSubtitle"),
   menuFooter: $("menuFooter"),
   theme: $("theme"),
+  themePresetCards: $("themePresetCards"),
   primaryColor: $("primaryColor"),
   backgroundColor: $("backgroundColor"),
   backgroundImageInput: $("backgroundImageInput"),
   backgroundImageName: $("backgroundImageName"),
+  backgroundImageWidth: $("backgroundImageWidth"),
+  backgroundWidthValue: $("backgroundWidthValue"),
+  backgroundImageX: $("backgroundImageX"),
+  backgroundImageY: $("backgroundImageY"),
+  centerBackgroundBtn: $("centerBackgroundBtn"),
+  coverBackgroundBtn: $("coverBackgroundBtn"),
   clearBackgroundBtn: $("clearBackgroundBtn"),
   cardColor: $("cardColor"),
   textColor: $("textColor"),
@@ -48,10 +77,16 @@ const els = {
   widthMode: $("widthMode"),
   columns: $("columns"),
   width: $("width"),
+  sectionGapMode: $("sectionGapMode"),
+  sectionGap: $("sectionGap"),
   radius: $("radius"),
   showUpdatedAt: $("showUpdatedAt"),
-  serverPreview: $("serverPreview"),
+  itemSearch: $("itemSearch"),
   previewMeta: $("previewMeta"),
+  editorModal: $("editorModal"),
+  modalTitle: $("modalTitle"),
+  modalBody: $("modalBody"),
+  modalFooter: $("modalFooter"),
 };
 
 await bridge.ready();
@@ -59,13 +94,22 @@ bindEvents();
 await loadMenus();
 
 function bindEvents() {
-  els.schemeSelect.addEventListener("change", () => selectMenu(els.schemeSelect.value));
-  $("newBtn").addEventListener("click", newMenu);
-  $("copyBtn").addEventListener("click", copyMenu);
-  $("deleteBtn").addEventListener("click", deleteMenu);
+  els.schemeSelect.addEventListener("change", async () => {
+    const nextId = els.schemeSelect.value;
+    if (!(await confirmLeaveDirty())) {
+      els.schemeSelect.value = state.currentId || "";
+      return;
+    }
+    await selectMenu(nextId);
+  });
+  $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
+  $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
+  els.deleteBtn.addEventListener("click", deleteMenu);
+  els.backgroundEditToggleBtn.addEventListener("click", toggleBackgroundEditMode);
   $("saveBtn").addEventListener("click", saveMenu);
+  $("copyStyleBtn").addEventListener("click", copyStyleToMenus);
+  $("resetStyleBtn").addEventListener("click", resetCurrentStyle);
   $("addSectionBtn").addEventListener("click", addSection);
-  $("serverPreviewBtn").addEventListener("click", serverPreview);
   $("exportBtn").addEventListener("click", exportMenus);
   $("importInput").addEventListener("change", importMenus);
   if (window.ResizeObserver) {
@@ -89,6 +133,8 @@ function bindEvents() {
     "widthMode",
     "columns",
     "width",
+    "sectionGapMode",
+    "sectionGap",
     "radius",
     "showUpdatedAt",
   ].forEach((id) => {
@@ -104,7 +150,26 @@ function bindEvents() {
     renderAll();
   });
   els.backgroundImageInput.addEventListener("change", handleBackgroundUpload);
+  els.backgroundImageWidth.addEventListener("input", updateBackgroundFromControls);
+  els.backgroundImageX.addEventListener("input", updateBackgroundFromControls);
+  els.backgroundImageY.addEventListener("input", updateBackgroundFromControls);
+  els.centerBackgroundBtn.addEventListener("click", centerBackgroundImage);
+  els.coverBackgroundBtn.addEventListener("click", () => fitBackgroundToCover(true));
   els.clearBackgroundBtn.addEventListener("click", clearBackgroundImage);
+  els.itemSearch.addEventListener("input", () => {
+    state.itemSearch = els.itemSearch.value.trim().toLowerCase();
+    saveSearchState();
+    renderAll();
+  });
+  window.addEventListener("beforeunload", (event) => {
+    if (!state.dirty) return;
+    event.preventDefault();
+    event.returnValue = "";
+  });
+  renderThemePresetCards();
+  bindPreviewInteractions();
+  bindModalChrome();
+  updateSaveState("saved");
 }
 
 async function loadMenus(preferredId) {
@@ -126,11 +191,16 @@ async function selectMenu(id) {
   const menu = state.menus.find((item) => item.id === id) || state.menus[0];
   if (!menu) return;
   state.currentId = menu.id;
-  state.menu = structuredClone(menu);
-  state.dirty = false;
+  state.backgroundEditMode = false;
+  const serverMenu = structuredClone(menu);
+  state.menu = maybeRestoreDraft(serverMenu);
+  state.dirty = state.menu !== serverMenu;
+  loadSearchState();
   refreshSchemeSelect();
   fillForm();
   renderAll();
+  updateSaveState(state.dirty ? "dirty" : "saved");
+  clearRenderStatus();
 }
 
 function refreshSchemeSelect() {
@@ -156,6 +226,7 @@ function fillForm() {
   els.primaryColor.value = toColor(style.primary_color, "#7c3aed");
   els.backgroundColor.value = toColor(style.background_color, "#f8fafc");
   els.backgroundImageName.textContent = style.background_image ? (style.background_image_name || "Custom background") : "No background image";
+  syncBackgroundControls();
   els.cardColor.value = toColor(style.card_color, "#ffffff");
   els.textColor.value = toColor(style.text_color, "#111827");
   els.mutedColor.value = toColor(style.muted_color, "#6b7280");
@@ -164,12 +235,16 @@ function fillForm() {
   els.widthMode.value = style.width_mode || "auto";
   els.columns.value = style.columns || 2;
   els.width.value = style.width || 760;
+  els.sectionGapMode.value = style.section_gap_mode || "auto";
+  els.sectionGap.value = style.section_gap ?? 14;
   els.radius.value = style.radius ?? 24;
   els.showUpdatedAt.checked = style.show_updated_at !== false;
   syncWidthControl();
+  syncSectionGapControl();
+  if (els.itemSearch) els.itemSearch.value = state.itemSearch || "";
 }
 
-function syncFormToMenu() {
+function syncFormToMenu({ mark = true } = {}) {
   if (!state.menu) return;
   Object.assign(state.menu, {
     id: els.menuId.value.trim(),
@@ -183,6 +258,9 @@ function syncFormToMenu() {
     theme: els.theme.value,
     primary_color: els.primaryColor.value,
     background_color: els.backgroundColor.value,
+    background_image_x: Number(els.backgroundImageX.value) || 0,
+    background_image_y: Number(els.backgroundImageY.value) || 0,
+    background_image_width: Number(els.backgroundImageWidth.value) || 100,
     card_color: els.cardColor.value,
     text_color: els.textColor.value,
     muted_color: els.mutedColor.value,
@@ -190,13 +268,15 @@ function syncFormToMenu() {
     width_mode: els.widthMode.value,
     columns: Number(els.columns.value) || 2,
     width: Number(els.width.value) || 760,
+    section_gap_mode: els.sectionGapMode.value,
+    section_gap: clampNumber(els.sectionGap.value, 0, 200, 14),
     radius: Number(els.radius.value) || 0,
     show_updated_at: els.showUpdatedAt.checked,
   };
-  state.dirty = true;
+  if (mark) markDirty();
   els.foregroundOpacityValue.textContent = `${state.menu.style.foreground_opacity}%`;
   syncWidthControl();
-  els.serverPreview.hidden = true;
+  syncSectionGapControl();
 }
 
 function renderAll() {
@@ -206,50 +286,77 @@ function renderAll() {
 
 function renderSectionsEditor() {
   els.sections.innerHTML = "";
+  const query = state.itemSearch || "";
+  let visibleItems = 0;
   state.menu.sections.forEach((section, sectionIndex) => {
+    const sectionCollapsed = isCollapsed("section", sectionIndex);
+    const matchingIndexes = section.items
+      .map((item, itemIndex) => ({ item, itemIndex }))
+      .filter(({ item }) => !query || itemMatchesSearch(item, query));
+    if (query && matchingIndexes.length === 0) return;
+
     const card = document.createElement("section");
-    card.className = "section-card";
+    card.className = `section-card ${sectionCollapsed ? "is-collapsed" : ""}`;
+    card.dataset.errorKey = `section-${sectionIndex}`;
     card.innerHTML = `
       <div class="section-head">
-        <input value="${escapeAttr(section.title)}" aria-label="分组标题" />
+        <button type="button" class="collapse-toggle" data-action="toggle-section" aria-expanded="${!sectionCollapsed}" title="${sectionCollapsed ? "展开分组" : "折叠分组"}">${sectionCollapsed ? "▸" : "▾"}</button>
+        <input class="section-title-input" data-error-key="section-${sectionIndex}-title" value="${escapeAttr(section.title)}" aria-label="分组标题" />
         <div class="actions">
+          <button type="button" data-action="add-item">添加菜单项</button>
           <button type="button" data-action="move-up" ${sectionIndex === 0 ? "disabled" : ""}>上移</button>
           <button type="button" data-action="move-down" ${sectionIndex === state.menu.sections.length - 1 ? "disabled" : ""}>下移</button>
           <button type="button" data-action="copy-section">复制</button>
           <button type="button" data-action="remove-section" class="danger">删除分组</button>
         </div>
       </div>
-      <div class="template-actions">
-        ${Object.entries(CARD_TEMPLATES).map(([key, template]) => `<button type="button" data-template="${key}">${template.label}</button>`).join("")}
-      </div>
-      <div class="items-editor"></div>`;
+      <div class="section-body" ${sectionCollapsed ? "hidden" : ""}>
+        <div class="items-editor"></div>
+      </div>`;
     const titleInput = card.querySelector("input");
     titleInput.addEventListener("input", () => {
       section.title = titleInput.value;
-      state.dirty = true;
-      els.serverPreview.hidden = true;
+      markDirty();
       renderPreview();
+      validateMenu({ silent: true });
     });
-    card.querySelectorAll("[data-template]").forEach((button) => {
-      button.addEventListener("click", () => addItem(sectionIndex, button.dataset.template));
+    card.querySelector('[data-action="toggle-section"]').addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      setCollapsed("section", sectionIndex, null, !sectionCollapsed);
+      renderSectionsEditor();
     });
+    card.querySelector('[data-action="add-item"]').addEventListener("click", () => addItem(sectionIndex, "standard"));
     card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveSection(sectionIndex, -1));
     card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveSection(sectionIndex, 1));
     card.querySelector('[data-action="copy-section"]').addEventListener("click", () => copySection(sectionIndex));
     card.querySelector('[data-action="remove-section"]').addEventListener("click", () => removeSection(sectionIndex));
     const itemsEl = card.querySelector(".items-editor");
-    section.items.forEach((item, itemIndex) => itemsEl.append(renderItemEditor(item, sectionIndex, itemIndex)));
+    matchingIndexes.forEach(({ item, itemIndex }) => {
+      visibleItems += 1;
+      itemsEl.append(renderItemEditor(item, sectionIndex, itemIndex));
+    });
     els.sections.append(card);
   });
+  if (query && visibleItems === 0) {
+    const empty = document.createElement("div");
+    empty.className = "empty-search";
+    empty.textContent = "没有匹配的菜单项，搜索不会改变实际菜单数据。";
+    els.sections.append(empty);
+  }
+  validateMenu({ silent: true });
 }
 
 function renderItemEditor(item, sectionIndex, itemIndex) {
   const card = document.createElement("article");
   const currentSize = cardSize(item.card_size);
-  card.className = `item-card size-${currentSize}`;
-  card.innerHTML = `
+  const itemCollapsed = isCollapsed("item", sectionIndex, itemIndex);
+  card.className = `item-card size-${currentSize} ${itemCollapsed ? "is-collapsed" : ""}`;
+  card.dataset.errorKey = `item-${sectionIndex}-${itemIndex}`;
+    card.innerHTML = `
     <div class="item-head">
-      <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1}</strong>
+      <button type="button" class="collapse-toggle" data-action="toggle-item" aria-expanded="${!itemCollapsed}" title="${itemCollapsed ? "展开菜单项" : "折叠菜单项"}">${itemCollapsed ? "▸" : "▾"}</button>
+      <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1} · ${escapeHtml(item.label || "未命名")}</strong>
       <div class="actions">
         <button type="button" data-action="move-up" ${itemIndex === 0 ? "disabled" : ""}>上移</button>
         <button type="button" data-action="move-down" ${itemIndex === state.menu.sections[sectionIndex].items.length - 1 ? "disabled" : ""}>下移</button>
@@ -257,14 +364,22 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
         <button type="button" data-action="remove-item" class="danger">删除</button>
       </div>
     </div>
-    <div class="item-grid">
-      <label class="field"><span>图标</span><input data-key="icon" value="${escapeAttr(item.icon || "")}" /></label>
-      <label class="field"><span>模板</span><select data-key="card_size">${cardSizeOptions(currentSize)}</select></label>
-      <label class="field"><span>名称</span><input data-key="label" value="${escapeAttr(item.label || "")}" /></label>
-      <label class="field"><span>指令</span><input data-key="command" value="${escapeAttr(item.command || "")}" /></label>
-      <label class="field wide"><span>描述</span><input data-key="description" value="${escapeAttr(item.description || "")}" /></label>
-    </div>
-    <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>`;
+    <div class="item-body" ${itemCollapsed ? "hidden" : ""}>
+      <div class="item-grid">
+        <label class="field"><span>图标</span><input data-error-key="item-${sectionIndex}-${itemIndex}-icon" data-key="icon" value="${escapeAttr(item.icon || "")}" /></label>
+        <label class="field"><span>卡片样式</span><select data-key="card_size">${cardSizeOptions(currentSize)}</select></label>
+        <label class="field"><span>名称</span><input data-error-key="item-${sectionIndex}-${itemIndex}-label" data-key="label" value="${escapeAttr(item.label || "")}" /></label>
+        <label class="field"><span>指令</span><input data-error-key="item-${sectionIndex}-${itemIndex}-command" data-key="command" value="${escapeAttr(item.command || "")}" /></label>
+        <label class="field wide"><span>描述</span><input data-error-key="item-${sectionIndex}-${itemIndex}-description" data-key="description" value="${escapeAttr(item.description || "")}" /></label>
+      </div>
+      <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>
+    </div>`;
+  card.querySelector('[data-action="toggle-item"]').addEventListener("click", (event) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setCollapsed("item", sectionIndex, itemIndex, !itemCollapsed);
+    renderSectionsEditor();
+  });
   card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, -1));
   card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, 1));
   card.querySelector('[data-action="copy-item"]').addEventListener("click", () => copyItem(sectionIndex, itemIndex));
@@ -273,19 +388,330 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
     input.addEventListener("input", () => {
       const key = input.dataset.key;
       item[key] = input.type === "checkbox" ? input.checked : input.value;
-      state.dirty = true;
-      els.serverPreview.hidden = true;
+      markDirty();
       if (key === "card_size") renderSectionsEditor();
       renderPreview();
+      validateMenu({ silent: true });
     });
   });
   return card;
 }
 
+
+function bindPreviewInteractions() {
+  if (!els.preview) return;
+  els.preview.addEventListener("click", (event) => {
+    if (!state.menu || event.defaultPrevented) return;
+    if (event.target.closest(".background-transform-box, .resize-handle")) return;
+    if (state.backgroundEditMode) {
+      event.preventDefault();
+      event.stopPropagation();
+      setStatus("当前处于背景图编辑模式。请先点击“锁定背景图”再编辑卡片。", "warning");
+      return;
+    }
+    const target = event.target.closest("[data-edit]");
+    if (!target || !els.preview.contains(target)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const sectionIndex = Number(target.dataset.sectionIndex);
+    const itemIndex = Number(target.dataset.itemIndex);
+    if (target.dataset.edit === "item") return openItemEditor(sectionIndex, itemIndex);
+    if (target.dataset.edit === "section") return openSectionEditor(sectionIndex);
+    if (target.dataset.edit === "menu") return openMenuEditor();
+    openStyleEditor();
+  });
+}
+
+function bindModalChrome() {
+  if (!els.editorModal) return;
+  els.editorModal.addEventListener("click", (event) => {
+    if (event.target.closest("[data-close-modal]")) closeModal();
+  });
+  window.addEventListener("keydown", (event) => {
+    if (event.key === "Escape" && !els.editorModal.hidden) closeModal();
+  });
+}
+
+function openModal(title, body, actions = []) {
+  els.modalTitle.textContent = title;
+  els.modalBody.replaceChildren(body);
+  els.modalFooter.replaceChildren();
+  actions.forEach((action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    if (action.className) button.className = action.className;
+    button.disabled = Boolean(action.disabled);
+    button.addEventListener("click", action.onClick);
+    els.modalFooter.append(button);
+  });
+  const close = document.createElement("button");
+  close.type = "button";
+  close.textContent = "关闭";
+  close.addEventListener("click", closeModal);
+  els.modalFooter.append(close);
+  els.editorModal.hidden = false;
+}
+
+function closeModal() {
+  if (els.editorModal) els.editorModal.hidden = true;
+}
+
+function commitMenuChange({ keepModal = true } = {}) {
+  markDirty();
+  fillForm();
+  renderAll();
+  validateMenu({ silent: true });
+  if (!keepModal) closeModal();
+}
+
+function field(label, control, { wide = false, hint = "", errorKey = "" } = {}) {
+  const wrap = document.createElement("label");
+  wrap.className = `field${wide ? " wide" : ""}`;
+  const span = document.createElement("span");
+  span.textContent = label;
+  wrap.append(span, control);
+  if (errorKey) control.dataset.errorKey = errorKey;
+  if (hint) {
+    const small = document.createElement("small");
+    small.textContent = hint;
+    wrap.append(small);
+  }
+  return wrap;
+}
+
+function textInput(value, onInput, attrs = {}) {
+  const input = document.createElement(attrs.multiline ? "textarea" : "input");
+  if (!attrs.multiline) input.type = attrs.type || "text";
+  input.value = value || "";
+  Object.entries(attrs).forEach(([key, value]) => {
+    if (["type", "multiline"].includes(key) || value === undefined || value === false) return;
+    if (value === true) input.setAttribute(key, "");
+    else input.setAttribute(key, value);
+  });
+  input.addEventListener("input", () => onInput(input.value, input));
+  return input;
+}
+
+function selectInput(value, options, onInput) {
+  const select = document.createElement("select");
+  select.innerHTML = options.map((option) => `<option value="${escapeAttr(option.value)}" ${String(option.value) === String(value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
+  select.addEventListener("input", () => onInput(select.value, select));
+  return select;
+}
+
+function checkboxInput(checked, onInput) {
+  const input = document.createElement("input");
+  input.type = "checkbox";
+  input.checked = checked;
+  input.addEventListener("input", () => onInput(input.checked, input));
+  return input;
+}
+
+function actionRow(actions) {
+  const row = document.createElement("div");
+  row.className = "action-row";
+  actions.forEach((action) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = action.label;
+    if (action.className) button.className = action.className;
+    button.disabled = Boolean(action.disabled);
+    button.addEventListener("click", action.onClick);
+    row.append(button);
+  });
+  return row;
+}
+
+function openMenuEditor() {
+  const menu = state.menu;
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  body.append(
+    field("方案 ID", textInput(menu.id, (value) => { menu.id = value.trim(); commitMenuChange(); }, { maxlength: 48 }), { errorKey: "menuId" }),
+    field("方案名称", textInput(menu.name, (value) => { menu.name = value; commitMenuChange(); }, { maxlength: 80 }), { errorKey: "menuName" }),
+    field("标题", textInput(menu.title, (value) => { menu.title = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: "menuTitle" }),
+    field("副标题", textInput(menu.subtitle, (value) => { menu.subtitle = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuSubtitle" }),
+    field("页脚", textInput(menu.footer, (value) => { menu.footer = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuFooter" }),
+  );
+  const list = document.createElement("div");
+  list.className = "entity-list wide";
+  list.dataset.errorKey = "sections";
+  menu.sections.forEach((section, index) => {
+    const row = document.createElement("article");
+    row.className = "entity-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(section.title || "未命名分组")}</strong><small>${section.items?.length || 0} 张卡片 · 点击“编辑卡片”进入单分组编辑</small></div>`;
+    row.append(actionRow([
+      { label: "编辑卡片", onClick: () => openSectionEditor(index) },
+      { label: "上移", disabled: index === 0, onClick: () => { moveSection(index, -1); openMenuEditor(); } },
+      { label: "下移", disabled: index === menu.sections.length - 1, onClick: () => { moveSection(index, 1); openMenuEditor(); } },
+      { label: "复制", onClick: () => { copySection(index); openMenuEditor(); } },
+      { label: "删除", className: "danger", disabled: menu.sections.length <= 1, onClick: () => { if (confirm("确定删除这个分组？")) { removeSection(index); openMenuEditor(); } } },
+    ]));
+    list.append(row);
+  });
+  body.append(list);
+  openModal("编辑基础信息与全部分组", body, [
+    { label: "添加分组", className: "primary", onClick: () => { addSection(); openMenuEditor(); } },
+    { label: "主题与背景", onClick: openStyleEditor },
+  ]);
+}
+
+function openSectionEditor(sectionIndex) {
+  const section = state.menu.sections?.[sectionIndex];
+  if (!section) return openMenuEditor();
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  body.append(
+    field("分组标题", textInput(section.title, (value) => { section.title = value; commitMenuChange(); }, { maxlength: 80 }), { wide: true, errorKey: `section-${sectionIndex}-title` }),
+  );
+  const list = document.createElement("div");
+  list.className = "entity-list wide";
+  list.dataset.errorKey = `section-${sectionIndex}`;
+  (section.items || []).forEach((item, itemIndex) => {
+    const row = document.createElement("article");
+    row.className = "entity-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(item.icon || "?")} ${escapeHtml(item.label || "未命名卡片")}</strong><small>${escapeHtml(item.command || "无指令")} · ${escapeHtml(CARD_TEMPLATES[cardSize(item.card_size)].label)}</small></div>`;
+    row.append(actionRow([
+      { label: "编辑内容", onClick: () => openItemEditor(sectionIndex, itemIndex) },
+      { label: "上移", disabled: itemIndex === 0, onClick: () => { moveItem(sectionIndex, itemIndex, -1); openSectionEditor(sectionIndex); } },
+      { label: "下移", disabled: itemIndex === section.items.length - 1, onClick: () => { moveItem(sectionIndex, itemIndex, 1); openSectionEditor(sectionIndex); } },
+      { label: "复制", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
+      { label: "删除", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+    ]));
+    list.append(row);
+  });
+  body.append(list);
+  openModal(`编辑分组：${section.title || "未命名"}`, body, [
+    { label: "添加卡片", className: "primary", onClick: () => { addItem(sectionIndex, "standard"); openSectionEditor(sectionIndex); } },
+    { label: "编辑全部分组", onClick: openMenuEditor },
+  ]);
+}
+
+function openItemEditor(sectionIndex, itemIndex) {
+  const section = state.menu.sections?.[sectionIndex];
+  const item = section?.items?.[itemIndex];
+  if (!item) return openSectionEditor(sectionIndex);
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  body.append(
+    field("图标", textInput(item.icon, (value) => { item.icon = value; commitMenuChange(); }, { maxlength: 12 }), { errorKey: `item-${sectionIndex}-${itemIndex}-icon` }),
+    field("卡片样式", selectInput(cardSize(item.card_size), Object.entries(CARD_TEMPLATES).map(([value, template]) => ({ value, label: template.label })), (value) => { item.card_size = value; commitMenuChange(); }), { errorKey: `item-${sectionIndex}-${itemIndex}-card_size` }),
+    field("名称", textInput(item.label, (value) => { item.label = value; commitMenuChange(); }, { maxlength: 80 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-label` }),
+    field("指令", textInput(item.command, (value) => { item.command = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-command` }),
+    field("描述", textInput(item.description, (value) => { item.description = value; commitMenuChange(); }, { multiline: true, maxlength: 240 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-description` }),
+  );
+  const check = document.createElement("label");
+  check.className = "check wide";
+  check.append(checkboxInput(item.enabled !== false, (checked) => { item.enabled = checked; commitMenuChange(); }), document.createTextNode("启用这张卡片"));
+  body.append(check);
+  openModal(`编辑卡片：${item.label || "未命名"}`, body, [
+    { label: "复制卡片", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
+    { label: "删除卡片", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+    { label: "返回分组", onClick: () => openSectionEditor(sectionIndex) },
+  ]);
+}
+
+function openStyleEditor() {
+  const style = ensureStyle(state.menu);
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  const themeCards = document.createElement("div");
+  themeCards.className = "theme-preset-cards wide";
+  Object.entries(THEME_PRESETS).forEach(([key, preset]) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `theme-card${(style.theme || "aurora") === key ? " is-active" : ""}`;
+    button.style.cssText = `--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}`;
+    button.innerHTML = `<span class="theme-swatch"></span><strong>${escapeHtml(preset.label)}</strong>`;
+    button.addEventListener("click", () => {
+      Object.assign(style, { theme: key }, themeStylePatch(preset));
+      commitMenuChange();
+      openStyleEditor();
+    });
+    themeCards.append(button);
+  });
+  body.append(themeCards);
+  body.append(
+    field("主题", selectInput(style.theme || "aurora", Object.entries(THEME_PRESETS).map(([value, preset]) => ({ value, label: preset.label })), (value) => { Object.assign(style, { theme: value }, themeStylePatch(THEME_PRESETS[value] || THEME_PRESETS.aurora)); commitMenuChange(); openStyleEditor(); })),
+    field("主色", textInput(toColor(style.primary_color, "#7c3aed"), (value) => { style.primary_color = value; commitMenuChange(); }, { type: "color" })),
+    field("背景色", textInput(toColor(style.background_color, "#f8fafc"), (value) => { style.background_color = value; commitMenuChange(); }, { type: "color" })),
+    field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { style.card_color = value; commitMenuChange(); }, { type: "color" })),
+    field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { style.text_color = value; commitMenuChange(); }, { type: "color" })),
+    field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { style.muted_color = value; commitMenuChange(); }, { type: "color" })),
+  );
+  const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => { style.foreground_opacity = clampNumber(value, 0, 100, 92); input.previousElementSibling && (input.previousElementSibling.textContent = `${style.foreground_opacity}%`); commitMenuChange(); }, { type: "range", min: 0, max: 100, step: 1 });
+  body.append(field(`前景菜单透明度 ${clampNumber(style.foreground_opacity, 0, 100, 92)}%`, opacity, { wide: true }));
+  body.append(
+    field("宽度模式", selectInput(style.width_mode || "auto", [{ value: "auto", label: "智能自动" }, { value: "custom", label: "手动指定" }], (value) => { style.width_mode = value; commitMenuChange(); openStyleEditor(); })),
+    field("每行卡片", selectInput(style.columns || 2, [1,2,3,4].map((value) => ({ value, label: `${value} 张` })), (value) => { style.columns = Number(value); commitMenuChange(); })),
+    field("手动宽度", textInput(style.width || 760, (value) => { style.width = clampNumber(value, 520, 1400, 760); commitMenuChange(); }, { type: "number", min: 520, max: 1400, disabled: style.width_mode !== "custom" })),
+    field("分组间距", selectInput(style.section_gap_mode || "auto", [{ value: "auto", label: "智能" }, { value: "custom", label: "自定义" }], (value) => { style.section_gap_mode = value; commitMenuChange(); openStyleEditor(); })),
+    field("间距数值", textInput(style.section_gap_mode === "custom" ? style.section_gap : sectionGapForMenu(state.menu), (value) => { style.section_gap = clampNumber(value, 0, 200, 14); commitMenuChange(); }, { type: "number", min: 0, max: 200, disabled: style.section_gap_mode !== "custom" })),
+    field("圆角", textInput(style.radius ?? 24, (value) => { style.radius = clampNumber(value, 0, 48, 24); commitMenuChange(); }, { type: "number", min: 0, max: 48 })),
+  );
+  const updatedAt = document.createElement("label");
+  updatedAt.className = "check wide";
+  updatedAt.append(checkboxInput(style.show_updated_at !== false, (checked) => { style.show_updated_at = checked; commitMenuChange(); }), document.createTextNode("显示实时预览/更新时间"));
+  body.append(updatedAt);
+
+  const file = document.createElement("input");
+  file.type = "file";
+  file.accept = "image/*";
+  file.addEventListener("change", async () => {
+    const selected = file.files?.[0];
+    if (selected) await applyBackgroundFile(selected);
+    openStyleEditor();
+  });
+  body.append(field("自定义背景图（不限制尺寸）", file, { wide: true, hint: style.background_image ? (style.background_image_name || "Custom background") : "未设置背景图" }));
+  body.append(
+    field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { style.background_image_width = clampNumber(value, 10, 600, 100); commitMenuChange(); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
+    field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { style.background_image_x = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
+    field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { style.background_image_y = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
+  );
+  body.append(actionRow([
+    { label: "居中背景", onClick: () => { centerBackgroundImage(); openStyleEditor(); } },
+    { label: "铺满背景", onClick: () => { fitBackgroundToCover(true); openStyleEditor(); } },
+    { label: "重置背景", onClick: () => { clearBackgroundImage(); openStyleEditor(); } },
+  ]));
+  openModal("编辑主题、背景与布局", body, [
+    { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
+    { label: "未设置背景图", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
+    { label: "编辑全部分组", onClick: openMenuEditor },
+  ]);
+}
+
+function themeStylePatch(preset) {
+  const { label, ...stylePatch } = preset;
+  return stylePatch;
+}
+
+async function applyBackgroundFile(file) {
+  if (!file.type.startsWith("image/")) {
+    setStatus("请选择图片文件作为背景。", "error");
+    return;
+  }
+  if (file.size > 2 * 1024 * 1024) {
+    setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  Object.assign(ensureStyle(state.menu), {
+    background_image: dataUrl,
+    background_image_name: file.name,
+    background_image_x: 0,
+    background_image_y: 0,
+    background_image_width: 100,
+  });
+  commitMenuChange();
+  fitBackgroundToCover(true);
+}
+
 function renderPreview() {
   const menu = state.menu;
+  if (!menu) return;
   const style = ensureStyle(menu);
   const layout = previewLayout(menu);
+  const query = state.itemSearch || "";
   const previewStyle = [
     `--preview-primary:${style.primary_color}`,
     `--preview-bg:${style.background_color}`,
@@ -295,42 +721,79 @@ function renderPreview() {
     `--preview-radius:${style.radius || 24}px`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
+    `--preview-section-gap:${sectionGapForMenu(menu)}px`,
     `--preview-foreground-opacity:${clampNumber(style.foreground_opacity, 0, 100, 92) / 100}`,
   ].join(";");
   const backgroundMarkup = style.background_image ? `
         <img class="preview-bg-image" alt="" src="${escapeAttr(style.background_image)}" style="left:${style.background_image_x || 0}%;top:${style.background_image_y || 0}%;width:${style.background_image_width || 100}%;" />
-        <div class="background-transform-box" aria-label="Background crop box">
+        ${state.backgroundEditMode ? `<div class="background-transform-box" aria-label="拖动或拉伸背景图">
           <span class="resize-handle nw" data-handle="nw"></span>
           <span class="resize-handle ne" data-handle="ne"></span>
           <span class="resize-handle sw" data-handle="sw"></span>
           <span class="resize-handle se" data-handle="se"></span>
-        </div>` : "";
+        </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""}" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
         ${backgroundMarkup}
-        <div class="preview-inner">
-          <div class="kicker">📋 ${escapeHtml(menu.name || menu.id)}</div>
+        <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
+          <div class="kicker">Menu ${escapeHtml(menu.name || menu.id)}</div>
           <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
           <div class="preview-sub">${escapeHtml(menu.subtitle || "")}</div>
-          ${menu.sections.map((section) => `
-            <section class="preview-section">
+          <div class="preview-sections">
+          ${menu.sections.map((section, sectionIndex) => `
+            <section class="preview-section" data-edit="section" data-section-index="${sectionIndex}" data-layer-label="编辑分组">
               <h3>${escapeHtml(section.title || "分组")}</h3>
               <div class="preview-items">
-                ${section.items.map((item) => `
-                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""}">
-                    <div>${escapeHtml(item.icon || "•")}</div>
+                ${section.items.map((item, itemIndex) => {
+                  const matched = !query || itemMatchesSearch(item, query);
+                  const searchClass = query ? (matched ? "is-search-match" : "is-search-dim") : "";
+                  return `
+                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
+                    <div>${escapeHtml(item.icon || "?")}</div>
                     <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
-                  </div>`).join("")}
+                  </div>`;
+                }).join("")}
               </div>
             </section>`).join("")}
+          </div>
           <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
         </div>
       </div>
     </div>`;
   els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  updateBackgroundEditToggle();
   attachBackgroundEditor();
   fitPreviewToStage();
+}
+
+function toggleBackgroundEditMode() {
+  if (!state.menu) return;
+  const style = ensureStyle(state.menu);
+  if (!style.background_image) {
+    state.backgroundEditMode = false;
+    updateBackgroundEditToggle();
+    setStatus("当前菜单还没有背景图。请点击外框打开主题与背景设置后上传背景图。", "warning");
+    return;
+  }
+  state.backgroundEditMode = !state.backgroundEditMode;
+  renderPreview();
+  setStatus(
+    state.backgroundEditMode
+      ? "已进入背景图编辑模式：拖动背景或拉伸边框，卡片编辑已暂时锁定。"
+      : "已锁定背景图：现在可以点击分组和卡片进行编辑。",
+    state.backgroundEditMode ? "warning" : "success",
+  );
+}
+
+function updateBackgroundEditToggle() {
+  if (!els.backgroundEditToggleBtn) return;
+  const hasBackground = Boolean(state.menu && ensureStyle(state.menu).background_image);
+  if (!hasBackground) state.backgroundEditMode = false;
+  els.backgroundEditToggleBtn.hidden = !hasBackground;
+  els.backgroundEditToggleBtn.textContent = state.backgroundEditMode ? "锁定背景图" : "编辑背景图";
+  els.backgroundEditToggleBtn.setAttribute("aria-pressed", state.backgroundEditMode ? "true" : "false");
+  els.backgroundEditToggleBtn.classList.toggle("is-active", state.backgroundEditMode);
 }
 
 function fitPreviewToStage() {
@@ -354,16 +817,14 @@ function addSection() {
     title: "新分组",
     items: [createItemFromTemplate("standard")],
   });
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
 function removeSection(index) {
   if (state.menu.sections.length <= 1) return setStatus("至少保留一个分组。");
   state.menu.sections.splice(index, 1);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
@@ -372,8 +833,7 @@ function moveSection(index, direction) {
   if (target < 0 || target >= state.menu.sections.length) return;
   const [section] = state.menu.sections.splice(index, 1);
   state.menu.sections.splice(target, 0, section);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
@@ -381,15 +841,13 @@ function copySection(index) {
   const copy = structuredClone(state.menu.sections[index]);
   copy.title = `${copy.title || "分组"} 副本`;
   state.menu.sections.splice(index + 1, 0, copy);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
 function addItem(sectionIndex, templateKey = "standard") {
   state.menu.sections[sectionIndex].items.push(createItemFromTemplate(templateKey));
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
@@ -399,8 +857,7 @@ function moveItem(sectionIndex, itemIndex, direction) {
   if (target < 0 || target >= items.length) return;
   const [item] = items.splice(itemIndex, 1);
   items.splice(target, 0, item);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
@@ -409,8 +866,7 @@ function copyItem(sectionIndex, itemIndex) {
   const copy = structuredClone(items[itemIndex]);
   copy.label = `${copy.label || "菜单项"} 副本`;
   items.splice(itemIndex + 1, 0, copy);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
@@ -418,26 +874,36 @@ function removeItem(sectionIndex, itemIndex) {
   const items = state.menu.sections[sectionIndex].items;
   if (items.length <= 1) return setStatus("每个分组至少保留一个菜单项。");
   items.splice(itemIndex, 1);
-  state.dirty = true;
-  els.serverPreview.hidden = true;
+  markDirty();
   renderAll();
 }
 
 async function saveMenu() {
-  syncFormToMenu();
+  const draftIdBeforeSave = currentDraftId();
+  syncFormToMenu({ mark: false });
+  if (!validateMenu({ scroll: true })) {
+    setStatus("请先修正表单错误，再保存菜单。", "error");
+    return;
+  }
   try {
+    updateSaveState("saving");
     setStatus("正在保存...");
     const result = await bridge.apiPost("menus/save", { menu: state.menu });
     state.menus = result.menus || [result.menu];
     state.currentId = result.menu.id;
     state.menu = structuredClone(result.menu);
     state.dirty = false;
+    clearDraft(state.currentId);
+    if (draftIdBeforeSave !== state.currentId) clearDraft(draftIdBeforeSave);
     refreshSchemeSelect();
     fillForm();
     renderAll();
-    setStatus("保存成功。");
+    updateSaveState("saved");
+    setStatus("保存成功，后台正在刷新渲染缓存。", "success");
+    pollRenderStatus(state.currentId);
   } catch (error) {
-    setStatus(`保存失败：${error.message}`);
+    updateSaveState("dirty");
+    setStatus(`保存失败：${error.message}`, "error");
   }
 }
 
@@ -453,6 +919,7 @@ function newMenu() {
     sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
   state.currentId = id;
+  markDirty();
   fillForm();
   renderAll();
   setStatus("已创建本地新菜单，保存后生效。");
@@ -464,35 +931,65 @@ function copyMenu() {
   copy.name = `${copy.name || "菜单"} 副本`;
   state.menu = copy;
   state.currentId = copy.id;
+  markDirty();
   fillForm();
   renderAll();
   setStatus("已复制为新菜单，保存后生效。");
 }
 
 async function deleteMenu() {
-  if (!state.currentId) return;
-  if (!confirm(`确定删除菜单方案 ${state.currentId}？`)) return;
+  if (!state.menu) {
+    setStatus("没有可删除的菜单。", "warning");
+    return;
+  }
+  const currentId = state.currentId || state.menu.id;
+  const isSavedMenu = state.menus.some((menu) => menu.id === currentId);
+  if (!isSavedMenu) {
+    if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
+      setStatus("已取消删除。");
+      return;
+    }
+    discardUnsavedMenu(currentId);
+    return;
+  }
+  if (state.menus.length <= 1) {
+    setStatus("至少保留一个菜单方案，无法删除最后一个菜单。", "warning");
+    return;
+  }
+  if (!confirm(`确定永久删除菜单方案 ${currentId}？`)) {
+    setStatus("已取消删除。");
+    return;
+  }
+  const fallbackId = state.menus.find((menu) => menu.id !== currentId)?.id;
   try {
-    const result = await bridge.apiPost("menus/delete", { id: state.currentId });
-    state.menus = result.menus || [];
-    state.currentId = result.default_menu_id || state.menus[0]?.id;
-    await selectMenu(state.currentId);
-    setStatus("删除成功。");
+    setStatus("正在删除菜单...");
+    const result = await bridge.apiPost("menus/delete", { id: currentId });
+    state.menus = result.menus || state.menus.filter((menu) => menu.id !== currentId);
+    clearDraft(currentId);
+    const nextId = result.default_menu_id || fallbackId || state.menus[0]?.id;
+    state.currentId = nextId;
+    state.dirty = false;
+    if (nextId) await selectMenu(nextId);
+    refreshSchemeSelect();
+    updateSaveState("saved");
+    setStatus("删除成功。", "success");
   } catch (error) {
-    setStatus(`删除失败：${error.message}`);
+    setStatus(`删除失败：${error.message}`, "error");
   }
 }
 
-async function serverPreview() {
-  syncFormToMenu();
-  try {
-    setStatus("正在请求服务端渲染...");
-    const result = await bridge.apiPost("menus/preview", { menu: state.menu });
-    els.serverPreview.src = result.url;
-    els.serverPreview.hidden = false;
-    setStatus("服务端渲染完成。");
-  } catch (error) {
-    setStatus(`服务端预览失败：${error.message}`);
+async function discardUnsavedMenu(menuId) {
+  clearDraft(menuId);
+  const nextId = state.defaultMenuId && state.menus.some((menu) => menu.id === state.defaultMenuId)
+    ? state.defaultMenuId
+    : state.menus[0]?.id;
+  state.dirty = false;
+  if (nextId) {
+    await selectMenu(nextId);
+    setStatus("已丢弃未保存菜单草稿。", "success");
+  } else {
+    newMenu();
+    setStatus("已丢弃未保存菜单草稿，并创建新的本地菜单。", "warning");
   }
 }
 
@@ -532,6 +1029,9 @@ async function handleBackgroundUpload(event) {
     event.target.value = "";
     return;
   }
+  if (file.size > 2 * 1024 * 1024) {
+    setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
+  }
   const dataUrl = await readFileAsDataUrl(file);
   const style = ensureStyle(state.menu);
   Object.assign(style, {
@@ -541,9 +1041,9 @@ async function handleBackgroundUpload(event) {
     background_image_y: 0,
     background_image_width: 100,
   });
-  state.dirty = true;
+  markDirty();
   els.backgroundImageName.textContent = file.name;
-  els.serverPreview.hidden = true;
+  syncBackgroundControls();
   renderAll();
   fitBackgroundToCover(true);
   event.target.value = "";
@@ -551,6 +1051,7 @@ async function handleBackgroundUpload(event) {
 
 function clearBackgroundImage() {
   const style = ensureStyle(state.menu);
+  state.backgroundEditMode = false;
   Object.assign(style, {
     background_image: "",
     background_image_name: "",
@@ -558,9 +1059,9 @@ function clearBackgroundImage() {
     background_image_y: 0,
     background_image_width: 100,
   });
-  state.dirty = true;
+  markDirty();
   els.backgroundImageName.textContent = "No background image";
-  els.serverPreview.hidden = true;
+  syncBackgroundControls();
   renderAll();
 }
 
@@ -623,9 +1124,9 @@ function attachBackgroundEditor() {
         style.background_image_x = clampNumber(startLeft + dxPct, -300, 300, startLeft);
         style.background_image_y = clampNumber(startTop + dyPct, -300, 300, startTop);
       }
-      state.dirty = true;
-      els.serverPreview.hidden = true;
-      updateImage();
+      markDirty();
+      syncBackgroundControls();
+          updateImage();
     };
 
     const onUp = () => {
@@ -655,8 +1156,336 @@ function fitBackgroundToCover(forceReset) {
   style.background_image_width = clampNumber(requiredWidth, 10, 600, 100);
   style.background_image_x = clampNumber((100 - style.background_image_width) / 2, -300, 300, 0);
   style.background_image_y = 0;
-  state.dirty = true;
+  markDirty();
+  syncBackgroundControls();
   renderPreview();
+}
+
+
+function updateBackgroundFromControls() {
+  const style = ensureStyle(state.menu);
+  style.background_image_width = clampNumber(els.backgroundImageWidth.value, 10, 600, 100);
+  style.background_image_x = clampNumber(els.backgroundImageX.value, -300, 300, 0);
+  style.background_image_y = clampNumber(els.backgroundImageY.value, -300, 300, 0);
+  syncBackgroundControls();
+  markDirty();
+  renderPreview();
+}
+
+function syncBackgroundControls() {
+  if (!state.menu || !els.backgroundImageWidth) return;
+  const style = ensureStyle(state.menu);
+  const width = clampNumber(style.background_image_width, 10, 600, 100);
+  const x = clampNumber(style.background_image_x, -300, 300, 0);
+  const y = clampNumber(style.background_image_y, -300, 300, 0);
+  els.backgroundImageWidth.value = width;
+  els.backgroundWidthValue.textContent = `${width}%`;
+  els.backgroundImageX.value = x;
+  els.backgroundImageY.value = y;
+}
+
+function centerBackgroundImage() {
+  const style = ensureStyle(state.menu);
+  style.background_image_width = clampNumber(style.background_image_width, 10, 600, 100);
+  style.background_image_x = clampNumber((100 - style.background_image_width) / 2, -300, 300, 0);
+  style.background_image_y = 0;
+  syncBackgroundControls();
+  markDirty();
+  renderPreview();
+}
+
+function renderThemePresetCards() {
+  if (!els.themePresetCards) return;
+  els.themePresetCards.innerHTML = Object.entries(THEME_PRESETS).map(([key, preset]) => `
+    <button type="button" class="theme-card" data-theme="${key}" style="--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}">
+      <span class="theme-swatch"><i></i></span><strong>${preset.label}</strong><small>${key}</small>
+    </button>`).join("");
+  els.themePresetCards.querySelectorAll("[data-theme]").forEach((button) => {
+    button.addEventListener("click", () => {
+      els.theme.value = button.dataset.theme;
+      applyThemePreset(els.theme.value);
+      syncFormToMenu();
+      renderAll();
+    });
+  });
+}
+
+async function copyStyleToMenus() {
+  if (!state.menu) return;
+  syncFormToMenu({ mark: false });
+  const otherMenus = state.menus.filter((menu) => menu.id !== state.currentId);
+  if (!otherMenus.length) return setStatus("没有其他菜单可复制样式。", "warning");
+  const answer = prompt(`输入目标菜单 ID，多个用逗号分隔，或输入 all：\n${otherMenus.map((menu) => menu.id).join(", ")}`, "all");
+  if (!answer) return;
+  const targets = answer.trim().toLowerCase() === "all"
+    ? otherMenus
+    : otherMenus.filter((menu) => answer.split(",").map((id) => id.trim()).includes(menu.id));
+  if (!targets.length) return setStatus("未找到目标菜单。", "error");
+  const stylePatch = pickStyleForCopy(ensureStyle(state.menu));
+  try {
+    setStatus("正在复制样式到其他菜单...");
+    let latestMenus = null;
+    for (const target of targets) {
+      const nextMenu = structuredClone(target);
+      nextMenu.style = { ...ensureStyle(nextMenu), ...stylePatch };
+      const result = await bridge.apiPost("menus/save", { menu: nextMenu });
+      latestMenus = result.menus || latestMenus;
+    }
+    if (latestMenus) {
+      state.menus = latestMenus;
+      refreshSchemeSelect();
+    }
+    setStatus(`已复制样式到 ${targets.length} 个菜单。`, "success");
+  } catch (error) {
+    setStatus(`复制样式失败：${error.message}`, "error");
+  }
+}
+
+function pickStyleForCopy(style) {
+  return STYLE_COPY_KEYS.reduce((copy, key) => {
+    copy[key] = structuredClone(style[key]);
+    return copy;
+  }, {});
+}
+
+function resetCurrentStyle() {
+  if (!confirm("确定重置当前菜单样式？菜单内容不会被删除。")) return;
+  state.menu.style = defaultStyle();
+  fillForm();
+  markDirty();
+  renderAll();
+  setStatus("已重置样式，保存后生效。", "success");
+}
+
+function itemMatchesSearch(item, query) {
+  return [item.label, item.command, item.description]
+    .some((value) => String(value || "").toLowerCase().includes(query));
+}
+
+function markDirty() {
+  if (!state.menu) return;
+  state.dirty = true;
+  updateSaveState("dirty");
+  saveDraft();
+}
+
+function updateSaveState(nextState) {
+  state.saveState = nextState;
+  const labels = { dirty: "已修改", saving: "保存中", saved: "已保存" };
+  if (els.saveState) els.saveState.textContent = labels[nextState] || labels.saved;
+  if (els.saveBtn) els.saveBtn.textContent = nextState === "saving" ? "保存中..." : (nextState === "dirty" ? "保存（已修改）" : "保存");
+  if (els.saveBtn) els.saveBtn.disabled = nextState === "saving";
+}
+
+async function confirmLeaveDirty() {
+  if (!state.dirty) return true;
+  return confirm("当前菜单有未保存修改，离开会丢失这些修改。确定继续？");
+}
+
+function currentDraftId() {
+  return state.currentId || state.menu?.id || "new";
+}
+
+function draftKey(id) {
+  return `${DRAFT_PREFIX}${id}`;
+}
+
+function saveDraft() {
+  try {
+    const id = currentDraftId();
+    if (!id || !state.menu) return;
+    localStorage.setItem(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: state.menu }));
+  } catch (error) {
+    console.warn("failed to save menu draft", error);
+  }
+}
+
+function clearDraft(id) {
+  try { localStorage.removeItem(draftKey(id)); } catch (error) { console.warn("failed to clear draft", error); }
+}
+
+function maybeRestoreDraft(menu) {
+  const id = menu.id;
+  if (!id || state.restoredDraftIds.has(id)) return menu;
+  state.restoredDraftIds.add(id);
+  try {
+    const raw = localStorage.getItem(draftKey(id));
+    if (!raw) return menu;
+    const draft = JSON.parse(raw);
+    const serverTime = Date.parse(menu.updated_at || menu.created_at || "") || 0;
+    if (!draft?.menu || Number(draft.saved_at || 0) <= serverTime) return menu;
+    if (confirm(`发现「${menu.name || id}」有较新的本地草稿，是否恢复？`)) {
+      setStatus("已恢复本地草稿，保存后会覆盖服务端菜单。", "warning");
+      return draft.menu;
+    }
+    if (confirm("是否丢弃该本地草稿？")) clearDraft(id);
+  } catch (error) {
+    console.warn("failed to restore draft", error);
+  }
+  return menu;
+}
+
+function collapseKey(type, sectionIndex, itemIndex = null) {
+  const id = currentDraftId();
+  return `${COLLAPSE_PREFIX}${id}:${type}:${sectionIndex}${itemIndex === null ? "" : `:${itemIndex}`}`;
+}
+
+function isCollapsed(type, sectionIndex, itemIndex = null) {
+  const key = collapseKey(type, sectionIndex, itemIndex);
+  if (state.collapsedKeys.has(key)) return true;
+  try {
+    const collapsed = localStorage.getItem(key) === "1";
+    if (collapsed) state.collapsedKeys.add(key);
+    return collapsed;
+  } catch {
+    return false;
+  }
+}
+
+function setCollapsed(type, sectionIndex, itemIndex, collapsed) {
+  const key = collapseKey(type, sectionIndex, itemIndex);
+  if (collapsed) state.collapsedKeys.add(key);
+  else state.collapsedKeys.delete(key);
+  try {
+    if (collapsed) localStorage.setItem(key, "1");
+    else localStorage.removeItem(key);
+  } catch (error) {
+    console.warn("failed to save collapse state", error);
+  }
+}
+
+function saveSearchState() {
+  try { localStorage.setItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, state.itemSearch || ""); } catch {}
+}
+
+function loadSearchState() {
+  try { state.itemSearch = localStorage.getItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`) || ""; } catch { state.itemSearch = ""; }
+}
+
+function validateMenu({ scroll = false, silent = false } = {}) {
+  if (!state.menu) return true;
+  const errors = [];
+  const add = (key, message) => errors.push({ key, message });
+  const menu = state.menu;
+  if (!MENU_ID_PATTERN.test(menu.id || "")) add("menuId", "方案 ID 只能包含 1-48 位英文字母、数字、_ 或 -。");
+  if (!String(menu.title || "").trim()) add("menuTitle", "标题不能为空。");
+  if (String(menu.name || "").length > 80) add("menuName", "方案名称最多 80 个字符。");
+  if (String(menu.title || "").length > 120) add("menuTitle", "标题最多 120 个字符。");
+  if (String(menu.subtitle || "").length > 240) add("menuSubtitle", "副标题最多 240 个字符。");
+  if (String(menu.footer || "").length > 240) add("menuFooter", "页脚最多 240 个字符。");
+  if (!Array.isArray(menu.sections) || menu.sections.length < 1) add("sections", "至少需要 1 个分组。");
+  (menu.sections || []).forEach((section, sectionIndex) => {
+    if (!String(section.title || "").trim()) add(`section-${sectionIndex}-title`, "分组标题不能为空。");
+    if (String(section.title || "").length > 80) add(`section-${sectionIndex}-title`, "分组标题最多 80 个字符。");
+    if (!Array.isArray(section.items) || section.items.length < 1) add(`section-${sectionIndex}`, "每个分组至少需要 1 个菜单项。");
+    (section.items || []).forEach((item, itemIndex) => {
+      if (!String(item.label || "").trim()) add(`item-${sectionIndex}-${itemIndex}-label`, "菜单项名称不能为空。");
+      if (String(item.label || "").length > 80) add(`item-${sectionIndex}-${itemIndex}-label`, "名称最多 80 个字符。");
+      if (String(item.command || "").length > 120) add(`item-${sectionIndex}-${itemIndex}-command`, "指令最多 120 个字符。");
+      if (String(item.description || "").length > 240) add(`item-${sectionIndex}-${itemIndex}-description`, "描述最多 240 个字符。");
+      if (String(item.icon || "").length > 12) add(`item-${sectionIndex}-${itemIndex}-icon`, "图标最多 12 个字符。");
+    });
+  });
+  renderValidation(errors);
+  if (errors.length && scroll) scrollToFirstError(errors[0].key);
+  if (!silent && errors.length) setStatus(errors[0].message, "error");
+  return errors.length === 0;
+}
+
+function renderValidation(errors) {
+  document.querySelectorAll(".is-invalid").forEach((node) => node.classList.remove("is-invalid"));
+  document.querySelectorAll(".error-text").forEach((node) => node.remove());
+  errors.forEach((error) => {
+    const node = document.querySelector(`[data-error-key="${cssEscape(error.key)}"]`) || $(error.key);
+    if (!node) return;
+    node.classList.add("is-invalid");
+    const message = document.createElement("small");
+    message.className = "error-text";
+    message.textContent = error.message;
+    (node.closest("label") || node).append(message);
+  });
+  if (els.validationSummary) {
+    els.validationSummary.hidden = errors.length === 0;
+    els.validationSummary.textContent = errors.length ? `发现 ${errors.length} 个问题：${errors[0].message}` : "";
+  }
+}
+
+function scrollToFirstError(key) {
+  let node = document.querySelector(`[data-error-key="${cssEscape(key)}"]`) || $(key);
+  if (!node && state.itemSearch) {
+    state.itemSearch = "";
+    saveSearchState();
+    if (els.itemSearch) els.itemSearch.value = "";
+    renderSectionsEditor();
+    node = document.querySelector(`[data-error-key="${cssEscape(key)}"]`) || $(key);
+  }
+  if (node && node.offsetParent === null) {
+    openEditorForError(key);
+    const match = key.match(/^(section|item)-(\d+)(?:-(\d+))?/);
+    if (match) {
+      const sectionIndex = Number(match[2]);
+      const itemIndex = match[1] === "item" ? Number(match[3]) : null;
+      setCollapsed("section", sectionIndex, null, false);
+      if (itemIndex !== null) setCollapsed("item", sectionIndex, itemIndex, false);
+      renderSectionsEditor();
+    }
+    requestAnimationFrame(() => validateMenu({ silent: true }));
+    node = document.querySelector(`[data-error-key="${cssEscape(key)}"]`) || $(key);
+  }
+  node = node || els.validationSummary;
+  node?.scrollIntoView({ behavior: "smooth", block: "center" });
+  if (typeof node?.focus === "function") node.focus({ preventScroll: true });
+}
+
+function openEditorForError(key) {
+  if (/^item-(\d+)-(\d+)/.test(key)) {
+    const [, sectionIndex, itemIndex] = key.match(/^item-(\d+)-(\d+)/);
+    openItemEditor(Number(sectionIndex), Number(itemIndex));
+    return;
+  }
+  if (/^section-(\d+)/.test(key)) {
+    const [, sectionIndex] = key.match(/^section-(\d+)/);
+    openSectionEditor(Number(sectionIndex));
+    return;
+  }
+  openMenuEditor();
+}
+
+function cssEscape(value) {
+  return String(value).replace(/"/g, "\\\"");
+}
+
+function clearRenderStatus() {
+  if (state.renderStatusTimer) clearTimeout(state.renderStatusTimer);
+  state.renderStatusTimer = 0;
+  if (els.renderStatus) els.renderStatus.hidden = true;
+}
+
+async function pollRenderStatus(menuId, attempt = 0) {
+  clearRenderStatus();
+  if (!menuId) return;
+  try {
+    const status = await bridge.apiGet(`menus/render-status/${encodeURIComponent(menuId)}`);
+    showRenderStatus(status);
+    if (status.status === "rendering" && attempt < 30) {
+      state.renderStatusTimer = window.setTimeout(() => pollRenderStatus(menuId, attempt + 1), 1200);
+    }
+  } catch (error) {
+    showRenderStatus({ status: "error", error: error.message });
+  }
+}
+
+function showRenderStatus(status) {
+  if (!els.renderStatus) return;
+  const text = {
+    rendering: "缓存生成中",
+    ready: "缓存已更新",
+    error: "缓存生成失败，指令暂不可直接发送",
+    missing: "缓存尚未生成",
+  }[status.status] || "缓存状态未知";
+  els.renderStatus.hidden = false;
+  els.renderStatus.className = `render-status is-${status.status}`;
+  els.renderStatus.textContent = status.error ? `${text}：${status.error}` : (status.rendered_at ? `${text}（${status.rendered_at}）` : text);
 }
 
 function ensureStyle(menu) {
@@ -682,6 +1511,8 @@ function defaultStyle() {
     width_mode: "auto",
     width: 760,
     columns: 2,
+    section_gap_mode: "auto",
+    section_gap: 14,
     show_updated_at: true,
   };
 }
@@ -690,6 +1521,26 @@ function syncWidthControl() {
   const isAuto = els.widthMode.value !== "custom";
   els.width.disabled = isAuto;
   els.width.closest(".field")?.classList.toggle("is-disabled", isAuto);
+}
+
+function syncSectionGapControl() {
+  const isAuto = els.sectionGapMode.value !== "custom";
+  els.sectionGap.disabled = isAuto;
+  els.sectionGap.closest(".field")?.classList.toggle("is-disabled", isAuto);
+  if (isAuto && state.menu) {
+    els.sectionGap.value = sectionGapForMenu(state.menu);
+  }
+}
+
+function sectionGapForMenu(menu) {
+  const style = ensureStyle(menu);
+  if (style.section_gap_mode === "custom") {
+    return clampNumber(style.section_gap, 0, 200, 14);
+  }
+  const sectionCount = Math.max(1, menu.sections?.length || 1);
+  const itemCount = (menu.sections || []).reduce((total, section) => total + (section.items?.length || 0), 0);
+  const density = sectionCount * 1.8 + itemCount * 0.35;
+  return clampNumber(20 - density, 8, 20, 14);
 }
 
 function applyThemePreset(theme) {
@@ -775,8 +1626,9 @@ function toColor(value, fallback) {
   return /^#[0-9a-f]{6}$/i.test(value || "") ? value : fallback;
 }
 
-function setStatus(message) {
+function setStatus(message, tone = "info") {
   els.status.textContent = message;
+  els.status.dataset.tone = tone;
 }
 
 function escapeHtml(value) {

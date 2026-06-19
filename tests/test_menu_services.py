@@ -7,6 +7,7 @@ from pathlib import Path
 from services.menu_model import MenuValidationError, normalize_menu
 from services.local_image import _build_browser_screenshot_command, _find_browser_executable, image_file_to_data_url, render_menu_image
 from services.render_cache import MenuRenderCache
+from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, preview_width_for_menu
 from services.storage import MenuStorage
 
@@ -45,6 +46,8 @@ class MenuModelTests(unittest.TestCase):
                     "background_image_x": -12,
                     "background_image_y": 18,
                     "background_image_width": 150,
+                    "section_gap_mode": "custom",
+                    "section_gap": 0,
                 },
                 "sections": [
                     {
@@ -61,6 +64,8 @@ class MenuModelTests(unittest.TestCase):
         self.assertEqual(menu["style"]["background_image_x"], -12)
         self.assertEqual(menu["style"]["background_image_y"], 18)
         self.assertEqual(menu["style"]["background_image_width"], 150)
+        self.assertEqual(menu["style"]["section_gap_mode"], "custom")
+        self.assertEqual(menu["style"]["section_gap"], 0)
         self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
@@ -125,16 +130,66 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
             self.assertTrue(Path(cached_path).is_file())
 
+    def test_render_status_reports_missing_rendering_ready_and_error(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            cache = MenuRenderCache(tmp)
+            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "missing")
+
+            cache.mark_rendering(menu, render_width=900, render_scale=4)
+            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "rendering")
+
+            rendered_path = render_menu_image(menu, tmp)
+            cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
+            ready = cache.get_status(menu, render_width=900, render_scale=4)
+            self.assertEqual(ready["status"], "ready")
+            self.assertIsNotNone(ready["rendered_at"])
+
+            changed_menu = {**menu, "title": "修改后的菜单"}
+            self.assertEqual(cache.get_status(changed_menu, render_width=900, render_scale=4)["status"], "missing")
+            cache.mark_error(changed_menu, "boom", render_width=900, render_scale=4)
+            error = cache.get_status(changed_menu, render_width=900, render_scale=4)
+            self.assertEqual(error["status"], "error")
+            self.assertEqual(error["error"], "boom")
+
+    def test_render_coordinator_schedules_cache_generation(self):
+        import asyncio
+
+        async def run_case():
+            with tempfile.TemporaryDirectory() as tmp:
+                storage = MenuStorage(tmp)
+                menu = storage.get_menu("default")
+                cache = MenuRenderCache(tmp)
+
+                async def render_menu(_menu):
+                    return render_menu_image(_menu, tmp)
+
+                coordinator = MenuRenderCoordinator(
+                    storage=storage,
+                    cache=cache,
+                    render_menu=render_menu,
+                    render_width=lambda: 900,
+                    render_scale=lambda: 4,
+                )
+                self.assertTrue(coordinator.schedule(menu))
+                self.assertEqual(coordinator.status_for_menu(menu)["status"], "rendering")
+                await asyncio.sleep(0.1)
+                self.assertEqual(coordinator.status_for_menu(menu)["status"], "ready")
+
+        asyncio.run(run_case())
+
     def test_commands_use_cached_render_before_scheduling_background_render(self):
         main_py = Path("main.py").read_text(encoding="utf-8")
-        self.assertIn("cached_path = self._cached_menu_image(menu)", main_py)
+        self.assertIn("cached_path = self.render_coordinator.get_cached_path(menu)", main_py)
         self.assertIn("yield event.image_result(cached_path)", main_py)
-        self.assertIn("self._schedule_cache_render(menu)", main_py)
+        self.assertIn("self.render_coordinator.schedule(menu)", main_py)
         self.assertLess(
-            main_py.index("cached_path = self._cached_menu_image(menu)"),
+            main_py.index("cached_path = self.render_coordinator.get_cached_path(menu)"),
             main_py.index("yield event.image_result(cached_path)"),
         )
-        self.assertIn("self._schedule_cache_render(menu)", main_py[main_py.index("async def api_save_menu") :])
+        self.assertIn("self.render_coordinator.schedule(menu)", main_py[main_py.index("async def api_save_menu") :])
+        self.assertIn("menus/render-status/<menu_id>", main_py)
 
     def test_pillow_renderer_can_output_high_resolution_png(self):
         from PIL import Image
@@ -177,12 +232,46 @@ class MenuStorageTests(unittest.TestCase):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
         version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
-        self.assertEqual(version, "0.2.0")
+        self.assertEqual(version, "0.3.0")
         self.assertEqual(author, "雪碧bir")
         self.assertIn(f"当前版本：`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)
         with open("logo.png", "rb") as f:
             self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
+
+    def test_page_editor_exposes_v030_editing_features(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+
+        self.assertIn("DRAFT_PREFIX", app_js)
+        self.assertIn("beforeunload", app_js)
+        self.assertIn("validateMenu", app_js)
+        self.assertIn("collapsedKeys", app_js)
+        self.assertIn("copyStyleToMenus", app_js)
+        self.assertIn("backgroundImageWidth", app_js)
+        self.assertIn("sectionGapForMenu", app_js)
+        self.assertIn("menus/render-status", app_js)
+        self.assertNotIn('id="templateBtn"', index_html)
+        self.assertIn('id="itemSearch"', index_html)
+        self.assertIn('id="backgroundImageX"', index_html)
+        self.assertIn('id="sectionGapMode"', index_html)
+        self.assertIn('id="sectionGap" type="number" min="0" max="200"', index_html)
+        self.assertIn("theme-preset-cards", css)
+        self.assertIn("validation-summary", css)
+        self.assertIn("discardUnsavedMenu", app_js)
+        self.assertIn("backgroundEditMode", app_js)
+        self.assertIn("toggleBackgroundEditMode", app_js)
+        self.assertIn('id="backgroundEditToggleBtn"', index_html)
+        self.assertIn("is-bg-editing", css)
+        self.assertNotIn("serverPreview", app_js + index_html + css)
+        self.assertNotIn("menus/preview", app_js)
+
+    def test_server_preview_api_is_removed(self):
+        main_py = Path("main.py").read_text(encoding="utf-8")
+        self.assertNotIn("menus/preview", main_py)
+        self.assertNotIn("api_preview_menu", main_py)
+        self.assertNotIn("_preview_image_url", main_py)
 
     def test_browser_screenshot_command_uses_high_scale_factor(self):
         command = _build_browser_screenshot_command(
@@ -256,6 +345,21 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('class="preview-bg-image"', html)
         self.assertIn("left:10%;top:-5%;width:120%", html)
         self.assertIn("--preview-foreground-opacity:0.600", html)
+
+    def test_preview_html_uses_custom_section_gap(self):
+        menu = normalize_menu(
+            {
+                "id": "gap",
+                "style": {"section_gap_mode": "custom", "section_gap": 0},
+                "sections": [
+                    {"title": "分组1", "items": [{"label": "帮助"}]},
+                    {"title": "分组2", "items": [{"label": "菜单"}]},
+                ],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn("--preview-section-gap:0px", html)
+        self.assertIn('class="preview-sections"', html)
 
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")

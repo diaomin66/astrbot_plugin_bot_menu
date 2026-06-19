@@ -12,6 +12,7 @@ MAX_SECTIONS = 24
 MAX_ITEMS_PER_SECTION = 64
 MAX_TOTAL_ITEMS = 256
 WIDTH_MODES = {"auto", "custom"}
+SECTION_GAP_MODES = {"auto", "custom"}
 CARD_SIZES = {"compact", "standard", "large", "banner"}
 
 
@@ -36,6 +37,8 @@ DEFAULT_STYLE: dict[str, Any] = {
     "width_mode": "auto",
     "width": 760,
     "columns": 2,
+    "section_gap_mode": "auto",
+    "section_gap": 14,
     "show_updated_at": True,
 }
 
@@ -167,6 +170,8 @@ def _normalize_style(raw_style: Any) -> dict[str, Any]:
     style["width_mode"] = _clean_choice(style.get("width_mode"), WIDTH_MODES, default="auto")
     style["width"] = _clamp_int(style.get("width"), default=760, minimum=520, maximum=1400)
     style["columns"] = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
+    style["section_gap_mode"] = _clean_choice(style.get("section_gap_mode"), SECTION_GAP_MODES, default="auto")
+    style["section_gap"] = _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200)
     style["show_updated_at"] = bool(style.get("show_updated_at", True))
     return style
 
