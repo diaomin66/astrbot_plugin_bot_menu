@@ -3,115 +3,115 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Bot 菜单编辑器</title>
+  <title>Bot 菜单可视化编辑器</title>
   <link rel="stylesheet" href="./style.css" />
 </head>
 <body>
-  <div class="app">
+  <div class="app visual-editor">
+    <header class="topbar panel">
+      <div class="brand-block">
+        <p class="kicker">Visual Menu Editor</p>
+        <h1>Bot 菜单可视化编辑器 <span id="saveState" class="save-state">已保存</span></h1>
+      </div>
+
+      <div class="topbar-main">
+        <label class="scheme-field">
+          <span>菜单方案</span>
+          <select id="schemeSelect"></select>
+        </label>
+        <input id="itemSearch" class="top-search" type="search" placeholder="搜索卡片：标题 / 指令 / 描述" />
+      </div>
+
+      <div class="topbar-actions">
+        <button id="newBtn" type="button">新建</button>
+        <button id="copyBtn" type="button">复制</button>
+        <button id="deleteBtn" type="button" class="danger">删除</button>
+        <button id="exportBtn" type="button">导出</button>
+        <label class="import-chip">
+          <input id="importInput" type="file" accept="application/json,.json" />
+          <span>导入</span>
+        </label>
+        <button id="serverPreviewBtn" type="button">服务端预览</button>
+        <button id="saveBtn" type="button" class="primary">保存</button>
+      </div>
+    </header>
+
     <main class="preview-stage">
       <section class="panel preview-panel">
-        <div class="panel-head preview-head">
+        <div class="preview-head compact-head">
           <div>
-            <p class="kicker">Live Preview</p>
-            <h1>菜单图片预览</h1>
+            <p class="kicker">Click Layers</p>
+            <h2>点击预览层直接编辑</h2>
           </div>
           <div class="preview-actions">
+            <span class="hint-pill">外框=主题</span>
+            <span class="hint-pill">内容层=全部分组</span>
+            <span class="hint-pill">分组=卡片列表</span>
+            <span class="hint-pill">小卡片=内容</span>
             <span id="previewMeta" class="preview-meta"></span>
-            <button id="serverPreviewBtn" type="button">服务端渲染预览</button>
           </div>
         </div>
+        <div id="validationSummary" class="validation-summary" hidden></div>
+        <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
+        <div id="status" class="status">正在加载...</div>
         <div id="preview" class="menu-preview"></div>
         <img id="serverPreview" class="server-preview" alt="服务端渲染结果" hidden />
       </section>
     </main>
-
-    <aside class="editor-rail">
-      <section class="panel control-panel">
-        <div class="rail-head">
-          <div>
-            <p class="kicker">Editor</p>
-            <h2>Bot 菜单 <span id="saveState" class="save-state">已保存</span></h2>
-          </div>
-          <button id="saveBtn" type="button" class="primary">保存</button>
-        </div>
-
-        <label class="field">
-          <span>菜单方案</span>
-          <select id="schemeSelect"></select>
-        </label>
-
-        <div class="button-grid">
-          <button id="newBtn" type="button">新建</button>
-          <button id="copyBtn" type="button">复制</button>
-          <button id="deleteBtn" type="button" class="danger">删除</button>
-          <button id="exportBtn" type="button">导出</button>
-        </div>
-
-        <label class="import-box">
-          <input id="importInput" type="file" accept="application/json,.json" />
-          <span>导入 JSON</span>
-        </label>
-
-        <div id="status" class="status">正在加载...</div>
-        <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
-
-        <details open class="style-box">
-          <summary>基础内容</summary>
-          <div class="form-grid">
-          <label class="field"><span>方案 ID</span><input id="menuId" autocomplete="off" /></label>
-          <label class="field"><span>方案名称</span><input id="menuName" /></label>
-          <label class="field wide"><span>标题</span><input id="menuTitle" /></label>
-          <label class="field wide"><span>副标题</span><input id="menuSubtitle" /></label>
-          <label class="field wide"><span>页脚</span><input id="menuFooter" /></label>
-          </div>
-        </details>
-
-        <details open class="style-box">
-          <summary>样式设置</summary>
-          <div class="form-grid style-grid">
-            <label class="field"><span>主题</span><select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select></label>
-            <div id="themePresetCards" class="theme-preset-cards wide"></div>
-            <label class="field"><span>主色</span><input id="primaryColor" type="color" /></label>
-            <label class="field"><span>背景色</span><input id="backgroundColor" type="color" /></label>
-            <label class="field wide background-upload"><span>自定义背景图（不限制尺寸）</span><input id="backgroundImageInput" type="file" accept="image/*" /><small id="backgroundImageName">No background image</small></label>
-            <label class="field wide"><span>背景缩放 <output id="backgroundWidthValue">100%</output></span><input id="backgroundImageWidth" type="range" min="10" max="600" step="1" /></label>
-            <label class="field"><span>背景 X(%)</span><input id="backgroundImageX" type="number" min="-300" max="300" /></label>
-            <label class="field"><span>背景 Y(%)</span><input id="backgroundImageY" type="number" min="-300" max="300" /></label>
-            <div class="background-actions wide">
-              <button id="centerBackgroundBtn" type="button">居中</button>
-              <button id="coverBackgroundBtn" type="button">铺满</button>
-              <button id="clearBackgroundBtn" type="button">重置背景</button>
-            </div>
-            <label class="field"><span>卡片色</span><input id="cardColor" type="color" /></label>
-            <label class="field"><span>文字色</span><input id="textColor" type="color" /></label>
-            <label class="field"><span>辅助文字</span><input id="mutedColor" type="color" /></label>
-            <label class="field wide"><span>前景菜单透明度 <output id="foregroundOpacityValue">92%</output></span><input id="foregroundOpacity" type="range" min="0" max="100" step="1" /></label>
-            <label class="field"><span>宽度模式</span><select id="widthMode"><option value="auto">智能自动</option><option value="custom">手动指定</option></select></label>
-            <label class="field"><span>每行卡片</span><select id="columns"><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select></label>
-            <label class="field"><span>手动宽度</span><input id="width" type="number" min="520" max="1400" /></label>
-            <label class="field"><span>分组间距</span><select id="sectionGapMode"><option value="auto">智能</option><option value="custom">自定义</option></select></label>
-            <label class="field"><span>间距数值</span><input id="sectionGap" type="number" min="0" max="200" /></label>
-            <label class="field"><span>圆角</span><input id="radius" type="number" min="0" max="48" /></label>
-            <label class="check"><input id="showUpdatedAt" type="checkbox" /> 显示更新时间</label>
-            <div class="style-actions wide">
-              <button id="copyStyleBtn" type="button">复制当前样式到其他菜单</button>
-              <button id="resetStyleBtn" type="button">一键重置样式</button>
-            </div>
-          </div>
-        </details>
-
-        <div class="section-toolbar">
-          <span>菜单分组</span>
-          <div class="toolbar-actions">
-            <input id="itemSearch" type="search" placeholder="搜索标题 / 指令 / 描述" />
-            <button id="addSectionBtn" type="button">添加分组</button>
-          </div>
-        </div>
-        <div id="validationSummary" class="validation-summary" hidden></div>
-        <div id="sections" class="sections-editor"></div>
-      </section>
-    </aside>
   </div>
+
+  <div id="editorModal" class="modal" hidden role="dialog" aria-modal="true" aria-labelledby="modalTitle">
+    <div class="modal-backdrop" data-close-modal></div>
+    <section class="modal-card panel">
+      <header class="modal-head">
+        <div>
+          <p class="kicker">Layer Editor</p>
+          <h2 id="modalTitle">编辑</h2>
+        </div>
+        <button type="button" class="icon-button" data-close-modal aria-label="关闭">×</button>
+      </header>
+      <div id="modalBody" class="modal-body"></div>
+      <footer id="modalFooter" class="modal-footer"></footer>
+    </section>
+  </div>
+
+  <div class="backing-controls" aria-hidden="true">
+    <input id="menuId" autocomplete="off" />
+    <input id="menuName" />
+    <input id="menuTitle" />
+    <input id="menuSubtitle" />
+    <input id="menuFooter" />
+    <select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select>
+    <div id="themePresetCards"></div>
+    <input id="primaryColor" type="color" />
+    <input id="backgroundColor" type="color" />
+    <input id="backgroundImageInput" type="file" accept="image/*" />
+    <small id="backgroundImageName">No background image</small>
+    <input id="backgroundImageWidth" type="range" min="10" max="600" step="1" />
+    <output id="backgroundWidthValue">100%</output>
+    <input id="backgroundImageX" type="number" min="-300" max="300" />
+    <input id="backgroundImageY" type="number" min="-300" max="300" />
+    <button id="centerBackgroundBtn" type="button">居中</button>
+    <button id="coverBackgroundBtn" type="button">铺满</button>
+    <button id="clearBackgroundBtn" type="button">重置背景</button>
+    <input id="cardColor" type="color" />
+    <input id="textColor" type="color" />
+    <input id="mutedColor" type="color" />
+    <input id="foregroundOpacity" type="range" min="0" max="100" step="1" />
+    <output id="foregroundOpacityValue">92%</output>
+    <select id="widthMode"><option value="auto">智能自动</option><option value="custom">手动指定</option></select>
+    <select id="columns"><option value="1">1 张</option><option value="2">2 张</option><option value="3">3 张</option><option value="4">4 张</option></select>
+    <input id="width" type="number" min="520" max="1400" />
+    <select id="sectionGapMode"><option value="auto">智能</option><option value="custom">自定义</option></select>
+    <input id="sectionGap" type="number" min="0" max="200" />
+    <input id="radius" type="number" min="0" max="48" />
+    <input id="showUpdatedAt" type="checkbox" />
+    <button id="copyStyleBtn" type="button">复制样式</button>
+    <button id="resetStyleBtn" type="button">重置样式</button>
+    <button id="addSectionBtn" type="button">添加分组</button>
+    <div id="sections"></div>
+  </div>
+
   <script type="module" src="./app.js"></script>
 </body>
 </html>
