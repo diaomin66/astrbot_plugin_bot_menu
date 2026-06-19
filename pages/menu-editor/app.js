@@ -78,18 +78,16 @@ const STYLE_COPY_KEYS = [
 const MENU_ID_PATTERN = editorValidation.MENU_ID_PATTERN || /^[A-Za-z0-9_-]{1,48}$/;
 const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
 const COLLAPSE_PREFIX = "astrbot_plugin_bot_menu:collapsed:";
-const DENSITY_KEY = "astrbot_plugin_bot_menu:density";
-const PREVIEW_DEVICE_KEY = "astrbot_plugin_bot_menu:preview-device";
 const HISTORY_LIMIT = 20;
+const FIXED_DENSITY = "compact";
 
 const state = {
   menus: [],
-  deletedMenus: [],
-  assets: [],
-  routing: null,
+  serverMenuIds: new Set(),
   defaultMenuId: "default",
   currentId: null,
   menu: null,
+  switchingMenu: false,
   dirty: false,
   saveState: "saved",
   itemSearch: "",
@@ -100,8 +98,6 @@ const state = {
   history: [],
   historyIndex: -1,
   historyPaused: false,
-  density: safeStorageGet(DENSITY_KEY, "standard") || "standard",
-  previewDevice: safeStorageGet(PREVIEW_DEVICE_KEY, "group") || "group",
   renderStatusTimer: 0,
   backgroundEditMode: false,
   pendingBackgroundAsset: null,
@@ -115,11 +111,7 @@ const els = {
   undoBtn: $("undoBtn"),
   redoBtn: $("redoBtn"),
   deleteBtn: $("deleteBtn"),
-  commandPaletteBtn: $("commandPaletteBtn"),
-  assetCenterBtn: $("assetCenterBtn"),
   historyBtn: $("historyBtn"),
-  trashBtn: $("trashBtn"),
-  routingBtn: $("routingBtn"),
   backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
   renderStatus: $("renderStatus"),
   validationSummary: $("validationSummary"),
@@ -134,8 +126,6 @@ const els = {
   batchClearBtn: $("batchClearBtn"),
   sections: $("sections"),
   preview: $("preview"),
-  densitySelect: $("densitySelect"),
-  previewDevice: $("previewDevice"),
   menuId: $("menuId"),
   menuName: $("menuName"),
   menuTitle: $("menuTitle"),
@@ -203,22 +193,14 @@ async function initializeEditor() {
 function bindEvents() {
   els.schemeSelect.addEventListener("change", async () => {
     const nextId = els.schemeSelect.value;
-    if (!(await confirmLeaveDirty())) {
-      els.schemeSelect.value = state.currentId || "";
-      return;
-    }
-    await selectMenu(nextId);
+    await switchMenu(nextId, { reason: "select" });
   });
-  bindClick($("newBtn"), "新建菜单", async () => { if (await confirmLeaveDirty()) newMenu(); });
-  bindClick($("copyBtn"), "复制菜单", async () => { if (await confirmLeaveDirty()) copyMenu(); });
+  bindClick($("newBtn"), "新建菜单", newMenu);
+  bindClick($("copyBtn"), "复制菜单", copyMenu);
   bindClick(els.deleteBtn, "删除菜单", deleteMenu);
-  bindClick(els.commandPaletteBtn, "打开命令面板", openCommandPalette);
   bindClick(els.undoBtn, "撤销", undoMenuChange);
   bindClick(els.redoBtn, "重做", redoMenuChange);
-  bindClick(els.assetCenterBtn, "打开资产中心", openAssetCenter);
   bindClick(els.historyBtn, "打开历史版本", openHistoryPanel);
-  bindClick(els.trashBtn, "打开回收站", openTrashPanel);
-  bindClick(els.routingBtn, "打开路由设置", openRoutingPanel);
   bindClick(els.backgroundEditToggleBtn, "切换背景编辑模式", toggleBackgroundEditMode);
   bindClick($("saveBtn"), "保存菜单", saveMenu);
   bindClick($("copyStyleBtn"), "复制样式", copyStyleToMenus);
@@ -233,14 +215,6 @@ function bindEvents() {
   bindClick(els.batchMoveUpBtn, "批量上移", () => batchMoveSelection(-1));
   bindClick(els.batchMoveDownBtn, "批量下移", () => batchMoveSelection(1));
   bindClick(els.batchClearBtn, "清除选择", clearSelection);
-  if (els.densitySelect) {
-    els.densitySelect.value = state.density;
-    bindValueChange(els.densitySelect, () => setDensity(els.densitySelect.value));
-  }
-  if (els.previewDevice) {
-    els.previewDevice.value = state.previewDevice;
-    bindValueChange(els.previewDevice, () => setPreviewDevice(els.previewDevice.value));
-  }
   if (window.ResizeObserver) {
     new ResizeObserver(fitPreviewToStage).observe(els.preview);
   } else {
@@ -425,7 +399,7 @@ async function loadMenus(preferredId) {
     setStatus("正在加载菜单...");
     const data = await bridge.apiGet("menus");
     state.menus = data.menus || [];
-    state.deletedMenus = data.deleted_menus || [];
+    setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
     state.defaultMenuId = data.default_menu_id || "default";
     const target = preferredId || state.currentId || state.defaultMenuId || state.menus[0]?.id;
@@ -435,6 +409,52 @@ async function loadMenus(preferredId) {
   } catch (error) {
     setStatus(`加载失败：${error.message}`);
   }
+}
+
+function setServerMenuIds(menus) {
+  state.serverMenuIds = new Set((menus || []).map((menu) => menu?.id).filter(Boolean));
+}
+
+async function switchMenu(id, { reason = "select" } = {}) {
+  if (!id || state.switchingMenu) {
+    refreshSchemeSelect();
+    return false;
+  }
+  if (id === state.currentId) {
+    refreshSchemeSelect();
+    return true;
+  }
+  state.switchingMenu = true;
+  const hadDirtyWork = state.dirty;
+  try {
+    stashActiveMenu();
+    await selectMenu(id);
+    if (hadDirtyWork && reason === "select") {
+      setStatus("已切换菜单，上一份未保存修改已保留为本地草稿。", "warning");
+    }
+    return true;
+  } catch (error) {
+    console.error("failed to switch menu", error);
+    setStatus(`切换菜单失败：${error.message || error}`, "error");
+    refreshSchemeSelect();
+    return false;
+  } finally {
+    state.switchingMenu = false;
+  }
+}
+
+function stashActiveMenu() {
+  if (!state.menu || !state.currentId) return;
+  syncFormToMenu({ mark: false });
+  if (!state.dirty && !state.unsavedMenuIds.has(state.currentId)) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  const keepPrevious = state.serverMenuIds.has(previousId) && previousId !== nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId: keepPrevious ? "" : previousId });
+  saveDraft();
+  refreshSchemeSelect();
 }
 
 async function selectMenu(id) {
@@ -723,68 +743,12 @@ function bindGlobalShortcuts() {
       redoMenuChange();
       return;
     }
-    if ((event.ctrlKey || event.metaKey) && ["k", "p"].includes(event.key.toLowerCase())) {
-      event.preventDefault();
-      openCommandPalette();
-      return;
-    }
     if (event.key === "/" && !isTyping) {
       event.preventDefault();
       els.itemSearch?.focus();
       return;
     }
   });
-}
-
-function openCommandPalette() {
-  const body = document.createElement("div");
-  body.className = "command-palette";
-  const search = textInput("", () => filterCommandPalette(body, search.value), { placeholder: "搜索命令，例如：保存、背景、资产、导出" });
-  search.classList.add("wide");
-  body.append(field("命令搜索", search, { wide: true }));
-  const list = document.createElement("div");
-  list.className = "command-list wide";
-  body.append(list);
-  const commands = [
-    { label: "保存当前菜单", keywords: "save ctrl+s", action: saveMenu },
-    { label: "撤销", keywords: "undo ctrl+z", action: undoMenuChange },
-    { label: "重做", keywords: "redo ctrl+y", action: redoMenuChange },
-    { label: "添加分组", keywords: "section group", action: addSection },
-    { label: "添加卡片到第一个分组", keywords: "item card", action: () => addItem(0, "standard") },
-    { label: "打开主题与背景", keywords: "style theme background", action: openStyleEditor },
-    { label: "切换背景编辑模式", keywords: "background edit lock", action: toggleBackgroundEditMode },
-    { label: "打开资产中心", keywords: "asset images", action: openAssetCenter },
-    { label: "打开历史版本", keywords: "history restore", action: openHistoryPanel },
-    { label: "打开回收站", keywords: "trash restore delete", action: openTrashPanel },
-    { label: "打开默认菜单路由", keywords: "routing default group platform", action: openRoutingPanel },
-    { label: "导出菜单包", keywords: "export json", action: exportMenus },
-    { label: "聚焦菜单项搜索", keywords: "search /", action: () => els.itemSearch?.focus() },
-  ];
-  body._commands = commands;
-  body._list = list;
-  filterCommandPalette(body, "");
-  openModal("命令面板", body, []);
-  setTimeout(() => search.focus(), 0);
-}
-
-function filterCommandPalette(body, query) {
-  const list = body._list;
-  const commands = body._commands || [];
-  const normalized = String(query || "").trim().toLowerCase();
-  replaceChildrenSafe(list);
-  commands
-    .filter((command) => !normalized || `${command.label} ${command.keywords}`.toLowerCase().includes(normalized))
-    .forEach((command) => {
-      const button = document.createElement("button");
-      button.type = "button";
-      button.className = "command-item";
-      button.textContent = command.label;
-      button.addEventListener("click", () => {
-        closeModal();
-        command.action();
-      });
-      list.append(button);
-    });
 }
 
 function openModal(title, body, actions = []) {
@@ -1455,6 +1419,7 @@ async function saveMenu() {
     setStatus("正在保存...");
     const result = await bridge.apiPost("menus/save", { menu: state.menu });
     state.menus = result.menus || [result.menu];
+    setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
     state.currentId = result.menu.id;
     state.menu = cloneData(result.menu);
@@ -1475,9 +1440,8 @@ async function saveMenu() {
   }
 }
 
-function newMenu() {
-  const id = uniqueId("menu");
-  state.menu = {
+function createDefaultMenu(id) {
+  return {
     id,
     name: "新菜单",
     title: "Bot 功能菜单",
@@ -1486,27 +1450,42 @@ function newMenu() {
     style: defaultStyle(),
     sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
-  state.currentId = id;
-  upsertMenuEntry(state.menu, { unsaved: true });
-  markDirty();
+}
+
+function activateLocalMenu(menu, { dirty = true, statusText = "" } = {}) {
+  discardPendingBackgroundAsset();
+  state.menu = cloneData(menu);
+  state.currentId = state.menu.id;
+  state.backgroundEditMode = false;
+  state.dirty = Boolean(dirty);
+  state.selectedKeys.clear();
+  upsertMenuEntry(state.menu, { unsaved: dirty });
+  loadSearchState();
   fillForm();
   refreshSchemeSelect();
+  resetLocalHistory(state.menu);
   renderAll();
-  setStatus("已创建本地新菜单，保存后生效。");
+  updateSaveState(state.dirty ? "dirty" : "saved");
+  clearRenderStatus();
+  if (state.dirty) saveDraft();
+  if (statusText) setStatus(statusText, state.dirty ? "warning" : "success");
+}
+
+function newMenu() {
+  stashActiveMenu();
+  const id = uniqueId("menu");
+  activateLocalMenu(createDefaultMenu(id), { dirty: true, statusText: "已创建本地新菜单，上一菜单修改已自动保留为草稿。" });
 }
 
 function copyMenu() {
+  if (!state.menu) return newMenu();
+  stashActiveMenu();
   const copy = cloneData(state.menu);
   copy.id = uniqueId(`${copy.id || "menu"}_copy`);
   copy.name = `${copy.name || "菜单"} 副本`;
-  state.menu = copy;
-  state.currentId = copy.id;
-  upsertMenuEntry(state.menu, { unsaved: true });
-  markDirty();
-  fillForm();
-  refreshSchemeSelect();
-  renderAll();
-  setStatus("已复制为新菜单，保存后生效。");
+  copy.updated_at = "";
+  copy.created_at = "";
+  activateLocalMenu(copy, { dirty: true, statusText: "已复制为新的本地菜单，保存后生效。" });
 }
 
 async function deleteMenu() {
@@ -1514,32 +1493,34 @@ async function deleteMenu() {
     setStatus("没有可删除的菜单。", "warning");
     return;
   }
+  syncFormToMenu({ mark: false });
   const currentId = state.currentId || state.menu.id;
-  const isSavedMenu = state.menus.some((menu) => menu.id === currentId) && !state.unsavedMenuIds.has(currentId);
+  const isSavedMenu = state.serverMenuIds.has(currentId);
   if (!isSavedMenu) {
     if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
       setStatus("已取消删除。");
       return;
     }
-    discardUnsavedMenu(currentId);
+    await discardUnsavedMenu(currentId);
     return;
   }
-  if (state.menus.length <= 1) {
+  if (state.serverMenuIds.size <= 1) {
     setStatus("至少保留一个菜单方案，无法删除最后一个菜单。", "warning");
     return;
   }
-  if (!confirm(`确定永久删除菜单方案 ${currentId}？`)) {
+  if (!confirm(`确定删除菜单方案 ${currentId}？未保存修改会一并丢弃。`)) {
     setStatus("已取消删除。");
     return;
   }
-  const fallbackId = state.menus.find((menu) => menu.id !== currentId)?.id;
+  const fallbackId = chooseFallbackMenuId(currentId);
   try {
     setStatus("正在删除菜单...");
     const result = await bridge.apiPost("menus/delete", { id: currentId });
     state.menus = result.menus || state.menus.filter((menu) => menu.id !== currentId);
+    setServerMenuIds(state.menus);
+    state.unsavedMenuIds.delete(currentId);
     clearDraft(currentId);
-    const nextId = result.default_menu_id || fallbackId || state.menus[0]?.id;
-    state.currentId = nextId;
+    const nextId = chooseExistingMenuId(result.default_menu_id, fallbackId, state.menus[0]?.id);
     state.dirty = false;
     if (nextId) await selectMenu(nextId);
     refreshSchemeSelect();
@@ -1550,14 +1531,30 @@ async function deleteMenu() {
   }
 }
 
+function chooseExistingMenuId(...ids) {
+  for (const id of ids) {
+    if (id && state.menus.some((menu) => menu.id === id)) return id;
+  }
+  return state.menus[0]?.id || "";
+}
+
+function chooseFallbackMenuId(excludingId) {
+  const currentIndex = state.menus.findIndex((menu) => menu.id === excludingId);
+  const ordered = [
+    state.menus[currentIndex + 1]?.id,
+    state.menus[currentIndex - 1]?.id,
+    state.defaultMenuId !== excludingId ? state.defaultMenuId : "",
+    ...state.menus.map((menu) => menu.id),
+  ];
+  return chooseExistingMenuId(...ordered.filter((id) => id && id !== excludingId));
+}
+
 async function discardUnsavedMenu(menuId) {
   clearDraft(menuId);
   removeMenuEntry(menuId);
   state.unsavedMenuIds.delete(menuId);
   refreshSchemeSelect();
-  const nextId = state.defaultMenuId && state.menus.some((menu) => menu.id === state.defaultMenuId)
-    ? state.defaultMenuId
-    : state.menus[0]?.id;
+  const nextId = chooseFallbackMenuId(menuId);
   state.dirty = false;
   if (nextId) {
     await selectMenu(nextId);
@@ -1610,6 +1607,7 @@ async function importMenus(event) {
     if (!confirm(`导入预览：\n${summary}\n\n继续导入？`)) return;
     const result = await bridge.apiPost("import", { menus, mode: "merge" });
     state.menus = result.menus || [];
+    setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
     refreshSchemeSelect();
     await selectMenu(state.menus[0]?.id);
@@ -1618,58 +1616,6 @@ async function importMenus(event) {
     setStatus(`导入失败：${error.message}`);
   } finally {
     event.target.value = "";
-  }
-}
-
-async function openAssetCenter() {
-  const body = document.createElement("div");
-  body.className = "modal-grid";
-  const list = document.createElement("div");
-  list.className = "asset-grid wide";
-  body.append(list);
-  openModal("资产中心", body, [
-    { label: "清理未引用资产", onClick: async () => { await bridge.apiPost("cleanup", {}); openAssetCenter(); } },
-    { label: "刷新", onClick: openAssetCenter },
-  ]);
-  try {
-    const data = await bridge.apiGet("assets");
-    state.assets = data.assets || [];
-    if (!state.assets.length) {
-      list.textContent = "还没有资产。上传背景图后会自动进入资产库。";
-      return;
-    }
-    state.assets.forEach((asset) => {
-      const card = document.createElement("article");
-      card.className = "asset-card";
-      card.innerHTML = `
-        ${asset.data_url ? `<img loading="lazy" src="${escapeAttr(asset.data_url)}" alt="${escapeAttr(asset.name || asset.id)}" />` : `<div class="asset-placeholder">No preview</div>`}
-        <strong>${escapeHtml(asset.name || asset.id)}</strong>
-        <small>${escapeHtml(asset.id)} · ${Math.round((asset.size || 0) / 1024)} KB</small>
-        <small>引用：${(asset.references || []).length ? asset.references.map(escapeHtml).join(", ") : "未使用"}</small>
-      `;
-      card.append(actionRow([
-        { label: "用于当前背景", onClick: () => {
-          const style = ensureStyle(state.menu);
-          style.background_image_asset_id = asset.id;
-          style.background_image = asset.data_url || style.background_image;
-          style.background_image_name = asset.name || asset.id;
-          markDirty();
-          renderAll();
-          closeModal();
-        } },
-        { label: "删除未使用", className: "danger", disabled: Boolean(asset.used), onClick: async () => {
-          try {
-            await bridge.apiPost(`assets/${encodeURIComponent(asset.id)}`, {});
-            openAssetCenter();
-          } catch (error) {
-            setStatus(`删除资产失败：${error.message}`, "error");
-          }
-        } },
-      ]));
-      list.append(card);
-    });
-  } catch (error) {
-    list.textContent = `资产加载失败：${error.message}`;
   }
 }
 
@@ -1702,78 +1648,6 @@ async function openHistoryPanel() {
     });
   } catch (error) {
     body.textContent = `历史加载失败：${error.message}`;
-  }
-}
-
-async function openTrashPanel() {
-  const data = await bridge.apiGet("menus");
-  state.deletedMenus = data.deleted_menus || [];
-  const body = document.createElement("div");
-  body.className = "entity-list";
-  openModal("回收站", body, [{ label: "刷新", onClick: openTrashPanel }]);
-  if (!state.deletedMenus.length) {
-    body.textContent = "回收站为空。";
-    return;
-  }
-  state.deletedMenus.forEach((menu) => {
-    const row = document.createElement("article");
-    row.className = "entity-row";
-    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(menu.name || menu.id)}</strong><small>${escapeHtml(menu.id)} · 删除于 ${escapeHtml(menu.deleted_at || "")}</small></div>`;
-    row.append(actionRow([
-      { label: "恢复", className: "primary", onClick: async () => {
-        const result = await bridge.apiPost("menus/restore", { menu_id: menu.id, deleted: true });
-        state.menus = result.menus || state.menus;
-        state.deletedMenus = result.deleted_menus || [];
-        await selectMenu(menu.id);
-        closeModal();
-      } },
-      { label: "永久删除", className: "danger", onClick: async () => {
-        if (!confirm(`永久删除 ${menu.id}？此操作不可恢复。`)) return;
-        const result = await bridge.apiPost("menus/delete", { id: menu.id, permanent: true });
-        state.menus = result.menus || state.menus;
-        state.deletedMenus = result.deleted_menus || [];
-        openTrashPanel();
-      } },
-    ]));
-    body.append(row);
-  });
-}
-
-async function openRoutingPanel() {
-  const body = document.createElement("div");
-  body.className = "modal-grid";
-  openModal("默认菜单路由", body, []);
-  try {
-    const data = await bridge.apiGet("routing");
-    const routing = data.routing || { global_default: "", platforms: {}, contexts: {} };
-    const globalInput = textInput(routing.global_default || state.defaultMenuId || "", () => {}, { placeholder: "全局默认菜单 ID" });
-    const platformInput = textInput(JSON.stringify(routing.platforms || {}, null, 2), () => {}, { multiline: true });
-    const contextInput = textInput(JSON.stringify(routing.contexts || {}, null, 2), () => {}, { multiline: true });
-    body.append(
-      field("全局默认菜单", globalInput, { wide: true }),
-      field("平台默认菜单 JSON", platformInput, { wide: true, hint: '例如 {"telegram":"tg-menu"}' }),
-      field("群聊/上下文默认菜单 JSON", contextInput, { wide: true, hint: '例如 {"aiocqhttp:10001":"group-menu"}' }),
-    );
-    replaceChildrenSafe(els.modalFooter);
-    els.modalFooter.append(actionRow([
-      { label: "保存路由", className: "primary", onClick: async () => {
-        try {
-          const saved = await bridge.apiPost("routing", {
-            global_default: globalInput.value.trim(),
-            platforms: JSON.parse(platformInput.value || "{}"),
-            contexts: JSON.parse(contextInput.value || "{}"),
-          });
-          state.routing = saved.routing;
-          setStatus("默认菜单路由已保存。", "success");
-          closeModal();
-        } catch (error) {
-          setStatus(`保存路由失败：${error.message}`, "error");
-        }
-      } },
-      { label: "关闭", onClick: closeModal },
-    ]));
-  } catch (error) {
-    body.textContent = `路由加载失败：${error.message}`;
   }
 }
 
@@ -2344,10 +2218,21 @@ function syncUnsavedMenuEntry() {
   refreshSchemeSelect();
 }
 
+function syncWorkingMenuEntry() {
+  if (!state.menu || !state.currentId) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  const keepPrevious = state.serverMenuIds.has(previousId) && previousId !== nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId: keepPrevious ? "" : previousId });
+  refreshSchemeSelect();
+}
+
 function markDirty() {
   if (!state.menu) return;
   state.dirty = true;
-  syncUnsavedMenuEntry();
+  syncWorkingMenuEntry();
   captureLocalHistory();
   updateSaveState("dirty");
   saveDraft();
@@ -2693,34 +2578,11 @@ function previewLayout(menu) {
 }
 
 function applyPreviewDeviceLayout(layout) {
-  if (state.previewDevice === "desktop") {
-    layout.width = Math.max(layout.width, 960);
-    return "桌面宽图";
-  }
-  if (state.previewDevice === "narrow") {
-    layout.width = Math.min(layout.width, 560);
-    layout.columns = Math.min(layout.columns, 1);
-    return "窄屏图";
-  }
-  return "群聊常规图";
-}
-
-function setPreviewDevice(value) {
-  state.previewDevice = ["desktop", "group", "narrow"].includes(value) ? value : "group";
-  safeStorageSet(PREVIEW_DEVICE_KEY, state.previewDevice);
-  if (els.previewDevice) els.previewDevice.value = state.previewDevice;
-  renderPreview();
-}
-
-function setDensity(value) {
-  state.density = ["compact", "standard", "comfortable"].includes(value) ? value : "standard";
-  safeStorageSet(DENSITY_KEY, state.density);
-  applyDensity();
+  return "原比例预览";
 }
 
 function applyDensity() {
-  document.documentElement.dataset.density = state.density;
-  if (els.densitySelect) els.densitySelect.value = state.density;
+  document.documentElement.dataset.density = FIXED_DENSITY;
 }
 
 function createItemFromTemplate(templateKey) {

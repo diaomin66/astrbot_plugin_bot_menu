@@ -127,43 +127,51 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("bindValueChange(input, () => onInput(input.checked, input));", app_js)
         self.assertIn('state.unsavedMenuIds.add(snapshot.id);', app_js)
         self.assertIn('badges.push("未保存");', app_js)
-        self.assertIn('upsertMenuEntry(state.menu, { unsaved: true });', app_js)
-        self.assertIn('const isSavedMenu = state.menus.some((menu) => menu.id === currentId) && !state.unsavedMenuIds.has(currentId);', app_js)
+        self.assertIn("function switchMenu(id", app_js)
+        self.assertIn("function stashActiveMenu()", app_js)
+        self.assertIn("function activateLocalMenu(menu", app_js)
+        self.assertIn("const isSavedMenu = state.serverMenuIds.has(currentId);", app_js)
         self.assertIn('label: "一键重置样式"', app_js)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
-    def test_page_exposes_v040_operations_console_features(self):
+    def test_page_simplifies_operations_console_and_keeps_core_editing_features(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
         css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
 
-        for token in (
+        for token in ('id="undoBtn"', 'id="redoBtn"', 'id="historyBtn"', 'id="newBtn"', 'id="copyBtn"', 'id="deleteBtn"', 'id="batchToolbar"'):
+            self.assertIn(token, index_html)
+
+        for removed in (
             'id="commandPaletteBtn"',
-            'id="undoBtn"',
-            'id="redoBtn"',
             'id="assetCenterBtn"',
-            'id="historyBtn"',
             'id="trashBtn"',
             'id="routingBtn"',
             'id="densitySelect"',
             'id="previewDevice"',
-            'id="batchToolbar"',
+            "openCommandPalette",
+            "openAssetCenter",
+            "openTrashPanel",
+            "openRoutingPanel",
+            "setDensity",
+            "setPreviewDevice",
+            "command-palette",
+            "asset-grid",
         ):
-            self.assertIn(token, index_html)
+            self.assertNotIn(removed, app_js + index_html + css)
 
         for token in (
-            "openCommandPalette",
             "bindGlobalShortcuts",
             "undoMenuChange",
             "redoMenuChange",
             "batchSetEnabled",
             "batchCopySelection",
-            "openAssetCenter",
             "openHistoryPanel",
-            "openTrashPanel",
-            "openRoutingPanel",
-            "setDensity",
-            "setPreviewDevice",
+            "switchMenu",
+            "stashActiveMenu",
+            "activateLocalMenu",
+            "createDefaultMenu",
+            "chooseFallbackMenuId",
             "contrastWarningText",
             "fixContrastColors",
             "background_image_asset_id",
@@ -177,7 +185,7 @@ class MenuEditorSourceTests(unittest.TestCase):
         ):
             self.assertIn(token, app_js)
 
-        for token in ("asset-grid", "batch-toolbar", "command-palette", "preview-watermark", "data-density"):
+        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong"):
             self.assertIn(token, css)
 
 
