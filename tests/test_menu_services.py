@@ -558,6 +558,13 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("--preview-foreground-opacity:0.920", html)
             self.assertIn('class="preview-inner"', html)
             self.assertIn('class="preview-item size-standard', html)
+            self.assertIn('class="preview-icon"', html)
+            self.assertIn('class="preview-item-main"', html)
+            title_index = html.index('class="preview-item-title"')
+            desc_index = html.index('class="preview-desc"')
+            command_index = html.index('class="preview-command"')
+            self.assertLess(title_index, desc_index)
+            self.assertLess(desc_index, command_index)
             self.assertIn("实时预览", html)
             self.assertNotIn("更新：", html)
 

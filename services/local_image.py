@@ -723,12 +723,24 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     fill = (246, 248, 252) if enabled else (238, 240, 244)
     fg = text if enabled else _mix(text, (255, 255, 255), 0.45)
     sub = muted if enabled else _mix(muted, (255, 255, 255), 0.5)
+    command_color = primary if enabled else sub
     size = _card_size(item.get("card_size"))
-    icon_size = 36 * scale if size == "compact" else 44 * scale
-    icon_left = x + (10 if size == "compact" else 14) * scale
-    icon_top = y + (11 if size == "compact" else 14) * scale
-    text_x = x + (56 if size == "compact" else 70) * scale
-    line_y = y + (10 if size == "compact" else 14) * scale
+    is_compact = size == "compact"
+    is_large = size in {"large", "banner"}
+    icon_size = 36 * scale if is_compact else 44 * scale
+    icon_left = x + (10 if is_compact else 14) * scale
+    icon_top = y + (11 if is_compact else 14) * scale
+    text_offset = 56 if is_compact else 70
+    right_pad = 10 if is_compact else 14
+    text_x = x + text_offset * scale
+    text_width = max(1, width - (text_offset + right_pad) * scale)
+    top_pad = (8 if is_compact else 14 if is_large else 11) * scale
+    bottom_pad = (8 if is_compact else 14 if is_large else 11) * scale
+    title_line = (21 if is_compact else 26 if is_large else 23) * scale
+    desc_line = (18 if is_compact else 20 if is_large else 19) * scale
+    command_line = (18 if is_compact else 20 if is_large else 19) * scale
+    desc_max_lines = 3 if is_large else 2
+    line_y = y + top_pad
     _draw_translucent_rounded_rectangle(
         image,
         (x, y, x + width, y + height),
@@ -744,33 +756,46 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
         fill=_mix(primary, (255, 255, 255), 0.88),
         opacity=opacity,
     )
-    draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "•")[:2], font=font_icon, fill=primary)
-    label = str(item.get("label") or "未命名")
+    draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "\u2022")[:2], font=font_icon, fill=primary)
+
+    label = str(item.get("label") or "\u672a\u547d\u540d")
     draw.text((text_x, line_y), label, font=font_label, fill=fg)
-    command = str(item.get("command") or "")
-    if command:
-        command_y = line_y + 28 * scale
-        command_lines = _wrap(command, font_mono, width - 84 * scale, max_lines=2)
-        for line in command_lines:
-            draw.text((text_x, command_y), line, font=font_mono, fill=primary if enabled else sub)
-            command_y += 22 * scale
-        line_y = command_y + 2 * scale
-    else:
-        line_y += 32 * scale
+
     desc = str(item.get("description") or "")
-    for line in _wrap(desc, font_small, width - 84 * scale, max_lines=3):
-        draw.text((text_x, line_y), line, font=font_small, fill=sub)
-        line_y += 22 * scale
+    desc_lines = _wrap(desc, font_small, text_width, max_lines=desc_max_lines)
+    desc_y = line_y + title_line
+    for line in desc_lines:
+        draw.text((text_x, desc_y), line, font=font_small, fill=sub)
+        desc_y += desc_line
+
+    command = str(item.get("command") or "")
+    command_lines = _wrap(command, font_mono, text_width, max_lines=2)
+    if command_lines:
+        after_desc_y = desc_y + (4 if desc_lines else 5) * scale
+        bottom_command_y = y + height - bottom_pad - len(command_lines) * command_line
+        command_y = max(after_desc_y, bottom_command_y)
+        for line in command_lines:
+            draw.text((text_x, command_y), line, font=font_mono, fill=command_color)
+            command_y += command_line
 
 
 def _item_height(item, width, font_mono, font_small, scale) -> int:
     size = _card_size(item.get("card_size"))
-    text_width = width - (70 if size != "compact" else 56) * scale - 14 * scale
-    desc_lines = len(_wrap(str(item.get("description") or ""), font_small, text_width, max_lines=3))
+    is_compact = size == "compact"
+    is_large = size in {"large", "banner"}
+    text_offset = 56 if is_compact else 70
+    right_pad = 10 if is_compact else 14
+    text_width = max(1, width - (text_offset + right_pad) * scale)
+    desc_max_lines = 3 if is_large else 2
+    desc_lines = len(_wrap(str(item.get("description") or ""), font_small, text_width, max_lines=desc_max_lines))
     command_lines = len(_wrap(str(item.get("command") or ""), font_mono, text_width, max_lines=2))
-    min_height = {"compact": 58, "standard": 88, "large": 104, "banner": 112}[size] * scale
-    vertical_pad = {"compact": 20, "standard": 28, "large": 34, "banner": 34}[size] * scale
-    return max(min_height, vertical_pad + 28 * scale + command_lines * 22 * scale + desc_lines * 22 * scale)
+    min_height = {"compact": 66, "standard": 78, "large": 112, "banner": 118}[size] * scale
+    vertical_pad = {"compact": 16, "standard": 22, "large": 28, "banner": 28}[size] * scale
+    title_line = (21 if is_compact else 26 if is_large else 23) * scale
+    desc_line = (18 if is_compact else 20 if is_large else 19) * scale
+    command_line = (18 if is_compact else 20 if is_large else 19) * scale
+    command_gap = (5 if command_lines else 0) * scale
+    return max(min_height, vertical_pad + title_line + desc_lines * desc_line + command_gap + command_lines * command_line)
 
 
 def _draw_shadow(image, box, radius, blur, offset_y, color):

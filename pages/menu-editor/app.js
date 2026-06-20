@@ -1311,8 +1311,12 @@ function renderPreview() {
                   const searchClass = query ? (matched ? "is-search-match" : "is-search-dim") : "";
                   return `
                   <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
-                    <div>${escapeHtml(item.icon || "?")}</div>
-                    <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
+                    <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
+                    <div class="preview-item-main">
+                      <strong class="preview-item-title">${escapeHtml(item.label || "未命名")}</strong>
+                      <div class="preview-desc">${escapeHtml(item.description || "")}</div>
+                      <div class="preview-command">${escapeHtml(item.command || "")}</div>
+                    </div>
                   </div>`;
                 }).join("")}
               </div>

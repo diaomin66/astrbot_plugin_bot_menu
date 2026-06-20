@@ -110,18 +110,18 @@ MENU_TEMPLATE = r"""
       font-size: 25px;
       background: {{ menu.style.primary_color }}18;
     }
-    .label-row { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
-    .label { font-size: 21px; font-weight: 800; }
+    .item-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
+    .label { font-size: 20px; line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
+    .desc { color: {{ menu.style.muted_color }}; font-size: 15px; line-height: 1.38; overflow-wrap: anywhere; }
     .command {
-      font-size: 17px;
+      margin-top: auto;
+      padding-top: 6px;
+      font-size: 15px;
+      line-height: 1.28;
       font-family: "Cascadia Mono", "Consolas", monospace;
       color: {{ menu.style.primary_color }};
-      background: {{ menu.style.primary_color }}10;
-      padding: 3px 8px;
-      border-radius: 8px;
-      word-break: break-all;
+      overflow-wrap: anywhere;
     }
-    .desc { margin-top: 7px; color: {{ menu.style.muted_color }}; font-size: 17px; line-height: 1.45; }
     footer {
       display: flex;
       justify-content: space-between;
@@ -148,12 +148,10 @@ MENU_TEMPLATE = r"""
           {% for item in section.items %}
           <article class="item {% if not item.enabled %}disabled{% endif %}">
             <div class="icon">{{ item.icon or "•" }}</div>
-            <div>
-              <div class="label-row">
-                <span class="label">{{ item.label | e }}</span>
-                {% if item.command %}<span class="command">{{ item.command | e }}</span>{% endif %}
-              </div>
+            <div class="item-main">
+              <span class="label">{{ item.label | e }}</span>
               {% if item.description %}<div class="desc">{{ item.description | e }}</div>{% endif %}
+              {% if item.command %}<div class="command">{{ item.command | e }}</div>{% endif %}
             </div>
           </article>
           {% endfor %}
@@ -262,13 +260,24 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-sections {{ display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }}
     .preview-section {{ padding: var(--preview-section-padding, 15px); border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.16); }}
     .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: var(--preview-card-gap, 10px); }}
-    .preview-item {{ display: grid; grid-template-columns: 34px 1fr; gap: 9px; min-height: 72px; padding: 10px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
-    .preview-item.size-compact {{ grid-template-columns: 28px 1fr; min-height: 58px; padding: 8px; }}
-    .preview-item.size-large {{ grid-template-columns: 42px 1fr; min-height: 104px; padding: 14px; }}
-    .preview-item.size-banner {{ grid-column: 1 / -1; grid-template-columns: 46px 1fr; min-height: 112px; padding: 16px; }}
+    .preview-item {{ display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; min-height: 78px; padding: 11px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
+    .preview-item.size-compact {{ grid-template-columns: 28px minmax(0, 1fr); min-height: 66px; padding: 8px; gap: 8px; }}
+    .preview-item.size-large {{ grid-template-columns: 42px minmax(0, 1fr); min-height: 112px; padding: 14px; }}
+    .preview-item.size-banner {{ grid-column: 1 / -1; grid-template-columns: 46px minmax(0, 1fr); min-height: 118px; padding: 16px; }}
     .preview-item.disabled {{ opacity: .45; }}
-    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 12px; }}
-    .preview-desc, .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
+    .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
+    .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: 2px; }}
+    .preview-item-title {{ display: block; color: var(--preview-text, #111827); font-size: 14px; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
+    .preview-desc {{ color: var(--preview-muted, #6b7280); font-size: 11.5px; line-height: 1.34; overflow-wrap: anywhere; }}
+    .preview-command {{ margin-top: auto; padding-top: 5px; color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
+    .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
+    .preview-item.size-compact .preview-item-title {{ font-size: 13px; }}
+    .preview-item.size-compact .preview-desc, .preview-item.size-compact .preview-command {{ font-size: 10.5px; }}
+    .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon {{ font-size: 26px; }}
+    .preview-item.size-large .preview-item-title, .preview-item.size-banner .preview-item-title {{ font-size: 16px; }}
+    .preview-item.size-large .preview-desc, .preview-item.size-banner .preview-desc {{ font-size: 12.5px; }}
+    .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command {{ font-size: 12px; }}
+    .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
     .preview-footer {{ display: flex; justify-content: space-between; margin-top: 16px; font-size: 12px; }}
     .preview-watermark {{ position: absolute; right: 22px; bottom: 16px; z-index: 2; pointer-events: none; color: var(--preview-muted); opacity: .24; font-size: 38px; font-weight: 900; transform: rotate(-8deg); }}
   </style>
@@ -307,8 +316,8 @@ def _render_preview_item(item: dict[str, Any]) -> str:
     disabled = " disabled" if item.get("enabled") is False else ""
     size = _card_size(item.get("card_size"))
     return f"""<div class="preview-item size-{size}{disabled}">
-            <div>{_escape(item.get("icon") or "•")}</div>
-            <div><strong>{_escape(item.get("label") or "未命名")}</strong><div class="preview-command">{_escape(item.get("command") or "")}</div><div class="preview-desc">{_escape(item.get("description") or "")}</div></div>
+            <div class="preview-icon">{_escape(item.get("icon") or "•")}</div>
+            <div class="preview-item-main"><strong class="preview-item-title">{_escape(item.get("label") or "未命名")}</strong><div class="preview-desc">{_escape(item.get("description") or "")}</div><div class="preview-command">{_escape(item.get("command") or "")}</div></div>
           </div>"""
 
 
