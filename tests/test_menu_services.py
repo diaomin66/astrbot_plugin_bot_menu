@@ -408,6 +408,38 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
             self.assertTrue(Path(cached_path).is_file())
 
+    def test_render_cache_uses_fingerprinted_paths_for_layout_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            cache = MenuRenderCache(tmp)
+            first_render = render_menu_image(menu, tmp)
+            first_cached = cache.store_rendered(menu, first_render, render_width=900, render_scale=4)
+
+            changed_menu = normalize_menu(
+                {
+                    **menu,
+                    "style": {
+                        **menu["style"],
+                        "width_mode": "custom",
+                        "width": 720,
+                        "columns": 1,
+                        "section_gap_mode": "custom",
+                        "section_gap": 0,
+                        "card_gap": 2,
+                    },
+                }
+            )
+            self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
+            second_render = render_menu_image(changed_menu, tmp)
+            second_cached = cache.store_rendered(changed_menu, second_render, render_width=900, render_scale=4)
+
+            self.assertNotEqual(first_cached, second_cached)
+            self.assertIn(cache.fingerprint(changed_menu, render_width=900, render_scale=4)[:16], Path(second_cached).name)
+            self.assertEqual(cache.get_cached_path(changed_menu, render_width=900, render_scale=4), second_cached)
+            self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4))
+            self.assertFalse(Path(first_cached).exists())
+
     def test_render_status_reports_missing_rendering_ready_and_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
