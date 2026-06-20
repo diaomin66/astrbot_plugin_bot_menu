@@ -17,7 +17,7 @@ from services.local_image import (
 )
 from services.render_cache import MenuRenderCache
 from services.render_coordinator import MenuRenderCoordinator
-from services.renderer import build_preview_html, preview_width_for_menu
+from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
 
@@ -171,19 +171,22 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('assets: Array.isArray(data.assets) ? data.assets : []', app_js)
         self.assertIn('label: "一键重置样式"', app_js)
 
-    def test_save_flushes_live_modal_controls_before_building_payload(self):
+    def test_save_uses_complete_state_snapshot_without_replaying_stale_modal_controls(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
 
         self.assertIn("function flushLiveEditorControls()", app_js)
         self.assertIn("function dispatchEditorControlEvent(control, eventName)", app_js)
-        self.assertIn('els.editorModal.querySelectorAll("input, select, textarea")', app_js)
-        self.assertIn('if (control.type === "file") return;', app_js)
-        self.assertIn('dispatchEditorControlEvent(control, "input");', app_js)
-        self.assertIn('dispatchEditorControlEvent(control, "change");', app_js)
+        self.assertNotIn('els.editorModal.querySelectorAll("input, select, textarea")', app_js)
+        self.assertIn('if (active.type !== "file")', app_js)
+        self.assertIn('dispatchEditorControlEvent(active, "input");', app_js)
+        self.assertIn('dispatchEditorControlEvent(active, "change");', app_js)
         self.assertIn('event.initEvent(eventName, true, false);', app_js)
         save_body = app_js.split("async function saveMenu()", 1)[1].split("function createDefaultMenu", 1)[0]
-        self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("syncFormToMenu({ mark: false });"))
-        self.assertLess(save_body.index("syncFormToMenu({ mark: false });"), save_body.index('bridge.apiPost("menus/save"'))
+        self.assertIn("const menuSnapshot = buildMenuSaveSnapshot();", save_body)
+        self.assertNotIn("syncFormToMenu({ mark: false });", save_body)
+        self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("buildMenuSaveSnapshot();"))
+        self.assertLess(save_body.index("buildMenuSaveSnapshot();"), save_body.index('bridge.apiPost("menus/save", { menu: menuSnapshot })'))
+        self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
@@ -338,6 +341,95 @@ class MenuStorageTests(unittest.TestCase):
             storage.delete_menu("main")
             self.assertIsNone(storage.get_menu("main"))
             self.assertIsNotNone(storage.get_menu_including_deleted("main"))
+
+    def test_save_persists_complete_page_snapshot_for_rendering(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            saved = storage.save_menu(
+                {
+                    "id": "snapshot",
+                    "name": "Snapshot Menu",
+                    "title": "Saved Title",
+                    "subtitle": "Saved Subtitle",
+                    "footer": "Saved Footer",
+                    "style": {
+                        "theme": "macaron",
+                        "primary_color": "#2563eb",
+                        "background_color": "#fef3c7",
+                        "background_image": "data:image/png;base64,AAAA",
+                        "background_image_asset_id": "asset-complete",
+                        "background_image_name": "moved-bg.png",
+                        "background_image_x": 17,
+                        "background_image_y": -43,
+                        "background_image_width": 188,
+                        "background_overlay": 37,
+                        "background_blur": 6,
+                        "background_brightness": 132,
+                        "card_color": "#f1f5f9",
+                        "text_color": "#020617",
+                        "muted_color": "#475569",
+                        "font_family": "Noto Sans CJK SC",
+                        "foreground_opacity": 64,
+                        "radius": 9,
+                        "width_mode": "custom",
+                        "width": 820,
+                        "columns": 3,
+                        "section_gap_mode": "custom",
+                        "section_gap": 0,
+                        "card_gap": 7,
+                        "section_padding": 13,
+                        "shadow_strength": 4,
+                        "border_strength": 3,
+                        "watermark": "demo mark",
+                        "show_updated_at": False,
+                    },
+                    "sections": [
+                        {
+                            "title": "Saved Section",
+                            "items": [
+                                {
+                                    "label": "Saved Card",
+                                    "command": "/saved",
+                                    "description": "Saved Description",
+                                    "icon": "★",
+                                    "enabled": False,
+                                    "card_size": "banner",
+                                    "content_order": ["description", "label", "command"],
+                                    "content_gap": 9,
+                                    "command_font_size": 18,
+                                    "label_font_size": 13.5,
+                                    "description_font_size": 10,
+                                }
+                            ],
+                        }
+                    ],
+                }
+            )
+            reloaded = storage.get_menu("snapshot")
+            self.assertEqual(reloaded, saved)
+            style = reloaded["style"]
+            self.assertEqual(style["background_image_y"], -43)
+            self.assertEqual(style["background_image_x"], 17)
+            self.assertEqual(style["background_image_width"], 188)
+            self.assertEqual(style["card_gap"], 7)
+            self.assertEqual(style["section_padding"], 13)
+            self.assertFalse(style["show_updated_at"])
+            item = reloaded["sections"][0]["items"][0]
+            self.assertEqual(item["content_order"], ["description", "label", "command"])
+            self.assertEqual(item["content_gap"], 9)
+            self.assertFalse(item["enabled"])
+
+            preview_html = build_preview_html(reloaded)
+            render_template, render_data, render_options = build_render_payload(reloaded)
+            self.assertEqual(render_template, preview_html)
+            self.assertEqual(render_data, {})
+            self.assertEqual(render_options["type"], "png")
+            self.assertIn("left:17%;top:-43%;width:188%", render_template)
+            self.assertIn("--preview-card-gap:7px", render_template)
+            self.assertIn("--preview-section-padding:13px", render_template)
+            self.assertIn("--preview-bg-overlay:0.370", render_template)
+            self.assertIn("--item-content-gap:9px", render_template)
+            self.assertIn('class="preview-item size-banner disabled"', render_template)
 
     def test_storage_resolves_aliases_and_restores_soft_deleted_menu(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -313,14 +313,12 @@ function bindValueChange(control, handler) {
 function flushLiveEditorControls() {
   const active = document.activeElement;
   if (active && typeof active.blur === "function" && els.editorModal && els.editorModal.contains(active)) {
+    if (active.type !== "file") {
+      dispatchEditorControlEvent(active, "input");
+      dispatchEditorControlEvent(active, "change");
+    }
     active.blur();
   }
-  if (!els.editorModal || els.editorModal.hidden) return;
-  els.editorModal.querySelectorAll("input, select, textarea").forEach((control) => {
-    if (control.type === "file") return;
-    dispatchEditorControlEvent(control, "input");
-    dispatchEditorControlEvent(control, "change");
-  });
 }
 
 function dispatchEditorControlEvent(control, eventName) {
@@ -572,9 +570,6 @@ function syncFormToMenu({ mark = true } = {}) {
     theme: els.theme.value,
     primary_color: els.primaryColor.value,
     background_color: els.backgroundColor.value,
-    background_image_x: Number(els.backgroundImageX.value) || 0,
-    background_image_y: Number(els.backgroundImageY.value) || 0,
-    background_image_width: Number(els.backgroundImageWidth.value) || 100,
     card_color: els.cardColor.value,
     text_color: els.textColor.value,
     muted_color: els.mutedColor.value,
@@ -1272,6 +1267,7 @@ function openStyleEditor() {
   const style = ensureStyle(state.menu);
   const updateStyle = (mutator) => {
     mutator(ensureStyle(state.menu));
+    fillForm();
     commitMenuChange();
   };
   const body = document.createElement("div");
@@ -1655,15 +1651,15 @@ async function saveMenu() {
   const draftIdBeforeSave = currentDraftId();
   flushLiveEditorControls();
   await flushPendingBackgroundAsset();
-  syncFormToMenu({ mark: false });
   if (!validateMenu({ scroll: true })) {
     setStatus("请先修正表单错误，再保存菜单。", "error");
     return;
   }
+  const menuSnapshot = buildMenuSaveSnapshot();
   try {
     updateSaveState("saving");
     setStatus("正在保存...");
-    const result = await bridge.apiPost("menus/save", { menu: state.menu });
+    const result = await bridge.apiPost("menus/save", { menu: menuSnapshot });
     state.menus = result.menus || [result.menu];
     setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
@@ -1684,6 +1680,10 @@ async function saveMenu() {
     updateSaveState("dirty");
     setStatus(`保存失败：${error.message}`, "error");
   }
+}
+
+function buildMenuSaveSnapshot() {
+  return cloneData(state.menu);
 }
 
 function createDefaultMenu(id) {

@@ -54,3 +54,21 @@
 - Rollback: `git revert <本轮提交>`，或将 `pages/menu-editor/app.js` 的 `bindValueChange` 恢复到上一个提交并同步回本地 AstrBot 插件目录。
 - Local sync: 已复制本轮 4 个变更文件到 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并用 SHA256 确认源/目标一致。
 - Additional browser smoke after commit: Playwright + 本机 Chrome 复核新建、复制、删除未保存菜单、历史、导出、批量全选/启用/禁用/清除、添加分组、添加卡片、复制卡片、重置样式按钮均通过。
+
+## 2026-06-20 - Task: 重构 Page 保存与实际渲染链路
+### What was done
+- 将 Page 保存改为提交当前完整菜单快照，避免保存时重新遍历弹窗旧控件导致已修改配置被旧值覆盖。
+- 收紧后端保存入口，只接受 `{ "menu": ... }` 完整菜单对象；保存后继续以 canonical menu 刷新前端状态并调度渲染缓存。
+- 删除独立旧渲染模板，实际浏览器/远程 HTML 渲染统一使用 Page 预览同形 HTML；非显式 `pillow` 模式不再静默回退到不一致的 Pillow 外观。
+- 保留背景图只在上传、铺满、居中等用户明确动作时自动对齐；保存和渲染读取已保存的 `background_image_x/y/width`。
+- 补充完整快照保存、背景偏移、渲染 HTML 同源的回归测试，并更新 Page 保存/渲染契约文档。
+### Testing
+- `python -m unittest tests.test_menu_services -v`：通过，47 项测试全部 OK。
+- 临时集成脚本：保存包含背景偏移的菜单，检查 `build_preview_html` 包含 `left:11%;top:-27%;width:144%`，并通过 `render_menu_via_browser` 生成 PNG，输出 `OK browser render integration-browser-0deb75afac05.png bytes=33161`。
+### Notes
+- `pages/menu-editor/app.js`：保存改为克隆完整工作态快照；只刷新当前聚焦控件；样式弹窗变更后同步主表单控件，避免后续主表单事件覆盖已修改样式。
+- `main.py`：保存接口改为完整菜单 payload；浏览器/远程 HTML 渲染失败时明确报错，不再默认用旧 Pillow 外观静默兜底。
+- `services/renderer.py`：移除独立旧模板，保留 Page 预览 HTML 作为实际渲染唯一 HTML 来源。
+- `tests/test_menu_services.py`：新增完整快照持久化与渲染同源测试，调整保存源码断言。
+- `docs/page-editor-verification.md`：记录完整快照保存、渲染同源、背景图不自动回顶的契约。
+- 回滚方式：使用 Git 回滚本轮修改文件，或从提交前状态恢复上述 5 个文件；若只需临时恢复旧渲染兜底，可先回滚 `main.py` 与 `services/renderer.py`。

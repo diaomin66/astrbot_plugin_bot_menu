@@ -165,13 +165,12 @@ class BotMenuPlugin(Star):
 
     async def api_save_menu(self):
         payload = await read_json_body(default={})
-        raw_menu = payload.get("menu") if isinstance(payload, dict) else None
-        if raw_menu is None:
-            raw_menu = payload
+        if not isinstance(payload, dict) or not isinstance(payload.get("menu"), dict):
+            return error_response("missing complete menu payload", status_code=400)
+        raw_menu = payload["menu"]
         try:
-            if isinstance(raw_menu, dict):
-                existing = self.storage.get_menu_including_deleted(str(raw_menu.get("id", "")).strip())
-                self.history.snapshot(existing, reason="save")
+            existing = self.storage.get_menu_including_deleted(str(raw_menu.get("id", "")).strip())
+            self.history.snapshot(existing, reason="save")
             menu = self.storage.save_menu(raw_menu)
             self.render_coordinator.schedule(menu)
             return json_response({"menu": menu, "menus": self.storage.list_menus()})
@@ -371,29 +370,19 @@ class BotMenuPlugin(Star):
                 if render_mode == "auto":
                     logger.warning("Local browser rendering failed, falling back to remote HTML render: %s\n%s", exc, traceback.format_exc())
                 else:
-                    logger.warning("Local browser rendering failed, falling back to Pillow PNG: %s\n%s", exc, traceback.format_exc())
-                    return await asyncio.to_thread(
-                        render_menu_image,
-                        menu,
-                        self.storage.data_dir,
-                        default_width=default_width,
-                        output_scale=render_scale,
-                    )
+                    logger.error("Local browser rendering failed; not using mismatched Pillow fallback: %s\n%s", exc, traceback.format_exc())
+                    raise RuntimeError(
+                        "local browser rendering failed; no image was generated to avoid output that does not match the Page preview"
+                    ) from exc
 
         template, data, options = build_render_payload(menu, default_width=default_width)
         try:
             return await self.html_render(template, data, return_url=True, options=options)
         except Exception as exc:
-            if render_mode == "remote":
-                raise
-            logger.warning("Remote menu rendering failed, falling back to Pillow PNG: %s", exc)
-            return await asyncio.to_thread(
-                render_menu_image,
-                menu,
-                self.storage.data_dir,
-                default_width=default_width,
-                output_scale=render_scale,
-            )
+            logger.error("Remote HTML rendering failed; not using mismatched Pillow fallback: %s", exc)
+            raise RuntimeError(
+                "remote HTML rendering failed; no image was generated to avoid output that does not match the Page preview"
+            ) from exc
 
     def _register_web_apis(self, context: Context) -> None:
         routes = [
