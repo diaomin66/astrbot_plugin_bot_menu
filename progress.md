@@ -34,3 +34,23 @@
 - `docs/page-editor-verification.md`：记录 Page 保存链路、按钮行为和后端渲染识别验证重点。
 - `progress.md`：追加本轮修复、验证和回滚记录。
 - 回滚方式：`git checkout -- pages/menu-editor/app.js tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再从上一提交或远端分支重新复制插件文件到本地 AstrBot 插件目录。
+
+## 2026-06-20 - Task: 修复 Page 控件首次改回默认值不触发渲染
+### What was done
+- 取消 Page 通用控件监听里的初始化值去重，确保控件首次改成 HTML 默认值时也会被识别。
+- 覆盖“每行卡片改为 1 张”“关闭更新时间显示”“弹窗内自定义宽度/每行卡片后 Ctrl+S 保存”等配置链路，确认预览、已修改状态、保存 payload 和保存后预览一致。
+- 补充回归说明，后续验证必须包含首次改回默认值的场景。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuEditorSourceTests.test_page_buttons_use_resilient_bridge_and_change_events -v`：通过。
+- `python -m unittest discover -s tests -v`：46 项通过。
+- `python -m compileall -q .`：通过。
+- Playwright + 本机 Chrome 打开 `http://127.0.0.1:8771/.tmp-page-e2e/harness.html`：验证隐藏 Page 控件首次改为 `columns=1` 会立即刷新预览并标记已修改；关闭 `showUpdatedAt` 后保存 payload 为 `show_updated_at=false`；弹窗内设置 `width_mode=custom,width=900,columns=3` 后 `Ctrl+S` 保存 payload 与保存后预览均为 900px/每行 3 张。
+### Notes
+- Changed files:
+  - `pages/menu-editor/app.js`：移除通用控件监听的旧值去重，所有 input/change 都进入同步链路。
+  - `tests/test_menu_services.py`：增加源码回归断言，防止恢复会吞掉默认值变更的旧去重逻辑。
+  - `docs/page-editor-verification.md`：补充首次改回 HTML 默认值也必须即时生效的验证要求。
+  - `progress.md`：追加本轮修复与验证记录。
+- Rollback: `git revert <本轮提交>`，或将 `pages/menu-editor/app.js` 的 `bindValueChange` 恢复到上一个提交并同步回本地 AstrBot 插件目录。
+- Local sync: 已复制本轮 4 个变更文件到 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并用 SHA256 确认源/目标一致。
+- Additional browser smoke after commit: Playwright + 本机 Chrome 复核新建、复制、删除未保存菜单、历史、导出、批量全选/启用/禁用/清除、添加分组、添加卡片、复制卡片、重置样式按钮均通过。

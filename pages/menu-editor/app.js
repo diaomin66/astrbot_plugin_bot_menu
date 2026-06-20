@@ -307,14 +307,7 @@ function bindEvents() {
 function bindValueChange(control, handler) {
   if (!control) return;
   const events = control.type === "file" ? ["change"] : ["input", "change"];
-  let lastValue = controlValueSignature(control);
-  const emitChange = () => {
-    const nextValue = controlValueSignature(control);
-    if (nextValue === lastValue) return;
-    lastValue = nextValue;
-    handler(control);
-  };
-  events.forEach((eventName) => control.addEventListener(eventName, emitChange));
+  events.forEach((eventName) => control.addEventListener(eventName, () => handler(control)));
 }
 
 function flushLiveEditorControls() {
@@ -339,13 +332,6 @@ function dispatchEditorControlEvent(control, eventName) {
     event.initEvent(eventName, true, false);
   }
   control.dispatchEvent(event);
-}
-
-function controlValueSignature(control) {
-  if (!control) return "";
-  if (control.type === "checkbox") return control.checked ? "1" : "0";
-  if (control.type === "file") return [...(control.files || [])].map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
-  return String(control.value ?? "");
 }
 
 async function resolvePageBridge() {

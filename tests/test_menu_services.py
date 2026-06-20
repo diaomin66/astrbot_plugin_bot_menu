@@ -154,6 +154,8 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("async function resolvePageBridge()", app_js)
         self.assertIn("function normalizePageBridge(rawBridge)", app_js)
         self.assertIn('const events = control.type === "file" ? ["change"] : ["input", "change"];', app_js)
+        self.assertNotIn("controlValueSignature", app_js)
+        self.assertNotIn("let lastValue = controlValueSignature(control)", app_js)
         self.assertIn("bindValueChange(input, () => onInput(input.value, input));", app_js)
         self.assertIn("bindValueChange(input, () => onInput(input.checked, input));", app_js)
         self.assertIn('state.unsavedMenuIds.add(snapshot.id);', app_js)
