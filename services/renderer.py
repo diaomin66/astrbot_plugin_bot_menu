@@ -111,11 +111,9 @@ MENU_TEMPLATE = r"""
       background: {{ menu.style.primary_color }}18;
     }
     .item-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-    .label { font-size: 20px; line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
-    .desc { color: {{ menu.style.muted_color }}; font-size: 15px; line-height: 1.38; overflow-wrap: anywhere; }
+    .label { margin-top: 3px; font-size: 20px; line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
+    .desc { margin-top: auto; padding-top: 4px; color: {{ menu.style.muted_color }}; font-size: 15px; line-height: 1.38; overflow-wrap: anywhere; }
     .command {
-      margin-top: auto;
-      padding-top: 6px;
       font-size: 15px;
       line-height: 1.28;
       font-family: "Cascadia Mono", "Consolas", monospace;
@@ -149,9 +147,9 @@ MENU_TEMPLATE = r"""
           <article class="item {% if not item.enabled %}disabled{% endif %}">
             <div class="icon">{{ item.icon or "•" }}</div>
             <div class="item-main">
+              {% if item.command %}<div class="command">{{ item.command | e }}</div>{% endif %}
               <span class="label">{{ item.label | e }}</span>
               {% if item.description %}<div class="desc">{{ item.description | e }}</div>{% endif %}
-              {% if item.command %}<div class="command">{{ item.command | e }}</div>{% endif %}
             </div>
           </article>
           {% endfor %}
@@ -267,9 +265,9 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-item.disabled {{ opacity: .45; }}
     .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
     .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: 2px; }}
-    .preview-item-title {{ display: block; color: var(--preview-text, #111827); font-size: 14px; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
-    .preview-desc {{ color: var(--preview-muted, #6b7280); font-size: 11.5px; line-height: 1.34; overflow-wrap: anywhere; }}
-    .preview-command {{ margin-top: auto; padding-top: 5px; color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
+    .preview-item-title {{ display: block; margin-top: 2px; color: var(--preview-text, #111827); font-size: 14px; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
+    .preview-desc {{ margin-top: auto; padding-top: 3px; color: var(--preview-muted, #6b7280); font-size: 11.5px; line-height: 1.34; overflow-wrap: anywhere; }}
+    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
     .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
     .preview-item.size-compact .preview-item-title {{ font-size: 13px; }}
     .preview-item.size-compact .preview-desc, .preview-item.size-compact .preview-command {{ font-size: 10.5px; }}
@@ -317,7 +315,7 @@ def _render_preview_item(item: dict[str, Any]) -> str:
     size = _card_size(item.get("card_size"))
     return f"""<div class="preview-item size-{size}{disabled}">
             <div class="preview-icon">{_escape(item.get("icon") or "•")}</div>
-            <div class="preview-item-main"><strong class="preview-item-title">{_escape(item.get("label") or "未命名")}</strong><div class="preview-desc">{_escape(item.get("description") or "")}</div><div class="preview-command">{_escape(item.get("command") or "")}</div></div>
+            <div class="preview-item-main"><div class="preview-command">{_escape(item.get("command") or "")}</div><strong class="preview-item-title">{_escape(item.get("label") or "未命名")}</strong><div class="preview-desc">{_escape(item.get("description") or "")}</div></div>
           </div>"""
 
 

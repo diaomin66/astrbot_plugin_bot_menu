@@ -758,25 +758,27 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     )
     draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "\u2022")[:2], font=font_icon, fill=primary)
 
+    command = str(item.get("command") or "")
+    command_lines = _wrap(command, font_mono, text_width, max_lines=2)
+    cursor_y = line_y
+    for line in command_lines:
+        draw.text((text_x, cursor_y), line, font=font_mono, fill=command_color)
+        cursor_y += command_line
+    if command_lines:
+        cursor_y += 4 * scale
+
     label = str(item.get("label") or "\u672a\u547d\u540d")
-    draw.text((text_x, line_y), label, font=font_label, fill=fg)
+    draw.text((text_x, cursor_y), label, font=font_label, fill=fg)
 
     desc = str(item.get("description") or "")
     desc_lines = _wrap(desc, font_small, text_width, max_lines=desc_max_lines)
-    desc_y = line_y + title_line
+    desc_y = cursor_y + title_line
+    if desc_lines:
+        bottom_desc_y = y + height - bottom_pad - len(desc_lines) * desc_line
+        desc_y = max(desc_y, bottom_desc_y)
     for line in desc_lines:
         draw.text((text_x, desc_y), line, font=font_small, fill=sub)
         desc_y += desc_line
-
-    command = str(item.get("command") or "")
-    command_lines = _wrap(command, font_mono, text_width, max_lines=2)
-    if command_lines:
-        after_desc_y = desc_y + (4 if desc_lines else 5) * scale
-        bottom_command_y = y + height - bottom_pad - len(command_lines) * command_line
-        command_y = max(after_desc_y, bottom_command_y)
-        for line in command_lines:
-            draw.text((text_x, command_y), line, font=font_mono, fill=command_color)
-            command_y += command_line
 
 
 def _item_height(item, width, font_mono, font_small, scale) -> int:
@@ -794,7 +796,7 @@ def _item_height(item, width, font_mono, font_small, scale) -> int:
     title_line = (21 if is_compact else 26 if is_large else 23) * scale
     desc_line = (18 if is_compact else 20 if is_large else 19) * scale
     command_line = (18 if is_compact else 20 if is_large else 19) * scale
-    command_gap = (5 if command_lines else 0) * scale
+    command_gap = (4 if command_lines else 0) * scale
     return max(min_height, vertical_pad + title_line + desc_lines * desc_line + command_gap + command_lines * command_line)
 
 

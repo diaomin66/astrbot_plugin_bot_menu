@@ -563,8 +563,8 @@ class MenuStorageTests(unittest.TestCase):
             title_index = html.index('class="preview-item-title"')
             desc_index = html.index('class="preview-desc"')
             command_index = html.index('class="preview-command"')
+            self.assertLess(command_index, title_index)
             self.assertLess(title_index, desc_index)
-            self.assertLess(desc_index, command_index)
             self.assertIn("实时预览", html)
             self.assertNotIn("更新：", html)
 
