@@ -118,6 +118,7 @@ const state = {
   modalCloseHandler: null,
   renderStatusTimer: 0,
   backgroundEditMode: false,
+  batchSelectMode: false,
   pendingBackgroundAsset: null,
 };
 
@@ -130,6 +131,7 @@ const els = {
   redoBtn: $("redoBtn"),
   deleteBtn: $("deleteBtn"),
   historyBtn: $("historyBtn"),
+  batchSelectToggleBtn: $("batchSelectToggleBtn"),
   backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
   renderStatus: $("renderStatus"),
   validationSummary: $("validationSummary"),
@@ -220,6 +222,7 @@ function bindEvents() {
   bindClick(els.undoBtn, "撤销", undoMenuChange);
   bindClick(els.redoBtn, "重做", redoMenuChange);
   bindClick(els.historyBtn, "打开历史版本", openHistoryPanel);
+  bindClick(els.batchSelectToggleBtn, "切换批量调整模式", toggleBatchSelectMode);
   bindClick(els.backgroundEditToggleBtn, "切换背景编辑模式", toggleBackgroundEditMode);
   bindClick($("saveBtn"), "保存菜单", saveMenu);
   bindClick($("copyStyleBtn"), "复制样式", copyStyleToMenus);
@@ -295,6 +298,7 @@ function bindEvents() {
   bindModalChrome();
   bindGlobalShortcuts();
   applyDensity();
+  updateBatchSelectToggle();
   updateSaveState("saved");
 }
 
@@ -755,6 +759,16 @@ function bindPreviewInteractions() {
     event.stopPropagation();
     const sectionIndex = Number(target.dataset.sectionIndex);
     const itemIndex = Number(target.dataset.itemIndex);
+    if (state.batchSelectMode) {
+      if (target.dataset.edit !== "item") {
+        setStatus("批量调整模式中：请直接点击需要多选的卡片。", "warning");
+        return;
+      }
+      const key = selectionKey("item", sectionIndex, itemIndex);
+      toggleSelection(key, !state.selectedKeys.has(key));
+      renderPreview();
+      return;
+    }
     if (target.dataset.edit === "item") return openItemEditor(sectionIndex, itemIndex);
     if (target.dataset.edit === "section") return openSectionEditor(sectionIndex);
     if (target.dataset.edit === "menu") return openMenuEditor();
@@ -1386,7 +1400,7 @@ function renderPreview() {
         </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""}" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${previewStyle}">
         ${backgroundMarkup}
         <div class="preview-bg-overlay"></div>
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
@@ -1401,8 +1415,11 @@ function renderPreview() {
                 ${section.items.map((item, itemIndex) => {
                   const matched = !query || itemMatchesSearch(item, query);
                   const searchClass = query ? (matched ? "is-search-match" : "is-search-dim") : "";
+                  const itemKey = selectionKey("item", sectionIndex, itemIndex);
+                  const selectedClass = state.selectedKeys.has(itemKey) ? "is-selected" : "";
                   return `
-                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" style="${itemPreviewStyle(item)}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
+                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass} ${selectedClass}" style="${itemPreviewStyle(item)}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="${state.batchSelectMode ? "点击选择 / 取消" : "编辑卡片"}">
+                    ${state.batchSelectMode ? `<span class="preview-select-marker" aria-hidden="true">${selectedClass ? "✓" : ""}</span>` : ""}
                     <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
                     <div class="preview-item-main">${renderItemContentBlocks(item)}</div>
                   </div>`;
@@ -1433,6 +1450,12 @@ function toggleBackgroundEditMode() {
     return;
   }
   state.backgroundEditMode = !state.backgroundEditMode;
+  if (state.backgroundEditMode && state.batchSelectMode) {
+    state.batchSelectMode = false;
+    state.selectedKeys.clear();
+    updateBatchSelectToggle();
+    updateBatchToolbar();
+  }
   renderPreview();
   setStatus(
     state.backgroundEditMode
@@ -1440,6 +1463,37 @@ function toggleBackgroundEditMode() {
       : "已锁定背景图：现在可以点击分组和卡片进行编辑。",
     state.backgroundEditMode ? "warning" : "success",
   );
+}
+
+function toggleBatchSelectMode() {
+  setBatchSelectMode(!state.batchSelectMode);
+}
+
+function setBatchSelectMode(enabled) {
+  if (!state.menu) {
+    setStatus("菜单尚未加载完成，暂时无法进入批量调整模式。", "warning");
+    return;
+  }
+  state.batchSelectMode = Boolean(enabled);
+  if (state.batchSelectMode && state.backgroundEditMode) state.backgroundEditMode = false;
+  if (!state.batchSelectMode) state.selectedKeys.clear();
+  updateBatchSelectToggle();
+  updateBatchToolbar();
+  renderPreview();
+  renderSectionsEditor();
+  setStatus(
+    state.batchSelectMode
+      ? "已进入批量调整模式：直接点击预览里的卡片进行多选，然后使用上方批量排版/启用/复制/删除。"
+      : "已退出批量调整模式。",
+    state.batchSelectMode ? "warning" : "success",
+  );
+}
+
+function updateBatchSelectToggle() {
+  if (!els.batchSelectToggleBtn) return;
+  els.batchSelectToggleBtn.textContent = state.batchSelectMode ? "退出批量" : "批量调整";
+  els.batchSelectToggleBtn.setAttribute("aria-pressed", state.batchSelectMode ? "true" : "false");
+  els.batchSelectToggleBtn.classList.toggle("is-active", state.batchSelectMode);
 }
 
 function updateBackgroundEditToggle() {
@@ -2263,6 +2317,8 @@ function toggleSelection(key, selected) {
 function clearSelection() {
   state.selectedKeys.clear();
   renderSectionsEditor();
+  renderPreview();
+  updateBatchToolbar();
 }
 
 function selectedEntries() {
@@ -2300,8 +2356,26 @@ function selectedItemEntries() {
 function updateBatchToolbar() {
   if (!els.batchToolbar) return;
   const count = state.selectedKeys.size;
-  els.batchToolbar.hidden = count === 0;
-  if (els.batchCount) els.batchCount.textContent = `已选择 ${count} 项`;
+  const itemCount = selectedItemEntries().length;
+  els.batchToolbar.hidden = !state.batchSelectMode && count === 0;
+  els.batchToolbar.classList.toggle("is-selecting", state.batchSelectMode);
+  if (els.batchCount) {
+    els.batchCount.textContent = state.batchSelectMode
+      ? `批量调整中 · 已选择 ${itemCount} 张卡片`
+      : `已选择 ${count} 项`;
+  }
+  [
+    els.batchEnableBtn,
+    els.batchDisableBtn,
+    els.batchLayoutBtn,
+    els.batchCopyBtn,
+    els.batchDeleteBtn,
+    els.batchMoveUpBtn,
+    els.batchMoveDownBtn,
+  ].forEach((button) => {
+    if (button) button.disabled = count === 0;
+  });
+  if (els.batchClearBtn) els.batchClearBtn.disabled = count === 0;
 }
 
 function batchSetEnabled(enabled) {

@@ -172,6 +172,7 @@ class MenuEditorSourceTests(unittest.TestCase):
     def test_editor_exposes_single_and_batch_card_layout_controls(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
         self.assertIn('const CONTENT_BLOCKS = [', app_js)
         self.assertIn('function appendItemLayoutFields(', app_js)
         self.assertIn('function openBatchLayoutEditor()', app_js)
@@ -179,7 +180,20 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('style="${itemPreviewStyle(item)}"', app_js)
         self.assertIn('renderItemContentBlocks(item)', app_js)
         self.assertIn('id="batchLayoutBtn"', index_html)
+        self.assertIn('id="batchSelectToggleBtn"', index_html)
+        self.assertIn("function toggleBatchSelectMode()", app_js)
+        self.assertIn("state.batchSelectMode", app_js)
+        self.assertIn('class="preview-select-marker"', app_js)
+        self.assertIn('els.batchToolbar.hidden = !state.batchSelectMode && count === 0;', app_js)
+        self.assertIn(".preview-card.is-batch-selecting", css)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
+
+    def test_editor_modal_has_resize_handle(self):
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        self.assertIn('class="modal-resize-grip"', index_html)
+        self.assertIn("resize: both;", css)
+        self.assertIn(".modal-resize-grip", css)
 
     def test_page_simplifies_operations_console_and_keeps_core_editing_features(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
