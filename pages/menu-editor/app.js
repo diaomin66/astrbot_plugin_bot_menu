@@ -74,6 +74,18 @@ const THEME_PRESETS = {
   seaSalt: { label: "海盐薄荷", primary_color: "#5bb8a8", background_color: "#eefbf8", card_color: "#ffffff", text_color: "#264844", muted_color: "#6f8b86" },
 };
 
+const CONTENT_BLOCKS = [
+  { value: "command", label: "指令" },
+  { value: "label", label: "名称" },
+  { value: "description", label: "简介" },
+];
+const DEFAULT_CONTENT_ORDER = ["command", "label", "description"];
+const CONTENT_FONT_LIMITS = {
+  command_font_size: { min: 8, max: 34, fallback: 14 },
+  label_font_size: { min: 8, max: 30, fallback: 11.5 },
+  description_font_size: { min: 8, max: 28, fallback: 11.5 },
+};
+
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
   "background_image_x", "background_image_y", "background_image_width", "background_overlay", "background_blur", "background_brightness", "card_color", "text_color",
@@ -125,6 +137,7 @@ const els = {
   batchCount: $("batchCount"),
   batchEnableBtn: $("batchEnableBtn"),
   batchDisableBtn: $("batchDisableBtn"),
+  batchLayoutBtn: $("batchLayoutBtn"),
   batchCopyBtn: $("batchCopyBtn"),
   batchDeleteBtn: $("batchDeleteBtn"),
   batchMoveUpBtn: $("batchMoveUpBtn"),
@@ -216,6 +229,7 @@ function bindEvents() {
   $("importInput").addEventListener("change", importMenus);
   bindClick(els.batchEnableBtn, "批量启用", () => batchSetEnabled(true));
   bindClick(els.batchDisableBtn, "批量禁用", () => batchSetEnabled(false));
+  bindClick(els.batchLayoutBtn, "批量排版", openBatchLayoutEditor);
   bindClick(els.batchCopyBtn, "批量复制", batchCopySelection);
   bindClick(els.batchDeleteBtn, "批量删除", batchDeleteSelection);
   bindClick(els.batchMoveUpBtn, "批量上移", () => batchMoveSelection(-1));
@@ -642,6 +656,7 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
   const card = document.createElement("article");
   const currentSize = cardSize(item.card_size);
   const itemCollapsed = isCollapsed("item", sectionIndex, itemIndex);
+  const layout = itemContentLayout(item);
   card.className = `item-card size-${currentSize} ${itemCollapsed ? "is-collapsed" : ""}`;
   card.dataset.errorKey = `item-${sectionIndex}-${itemIndex}`;
   bindDragSort(card, selectionKey("item", sectionIndex, itemIndex));
@@ -665,6 +680,16 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
         <label class="field"><span>指令</span><input data-error-key="item-${sectionIndex}-${itemIndex}-command" data-key="command" value="${escapeAttr(item.command || "")}" /></label>
         <label class="field wide"><span>描述</span><input data-error-key="item-${sectionIndex}-${itemIndex}-description" data-key="description" value="${escapeAttr(item.description || "")}" /></label>
       </div>
+      <div class="item-layout-controls">
+        <strong>内容排版</strong>
+        <label><span>上方</span><select data-layout-pos="0">${contentBlockOptions(layout.order[0])}</select></label>
+        <label><span>中间</span><select data-layout-pos="1">${contentBlockOptions(layout.order[1])}</select></label>
+        <label><span>下方</span><select data-layout-pos="2">${contentBlockOptions(layout.order[2])}</select></label>
+        <label><span>块间距(px)</span><input type="number" min="0" max="40" data-layout-key="content_gap" value="${layout.gap}" /></label>
+        <label><span>指令字号</span><input type="number" min="8" max="34" step="0.5" data-layout-key="command_font_size" value="${layout.fonts.command}" /></label>
+        <label><span>名称字号</span><input type="number" min="8" max="30" step="0.5" data-layout-key="label_font_size" value="${layout.fonts.label}" /></label>
+        <label><span>简介字号</span><input type="number" min="8" max="28" step="0.5" data-layout-key="description_font_size" value="${layout.fonts.description}" /></label>
+      </div>
       <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>
     </div>`;
   card.querySelector('[data-action="toggle-item"]').addEventListener("click", (event) => {
@@ -687,6 +712,24 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       markDirty();
       if (key === "card_size") renderSectionsEditor();
+      renderPreview();
+      validateMenu({ silent: true });
+    });
+  });
+  card.querySelectorAll("[data-layout-pos]").forEach((select) => {
+    bindValueChange(select, () => {
+      setItemContentOrderAt(item, Number(select.dataset.layoutPos), select.value);
+      markDirty();
+      renderSectionsEditor();
+      renderPreview();
+      validateMenu({ silent: true });
+    });
+  });
+  card.querySelectorAll("[data-layout-key]").forEach((input) => {
+    bindValueChange(input, () => {
+      applyItemLayoutValue(item, input.dataset.layoutKey, input.value);
+      input.value = itemLayoutValue(item, input.dataset.layoutKey);
+      markDirty();
       renderPreview();
       validateMenu({ silent: true });
     });
@@ -884,6 +927,54 @@ function actionRow(actions) {
     row.append(button);
   });
   return row;
+}
+
+function appendItemLayoutFields(body, item, onCommit, { live = true } = {}) {
+  const panel = document.createElement("div");
+  panel.className = "item-layout-panel wide";
+  const title = document.createElement("div");
+  title.className = "item-layout-title";
+  title.innerHTML = "<strong>内容自定义</strong><small>调整指令、名称、简介的位置、间距和字号</small>";
+  panel.append(title);
+
+  const orderRow = document.createElement("div");
+  orderRow.className = "item-layout-row";
+  const selects = [];
+  const syncSelects = () => {
+    const order = itemContentOrder(item);
+    selects.forEach((select, index) => {
+      select.value = order[index];
+    });
+  };
+  DEFAULT_CONTENT_ORDER.forEach((_block, index) => {
+    const select = selectInput(itemContentOrder(item)[index], CONTENT_BLOCKS, (value) => {
+      setItemContentOrderAt(item, index, value);
+      syncSelects();
+      onCommit();
+    });
+    selects.push(select);
+    orderRow.append(field(index === 0 ? "上方" : index === 1 ? "中间" : "下方", select));
+  });
+  panel.append(orderRow);
+
+  const sizeRow = document.createElement("div");
+  sizeRow.className = "item-layout-row";
+  const layout = itemContentLayout(item);
+  [
+    ["块间距(px)", "content_gap", layout.gap, { min: 0, max: 40, step: 1 }],
+    ["指令字号", "command_font_size", layout.fonts.command, { min: 8, max: 34, step: 0.5 }],
+    ["名称字号", "label_font_size", layout.fonts.label, { min: 8, max: 30, step: 0.5 }],
+    ["简介字号", "description_font_size", layout.fonts.description, { min: 8, max: 28, step: 0.5 }],
+  ].forEach(([label, key, value, attrs]) => {
+    sizeRow.append(field(label, textInput(value, (nextValue, input) => {
+      applyItemLayoutValue(item, key, nextValue);
+      input.value = itemLayoutValue(item, key);
+      onCommit();
+    }, { type: "number", ...attrs })));
+  });
+  panel.append(sizeRow);
+  if (!live) panel.classList.add("is-batch-draft");
+  body.append(panel);
 }
 
 function appendLayoutFields(body, style = ensureStyle(state.menu)) {
@@ -1088,6 +1179,7 @@ function openItemEditor(sectionIndex, itemIndex) {
     field("指令", textInput(item.command, (value) => { item.command = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-command` }),
     field("描述", textInput(item.description, (value) => { item.description = value; commitMenuChange(); }, { multiline: true, maxlength: 240 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-description` }),
   );
+  appendItemLayoutFields(body, item, () => commitMenuChange());
   const check = document.createElement("label");
   check.className = "check wide";
   check.append(checkboxInput(item.enabled !== false, (checked) => { item.enabled = checked; commitMenuChange(); }), document.createTextNode("启用这张卡片"));
@@ -1310,13 +1402,9 @@ function renderPreview() {
                   const matched = !query || itemMatchesSearch(item, query);
                   const searchClass = query ? (matched ? "is-search-match" : "is-search-dim") : "";
                   return `
-                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
+                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" style="${itemPreviewStyle(item)}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
                     <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
-                    <div class="preview-item-main">
-                      <strong class="preview-item-title preview-command-title">${escapeHtml(item.command || "")}</strong>
-                      <div class="preview-item-name">${escapeHtml(item.label || "未命名")}</div>
-                      <div class="preview-desc">${escapeHtml(item.description || "")}</div>
-                    </div>
+                    <div class="preview-item-main">${renderItemContentBlocks(item)}</div>
                   </div>`;
                 }).join("")}
               </div>
@@ -2183,6 +2271,32 @@ function selectedEntries() {
     .filter((entry) => Number.isInteger(entry.sectionIndex) && entry.sectionIndex >= 0);
 }
 
+function selectedItemEntries() {
+  const keys = new Set();
+  const entries = [];
+  selectedEntries().forEach((entry) => {
+    if (entry.type === "item" && Number.isInteger(entry.itemIndex)) {
+      const key = `${entry.sectionIndex}:${entry.itemIndex}`;
+      if (!keys.has(key)) {
+        keys.add(key);
+        entries.push(entry);
+      }
+      return;
+    }
+    if (entry.type === "section") {
+      const section = state.menu.sections?.[entry.sectionIndex];
+      (section?.items || []).forEach((_item, itemIndex) => {
+        const key = `${entry.sectionIndex}:${itemIndex}`;
+        if (!keys.has(key)) {
+          keys.add(key);
+          entries.push({ type: "item", sectionIndex: entry.sectionIndex, itemIndex });
+        }
+      });
+    }
+  });
+  return entries;
+}
+
 function updateBatchToolbar() {
   if (!els.batchToolbar) return;
   const count = state.selectedKeys.size;
@@ -2191,7 +2305,7 @@ function updateBatchToolbar() {
 }
 
 function batchSetEnabled(enabled) {
-  const entries = selectedEntries().filter((entry) => entry.type === "item");
+  const entries = selectedItemEntries();
   if (!entries.length) return setStatus("请先选择需要启用/禁用的卡片。", "warning");
   entries.forEach(({ sectionIndex, itemIndex }) => {
     const item = state.menu.sections?.[sectionIndex]?.items?.[itemIndex];
@@ -2199,6 +2313,44 @@ function batchSetEnabled(enabled) {
   });
   markDirty();
   renderAll();
+}
+
+function openBatchLayoutEditor() {
+  const entries = selectedItemEntries();
+  if (!entries.length) return setStatus("请先选择需要批量排版的卡片；选中分组时会应用到该分组全部卡片。", "warning");
+  const first = state.menu.sections?.[entries[0].sectionIndex]?.items?.[entries[0].itemIndex];
+  const draft = cloneData(first || {});
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  const intro = document.createElement("p");
+  intro.className = "batch-layout-hint wide";
+  intro.textContent = `将排版应用到 ${entries.length} 张卡片：顺序、块间距、指令/名称/简介字号都会同步。`;
+  body.append(intro);
+  appendItemLayoutFields(body, draft, () => {}, { live: false });
+  openModal("批量卡片排版", body, [
+    {
+      label: "应用到选中卡片",
+      className: "primary",
+      onClick: () => {
+        const layout = itemContentLayout(draft);
+        entries.forEach(({ sectionIndex, itemIndex }) => {
+          const item = state.menu.sections?.[sectionIndex]?.items?.[itemIndex];
+          if (!item) return;
+          item.content_order = [...layout.order];
+          item.content_gap = layout.gap;
+          item.command_font_size = layout.fonts.command;
+          item.label_font_size = layout.fonts.label;
+          item.description_font_size = layout.fonts.description;
+        });
+        state.selectedKeys.clear();
+        markDirty();
+        closeModal();
+        renderAll();
+        setStatus(`已批量更新 ${entries.length} 张卡片的内容排版。`, "success");
+      },
+    },
+    { label: "取消", onClick: closeModal },
+  ]);
 }
 
 function batchCopySelection() {
@@ -2789,10 +2941,110 @@ function cardSizeOptions(selected) {
     .join("");
 }
 
+function contentBlockOptions(selected) {
+  return CONTENT_BLOCKS
+    .map((block) => `<option value="${block.value}" ${block.value === selected ? "selected" : ""}>${block.label}</option>`)
+    .join("");
+}
+
+function itemContentOrder(item = {}) {
+  const raw = Array.isArray(item.content_order)
+    ? item.content_order
+    : typeof item.content_order === "string"
+      ? item.content_order.split(",")
+      : [];
+  const order = raw.filter((value) => DEFAULT_CONTENT_ORDER.includes(value));
+  DEFAULT_CONTENT_ORDER.forEach((value) => {
+    if (!order.includes(value)) order.push(value);
+  });
+  return order.slice(0, 3);
+}
+
+function setItemContentOrderAt(item, position, block) {
+  const order = itemContentOrder(item);
+  const safePosition = clampNumber(position, 0, 2, 0);
+  if (!DEFAULT_CONTENT_ORDER.includes(block)) return;
+  const existingIndex = order.indexOf(block);
+  const previous = order[safePosition];
+  order[safePosition] = block;
+  if (existingIndex !== -1 && existingIndex !== safePosition) order[existingIndex] = previous;
+  item.content_order = order.slice(0, 3);
+}
+
+function defaultItemFonts(size) {
+  const currentSize = cardSize(size);
+  if (currentSize === "compact") return { command: 13, label: 10.5, description: 10.5 };
+  if (currentSize === "large" || currentSize === "banner") return { command: 16, label: 12.5, description: 12.5 };
+  return { command: 14, label: 11.5, description: 11.5 };
+}
+
+function itemContentLayout(item = {}) {
+  const defaults = defaultItemFonts(item.card_size);
+  return {
+    order: itemContentOrder(item),
+    gap: clampNumber(item.content_gap, 0, 40, 2),
+    fonts: {
+      command: clampFloat(item.command_font_size, 8, 34, defaults.command),
+      label: clampFloat(item.label_font_size, 8, 30, defaults.label),
+      description: clampFloat(item.description_font_size, 8, 28, defaults.description),
+    },
+  };
+}
+
+function applyItemLayoutValue(item, key, value) {
+  if (key === "content_gap") {
+    item.content_gap = clampNumber(value, 0, 40, 2);
+    return;
+  }
+  const limits = CONTENT_FONT_LIMITS[key];
+  if (!limits) return;
+  const defaults = defaultItemFonts(item.card_size);
+  const fallback = key === "command_font_size"
+    ? defaults.command
+    : key === "label_font_size"
+      ? defaults.label
+      : defaults.description;
+  item[key] = clampFloat(value, limits.min, limits.max, fallback || limits.fallback);
+}
+
+function itemLayoutValue(item, key) {
+  const layout = itemContentLayout(item);
+  if (key === "content_gap") return layout.gap;
+  if (key === "command_font_size") return layout.fonts.command;
+  if (key === "label_font_size") return layout.fonts.label;
+  if (key === "description_font_size") return layout.fonts.description;
+  return "";
+}
+
+function itemPreviewStyle(item) {
+  const layout = itemContentLayout(item);
+  return [
+    `--item-content-gap:${layout.gap}px`,
+    `--item-command-size:${layout.fonts.command}px`,
+    `--item-label-size:${layout.fonts.label}px`,
+    `--item-description-size:${layout.fonts.description}px`,
+  ].join(";");
+}
+
+function renderItemContentBlocks(item) {
+  const renderers = {
+    command: () => `<strong class="preview-item-title preview-command-title">${escapeHtml(item.command || "")}</strong>`,
+    label: () => `<div class="preview-item-name">${escapeHtml(item.label || "未命名")}</div>`,
+    description: () => `<div class="preview-desc">${escapeHtml(item.description || "")}</div>`,
+  };
+  return itemContentOrder(item).map((block) => renderers[block]()).join("");
+}
+
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function clampFloat(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number * 2) / 2));
 }
 
 function uniqueId(prefix) {

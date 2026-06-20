@@ -99,6 +99,36 @@ class MenuModelTests(unittest.TestCase):
         self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
 
+    def test_normalize_menu_accepts_per_card_content_layout(self):
+        menu = normalize_menu(
+            {
+                "id": "layout",
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {
+                                "label": "帮助",
+                                "command": "/help",
+                                "description": "说明",
+                                "content_order": ["description", "command", "label"],
+                                "content_gap": 9,
+                                "command_font_size": 18.4,
+                                "label_font_size": 13,
+                                "description_font_size": 10.2,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        item = menu["sections"][0]["items"][0]
+        self.assertEqual(item["content_order"], ["description", "command", "label"])
+        self.assertEqual(item["content_gap"], 9)
+        self.assertEqual(item["command_font_size"], 18.5)
+        self.assertEqual(item["label_font_size"], 13)
+        self.assertEqual(item["description_font_size"], 10)
+
     def test_normalize_menu_rejects_invalid_id(self):
         with self.assertRaises(MenuValidationError):
             normalize_menu({"id": "中文", "sections": [{"title": "x", "items": [{"label": "y"}]}]})
@@ -138,6 +168,17 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("restoreDeletedMenu", app_js)
         self.assertIn('assets: Array.isArray(data.assets) ? data.assets : []', app_js)
         self.assertIn('label: "一键重置样式"', app_js)
+
+    def test_editor_exposes_single_and_batch_card_layout_controls(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        self.assertIn('const CONTENT_BLOCKS = [', app_js)
+        self.assertIn('function appendItemLayoutFields(', app_js)
+        self.assertIn('function openBatchLayoutEditor()', app_js)
+        self.assertIn('function selectedItemEntries()', app_js)
+        self.assertIn('style="${itemPreviewStyle(item)}"', app_js)
+        self.assertIn('renderItemContentBlocks(item)', app_js)
+        self.assertIn('id="batchLayoutBtn"', index_html)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
     def test_page_simplifies_operations_console_and_keeps_core_editing_features(self):
@@ -567,6 +608,40 @@ class MenuStorageTests(unittest.TestCase):
             self.assertLess(title_index, desc_index)
             self.assertIn("实时预览", html)
             self.assertNotIn("更新：", html)
+
+    def test_preview_html_uses_custom_card_content_layout(self):
+        menu = normalize_menu(
+            {
+                "id": "cardlayout",
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {
+                                "label": "帮助",
+                                "command": "/help",
+                                "description": "查看帮助",
+                                "content_order": ["description", "label", "command"],
+                                "content_gap": 8,
+                                "command_font_size": 18,
+                                "label_font_size": 13.5,
+                                "description_font_size": 10,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        html = build_preview_html(menu)
+        desc_index = html.index('class="preview-desc"')
+        title_index = html.index('class="preview-item-name"')
+        command_index = html.index('class="preview-item-title preview-command-title"')
+        self.assertLess(desc_index, title_index)
+        self.assertLess(title_index, command_index)
+        self.assertIn("--item-content-gap:8px", html)
+        self.assertIn("--item-command-size:18px", html)
+        self.assertIn("--item-label-size:13.5px", html)
+        self.assertIn("--item-description-size:10px", html)
 
     def test_preview_width_can_be_customized(self):
         menu = normalize_menu(

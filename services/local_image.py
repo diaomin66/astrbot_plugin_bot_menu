@@ -715,6 +715,49 @@ def _card_size(value: Any) -> str:
     return size if size in {"compact", "standard", "large", "banner"} else "standard"
 
 
+def _content_order(item: dict[str, Any]) -> list[str]:
+    raw = item.get("content_order")
+    values = raw if isinstance(raw, list) else str(raw or "").split(",")
+    order: list[str] = []
+    for value in values:
+        block = str(value).strip()
+        if block in {"command", "label", "description"} and block not in order:
+            order.append(block)
+    for block in ("command", "label", "description"):
+        if block not in order:
+            order.append(block)
+    return order[:3]
+
+
+def _default_item_fonts(size: str) -> dict[str, float]:
+    if size == "compact":
+        return {"command": 13, "label": 10.5, "description": 10.5}
+    if size in {"large", "banner"}:
+        return {"command": 16, "label": 12.5, "description": 12.5}
+    return {"command": 14, "label": 11.5, "description": 11.5}
+
+
+def _item_typography(item: dict[str, Any], scale: int) -> dict[str, Any]:
+    size = _card_size(item.get("card_size"))
+    defaults = _default_item_fonts(size)
+    command_size = _clamp_float(item.get("command_font_size"), default=defaults["command"], minimum=8, maximum=34)
+    label_size = _clamp_float(item.get("label_font_size"), default=defaults["label"], minimum=8, maximum=30)
+    description_size = _clamp_float(item.get("description_font_size"), default=defaults["description"], minimum=8, maximum=28)
+    return {
+        "gap": _clamp_int(item.get("content_gap"), default=2, minimum=0, maximum=40) * scale,
+        "fonts": {
+            "command": _font(max(8, int(command_size * 1.55 * scale)), weight="bold"),
+            "label": _font(max(8, int(label_size * 1.48 * scale))),
+            "description": _font(max(8, int(description_size * 1.48 * scale))),
+        },
+        "line_heights": {
+            "command": max(10 * scale, int(command_size * 1.75 * scale)),
+            "label": max(10 * scale, int(label_size * 1.7 * scale)),
+            "description": max(10 * scale, int(description_size * 1.75 * scale)),
+        },
+    }
+
+
 def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity) -> None:
     from PIL import ImageDraw
 
@@ -736,8 +779,6 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     text_width = max(1, width - (text_offset + right_pad) * scale)
     top_pad = (8 if is_compact else 14 if is_large else 11) * scale
     bottom_pad = (8 if is_compact else 14 if is_large else 11) * scale
-    title_line = (21 if is_compact else 26 if is_large else 23) * scale
-    desc_line = (18 if is_compact else 20 if is_large else 19) * scale
     desc_max_lines = 3 if is_large else 2
     line_y = y + top_pad
     _draw_translucent_rounded_rectangle(
@@ -757,27 +798,26 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     )
     draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "\u2022")[:2], font=font_icon, fill=primary)
 
-    command = str(item.get("command") or "")
-    command_lines = _wrap(command, font_label, text_width, max_lines=2)
+    typography = _item_typography(item, scale)
+    block_text = {
+        "command": str(item.get("command") or ""),
+        "label": str(item.get("label") or "\u672a\u547d\u540d"),
+        "description": str(item.get("description") or ""),
+    }
+    block_fill = {"command": command_color, "label": fg, "description": sub}
+    max_lines = {"command": 2, "label": 2, "description": desc_max_lines}
     cursor_y = line_y
-    for line in command_lines:
-        draw.text((text_x, cursor_y), line, font=font_label, fill=command_color)
-        cursor_y += title_line
-    if command_lines:
-        cursor_y += 4 * scale
-
-    label = str(item.get("label") or "\u672a\u547d\u540d")
-    draw.text((text_x, cursor_y), label, font=font_small, fill=fg)
-
-    desc = str(item.get("description") or "")
-    desc_lines = _wrap(desc, font_small, text_width, max_lines=desc_max_lines)
-    desc_y = cursor_y + desc_line
-    if desc_lines:
-        bottom_desc_y = y + height - bottom_pad - len(desc_lines) * desc_line
-        desc_y = max(desc_y, bottom_desc_y)
-    for line in desc_lines:
-        draw.text((text_x, desc_y), line, font=font_small, fill=sub)
-        desc_y += desc_line
+    drew_block = False
+    for block in _content_order(item):
+        lines = _wrap(block_text[block], typography["fonts"][block], text_width, max_lines=max_lines[block])
+        if not lines:
+            continue
+        if drew_block:
+            cursor_y += typography["gap"]
+        for line in lines:
+            draw.text((text_x, cursor_y), line, font=typography["fonts"][block], fill=block_fill[block])
+            cursor_y += typography["line_heights"][block]
+        drew_block = True
 
 
 def _item_height(item, width, font_label, font_small, scale) -> int:
@@ -788,15 +828,26 @@ def _item_height(item, width, font_label, font_small, scale) -> int:
     right_pad = 10 if is_compact else 14
     text_width = max(1, width - (text_offset + right_pad) * scale)
     desc_max_lines = 3 if is_large else 2
-    desc_lines = len(_wrap(str(item.get("description") or ""), font_small, text_width, max_lines=desc_max_lines))
-    command_lines = len(_wrap(str(item.get("command") or ""), font_label, text_width, max_lines=2))
     min_height = {"compact": 66, "standard": 78, "large": 112, "banner": 118}[size] * scale
     vertical_pad = {"compact": 16, "standard": 22, "large": 28, "banner": 28}[size] * scale
-    title_line = (21 if is_compact else 26 if is_large else 23) * scale
-    desc_line = (18 if is_compact else 20 if is_large else 19) * scale
-    command_gap = (4 if command_lines else 0) * scale
-    name_line = desc_line
-    return max(min_height, vertical_pad + command_lines * title_line + command_gap + name_line + desc_lines * desc_line)
+    typography = _item_typography(item, scale)
+    block_text = {
+        "command": str(item.get("command") or ""),
+        "label": str(item.get("label") or "\u672a\u547d\u540d"),
+        "description": str(item.get("description") or ""),
+    }
+    max_lines = {"command": 2, "label": 2, "description": desc_max_lines}
+    content_height = 0
+    visible_blocks = 0
+    for block in _content_order(item):
+        lines = _wrap(block_text[block], typography["fonts"][block], text_width, max_lines=max_lines[block])
+        if not lines:
+            continue
+        if visible_blocks:
+            content_height += typography["gap"]
+        content_height += len(lines) * typography["line_heights"][block]
+        visible_blocks += 1
+    return max(min_height, vertical_pad + content_height)
 
 
 def _draw_shadow(image, box, radius, blur, offset_y, color):
@@ -908,6 +959,15 @@ def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _clamp_float(value: Any, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, min(maximum, parsed))
+    return round(parsed * 2) / 2
 
 
 def _format_time(value: Any) -> str:

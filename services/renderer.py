@@ -11,6 +11,8 @@ CARD_SIZE_WIDTHS = {
     "banner": 360,
 }
 CARD_SIZE_VALUES = set(CARD_SIZE_WIDTHS)
+CONTENT_BLOCKS = {"command", "label", "description"}
+DEFAULT_CONTENT_ORDER = ("command", "label", "description")
 
 MENU_TEMPLATE = r"""
 <!doctype html>
@@ -110,11 +112,11 @@ MENU_TEMPLATE = r"""
       font-size: 25px;
       background: {{ menu.style.primary_color }}18;
     }
-    .item-main { min-width: 0; display: flex; flex-direction: column; gap: 3px; }
-    .label { font-size: 20px; line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
+    .item-main { min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 3px); }
+    .label { font-size: var(--item-command-size, 20px); line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
     .command-title { color: {{ menu.style.primary_color }}; font-family: "Cascadia Mono", "Consolas", monospace; }
-    .name { color: {{ menu.style.text_color }}; font-size: 15px; line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
-    .desc { margin-top: auto; padding-top: 4px; color: {{ menu.style.muted_color }}; font-size: 15px; line-height: 1.38; overflow-wrap: anywhere; }
+    .name { color: {{ menu.style.text_color }}; font-size: var(--item-label-size, 15px); line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
+    .desc { margin-top: 0; padding-top: 0; color: {{ menu.style.muted_color }}; font-size: var(--item-description-size, 15px); line-height: 1.38; overflow-wrap: anywhere; }
     .command {
       font-size: 15px;
       line-height: 1.28;
@@ -266,18 +268,14 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-item.size-banner {{ grid-column: 1 / -1; grid-template-columns: 46px minmax(0, 1fr); min-height: 118px; padding: 16px; }}
     .preview-item.disabled {{ opacity: .45; }}
     .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
-    .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: 2px; }}
-    .preview-item-title {{ display: block; margin-top: 2px; color: var(--preview-text, #111827); font-size: 14px; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
+    .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 2px); }}
+    .preview-item-title {{ display: block; margin-top: 0; color: var(--preview-text, #111827); font-size: var(--item-command-size, 14px); line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
     .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-weight: 800; }}
-    .preview-item-name {{ color: var(--preview-text, #111827); font-size: 11.5px; line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }}
-    .preview-desc {{ margin-top: auto; padding-top: 3px; color: var(--preview-muted, #6b7280); font-size: 11.5px; line-height: 1.34; overflow-wrap: anywhere; }}
+    .preview-item-name {{ color: var(--preview-text, #111827); font-size: var(--item-label-size, 11.5px); line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }}
+    .preview-desc {{ margin-top: 0; padding-top: 0; color: var(--preview-muted, #6b7280); font-size: var(--item-description-size, 11.5px); line-height: 1.34; overflow-wrap: anywhere; }}
     .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
     .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
-    .preview-item.size-compact .preview-item-title {{ font-size: 13px; }}
-    .preview-item.size-compact .preview-item-name, .preview-item.size-compact .preview-desc, .preview-item.size-compact .preview-command {{ font-size: 10.5px; }}
     .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon {{ font-size: 26px; }}
-    .preview-item.size-large .preview-item-title, .preview-item.size-banner .preview-item-title {{ font-size: 16px; }}
-    .preview-item.size-large .preview-item-name, .preview-item.size-banner .preview-item-name, .preview-item.size-large .preview-desc, .preview-item.size-banner .preview-desc {{ font-size: 12.5px; }}
     .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command {{ font-size: 12px; }}
     .preview-sub, .preview-footer {{ color: var(--preview-muted, #6b7280); }}
     .preview-footer {{ display: flex; justify-content: space-between; margin-top: 16px; font-size: 12px; }}
@@ -317,10 +315,20 @@ def _render_preview_section(section: dict[str, Any]) -> str:
 def _render_preview_item(item: dict[str, Any]) -> str:
     disabled = " disabled" if item.get("enabled") is False else ""
     size = _card_size(item.get("card_size"))
-    return f"""<div class="preview-item size-{size}{disabled}">
+    style_attr = _item_preview_style(item)
+    blocks = "".join(_render_item_content_block(item, block) for block in _content_order(item))
+    return f"""<div class="preview-item size-{size}{disabled}" style="{style_attr}">
             <div class="preview-icon">{_escape(item.get("icon") or "•")}</div>
-            <div class="preview-item-main"><strong class="preview-item-title preview-command-title">{_escape(item.get("command") or "")}</strong><div class="preview-item-name">{_escape(item.get("label") or "未命名")}</div><div class="preview-desc">{_escape(item.get("description") or "")}</div></div>
+            <div class="preview-item-main">{blocks}</div>
           </div>"""
+
+
+def _render_item_content_block(item: dict[str, Any], block: str) -> str:
+    if block == "command":
+        return f'<strong class="preview-item-title preview-command-title">{_escape(item.get("command") or "")}</strong>'
+    if block == "label":
+        return f'<div class="preview-item-name">{_escape(item.get("label") or "未命名")}</div>'
+    return f'<div class="preview-desc">{_escape(item.get("description") or "")}</div>'
 
 
 def preview_width_for_menu(menu: dict[str, Any], *, default_width: int = 900) -> int:
@@ -403,6 +411,43 @@ def _card_size(value: Any) -> str:
     return size if size in CARD_SIZE_VALUES else "standard"
 
 
+def _content_order(item: dict[str, Any]) -> list[str]:
+    raw = item.get("content_order")
+    values = raw if isinstance(raw, list) else str(raw or "").split(",")
+    order: list[str] = []
+    for value in values:
+        block = str(value).strip()
+        if block in CONTENT_BLOCKS and block not in order:
+            order.append(block)
+    for block in DEFAULT_CONTENT_ORDER:
+        if block not in order:
+            order.append(block)
+    return order[:3]
+
+
+def _default_item_fonts(size: str) -> dict[str, float]:
+    if size == "compact":
+        return {"command": 13, "label": 10.5, "description": 10.5}
+    if size in {"large", "banner"}:
+        return {"command": 16, "label": 12.5, "description": 12.5}
+    return {"command": 14, "label": 11.5, "description": 11.5}
+
+
+def _item_preview_style(item: dict[str, Any]) -> str:
+    size = _card_size(item.get("card_size"))
+    fonts = _default_item_fonts(size)
+    gap = _clamp_int(item.get("content_gap"), default=2, minimum=0, maximum=40)
+    command_size = _clamp_float(item.get("command_font_size"), default=fonts["command"], minimum=8, maximum=34)
+    label_size = _clamp_float(item.get("label_font_size"), default=fonts["label"], minimum=8, maximum=30)
+    description_size = _clamp_float(item.get("description_font_size"), default=fonts["description"], minimum=8, maximum=28)
+    return (
+        f"--item-content-gap:{gap}px;"
+        f"--item-command-size:{command_size:g}px;"
+        f"--item-label-size:{label_size:g}px;"
+        f"--item-description-size:{description_size:g}px"
+    )
+
+
 def _section_gap_for_menu(menu: dict[str, Any], style: dict[str, Any]) -> int:
     if style.get("section_gap_mode") == "custom":
         return _clamp_int(style.get("section_gap"), default=14, minimum=0, maximum=200)
@@ -429,3 +474,12 @@ def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _clamp_float(value: Any, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, min(maximum, parsed))
+    return round(parsed * 2) / 2

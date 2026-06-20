@@ -14,6 +14,8 @@ MAX_TOTAL_ITEMS = 256
 WIDTH_MODES = {"auto", "custom"}
 SECTION_GAP_MODES = {"auto", "custom"}
 CARD_SIZES = {"compact", "standard", "large", "banner"}
+CONTENT_BLOCKS = {"command", "label", "description"}
+DEFAULT_CONTENT_ORDER = ("command", "label", "description")
 
 
 class MenuValidationError(ValueError):
@@ -273,7 +275,41 @@ def _normalize_item(raw_item: Any, section_title: str, index: int) -> dict[str, 
         "icon": _clean_text(raw_item.get("icon"), "item icon", default="", max_length=12),
         "card_size": _clean_choice(raw_item.get("card_size"), CARD_SIZES, default="standard"),
         "enabled": bool(raw_item.get("enabled", True)),
+        **_normalize_item_layout(raw_item),
     }
+
+
+def _normalize_item_layout(raw_item: dict[str, Any]) -> dict[str, Any]:
+    layout: dict[str, Any] = {}
+    if "content_order" in raw_item:
+        layout["content_order"] = _normalize_content_order(raw_item.get("content_order"))
+    if "content_gap" in raw_item:
+        layout["content_gap"] = _clamp_int(raw_item.get("content_gap"), default=2, minimum=0, maximum=40)
+    for key, default, minimum, maximum in (
+        ("command_font_size", 14, 8, 34),
+        ("label_font_size", 11.5, 8, 30),
+        ("description_font_size", 11.5, 8, 28),
+    ):
+        if key in raw_item:
+            layout[key] = _clamp_float(raw_item.get(key), default=default, minimum=minimum, maximum=maximum)
+    return layout
+
+
+def _normalize_content_order(raw_order: Any) -> list[str]:
+    if isinstance(raw_order, str):
+        values = [part.strip() for part in raw_order.split(",")]
+    elif isinstance(raw_order, list):
+        values = [str(part).strip() for part in raw_order]
+    else:
+        values = []
+    order: list[str] = []
+    for value in values:
+        if value in CONTENT_BLOCKS and value not in order:
+            order.append(value)
+    for value in DEFAULT_CONTENT_ORDER:
+        if value not in order:
+            order.append(value)
+    return order[:3]
 
 
 def _clean_text(value: Any, field_name: str, *, default: str = "", max_length: int) -> str:
@@ -318,6 +354,15 @@ def _clamp_int(value: Any, *, default: int, minimum: int, maximum: int) -> int:
     except (TypeError, ValueError):
         parsed = default
     return max(minimum, min(maximum, parsed))
+
+
+def _clamp_float(value: Any, *, default: float, minimum: float, maximum: float) -> float:
+    try:
+        parsed = float(value)
+    except (TypeError, ValueError):
+        parsed = default
+    parsed = max(minimum, min(maximum, parsed))
+    return round(parsed * 2) / 2
 
 
 def _now_iso() -> str:
