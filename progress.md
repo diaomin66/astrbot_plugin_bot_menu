@@ -92,3 +92,21 @@
 - `docs/page-editor-verification.md`：补充渲染 HTML 内联样式必须做属性转义的契约，防止保存正确但渲染回退默认值。
 - `progress.md`：追加本轮修复、验证、同步和回滚记录。
 - 回滚方式：`git checkout -- services/renderer.py tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如需回滚本地 AstrBot，同步上一提交的同名文件到 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并重新生成或删除对应渲染缓存。
+
+## 2026-06-21 - Task: 修复背景图锁定后仍被自动上端对齐
+### What was done
+- 复现 Page 背景编辑竞态：背景图未加载完成时先触发自动铺满，随后用户拖动背景并点击“锁定背景图”，迟到的图片 `load` 回调仍会把 `background_image_y` 改回 0。
+- 为背景自动铺满/适应增加图片来源、X、Y、宽度快照校验；只有当前背景变换仍与发起自动计算时一致，迟到的 `load` 回调才允许继续执行。
+- 将同样保护应用到“适应背景”，避免同类异步回调覆盖用户手动位置。
+- 补充回归断言和 Page 背景编辑契约文档。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_page_reload_does_not_realign_saved_background_to_top -v`：通过。
+- `python -m unittest discover -s tests -v`：47 项通过。
+- `python -m compileall -q .`：通过。
+- 本机 Edge CDP + `.tmp-page-e2e/harness.html` 慢加载背景图复现脚本：修复前锁定后结果为 `y=0/top=0%`；修复后拖到 `x=12,y=-37,width=140` 并点击“锁定背景图”，等待图片加载完成仍保持 `left=12%`、`top=-37%`、`width=140%`、`editMode=false`。
+### Notes
+- `pages/menu-editor/app.js`：为自动铺满/适应的异步图片加载回调增加背景变换快照保护，防止锁定后的手动位置被上端对齐覆盖。
+- `tests/test_menu_services.py`：增加源码回归断言，确保延迟 `load` 回调必须携带并校验背景变换快照。
+- `docs/page-editor-verification.md`：补充背景图未加载完成时自动计算不得覆盖用户拖动/锁定后位置的契约。
+- `progress.md`：追加本轮修复、验证和回滚记录。
+- 回滚方式：`git checkout -- pages/menu-editor/app.js tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`。

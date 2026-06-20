@@ -2166,13 +2166,33 @@ function attachBackgroundEditor() {
   });
 }
 
-function fitBackgroundToCover(forceReset) {
+function backgroundTransformSnapshot(style) {
+  return {
+    image: style.background_image || "",
+    x: clampNumber(style.background_image_x, -300, 300, 0),
+    y: clampNumber(style.background_image_y, -300, 300, 0),
+    width: clampNumber(style.background_image_width, 10, 600, 100),
+  };
+}
+
+function backgroundTransformMatches(style, snapshot) {
+  if (!snapshot) return true;
+  const current = backgroundTransformSnapshot(style);
+  return current.image === snapshot.image
+    && current.x === snapshot.x
+    && current.y === snapshot.y
+    && current.width === snapshot.width;
+}
+
+function fitBackgroundToCover(forceReset, expectedTransform = null) {
   const style = ensureStyle(state.menu);
+  if (expectedTransform && !backgroundTransformMatches(style, expectedTransform)) return;
   const img = els.preview.querySelector(".preview-bg-image");
   const card = els.preview.querySelector(".preview-card");
   if (!img || !card || !style.background_image) return;
   if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
-    img.addEventListener("load", () => fitBackgroundToCover(forceReset), { once: true });
+    const transformBeforeLoad = expectedTransform || backgroundTransformSnapshot(style);
+    img.addEventListener("load", () => fitBackgroundToCover(forceReset, transformBeforeLoad), { once: true });
     return;
   }
   const requiredWidth = Math.max(100, (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight));
@@ -2185,13 +2205,15 @@ function fitBackgroundToCover(forceReset) {
   renderPreview();
 }
 
-function fitBackgroundToContain() {
+function fitBackgroundToContain(expectedTransform = null) {
   const style = ensureStyle(state.menu);
+  if (expectedTransform && !backgroundTransformMatches(style, expectedTransform)) return;
   const img = els.preview.querySelector(".preview-bg-image");
   const card = els.preview.querySelector(".preview-card");
   if (!img || !card || !style.background_image) return;
   if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
-    img.addEventListener("load", fitBackgroundToContain, { once: true });
+    const transformBeforeLoad = expectedTransform || backgroundTransformSnapshot(style);
+    img.addEventListener("load", () => fitBackgroundToContain(transformBeforeLoad), { once: true });
     return;
   }
   const widthByHeight = (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight);

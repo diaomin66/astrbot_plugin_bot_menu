@@ -1005,6 +1005,12 @@ class MenuStorageTests(unittest.TestCase):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         self.assertNotIn("fitBackgroundToCover(false)", app_js)
         self.assertIn("fitBackgroundToCover(true)", app_js)
+        self.assertIn("function backgroundTransformSnapshot(style)", app_js)
+        self.assertIn("function backgroundTransformMatches(style, snapshot)", app_js)
+        self.assertIn("if (expectedTransform && !backgroundTransformMatches(style, expectedTransform)) return;", app_js)
+        self.assertIn("const transformBeforeLoad = expectedTransform || backgroundTransformSnapshot(style);", app_js)
+        self.assertIn('img.addEventListener("load", () => fitBackgroundToCover(forceReset, transformBeforeLoad), { once: true });', app_js)
+        self.assertNotIn('img.addEventListener("load", () => fitBackgroundToCover(forceReset), { once: true });', app_js)
 
     def test_editor_preview_column_has_independent_scroll_pane(self):
         css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
