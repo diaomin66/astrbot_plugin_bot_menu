@@ -183,6 +183,19 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("syncFormToMenu({ mark: false });"))
         self.assertLess(save_body.index("syncFormToMenu({ mark: false });"), save_body.index('bridge.apiPost("menus/save"'))
 
+    def test_page_destructive_actions_use_in_page_dialogs(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+
+        self.assertNotIn("confirm(", app_js)
+        self.assertNotIn("prompt(", app_js)
+        self.assertIn("function promptDialog(", app_js)
+        self.assertIn("function confirmDialog(", app_js)
+        self.assertIn('"删除卡片？"', app_js)
+        self.assertIn('"删除分组？"', app_js)
+        self.assertIn('"批量删除？"', app_js)
+        self.assertIn('promptDialog(', app_js)
+        self.assertIn("await maybeRestoreDraft(sourceMenu)", app_js)
+
     def test_editor_exposes_single_and_batch_card_layout_controls(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")

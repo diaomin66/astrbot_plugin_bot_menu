@@ -516,7 +516,7 @@ async function selectMenu(id) {
   discardPendingBackgroundAsset();
   const sourceMenu = cloneData(menu);
   const isUnsaved = state.unsavedMenuIds.has(menu.id);
-  state.menu = isUnsaved ? sourceMenu : maybeRestoreDraft(sourceMenu);
+  state.menu = isUnsaved ? sourceMenu : await maybeRestoreDraft(sourceMenu);
   state.dirty = isUnsaved || state.menu !== sourceMenu;
   loadSearchState();
   refreshSchemeSelect();
@@ -857,7 +857,7 @@ function openModal(title, body, actions = [], options = {}) {
     button.textContent = action.label;
     if (action.className) button.className = action.className;
     button.disabled = Boolean(action.disabled);
-    button.addEventListener("click", action.onClick);
+    button.addEventListener("click", (event) => runAction(action.label, () => action.onClick(event)));
     els.modalFooter.append(button);
   });
   const close = document.createElement("button");
@@ -892,6 +892,26 @@ function confirmDialog(title, message, { confirmLabel = "确定", cancelLabel = 
       { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, false) },
       { label: confirmLabel, className: danger ? "danger" : "primary", onClick: () => resolveAndCloseModal(resolve, true) },
     ], { onClose: () => resolve(false) });
+  });
+}
+
+function promptDialog(title, message, { defaultValue = "", confirmLabel = "确定", cancelLabel = "取消" } = {}) {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "confirm-dialog";
+    const text = document.createElement("p");
+    text.textContent = message;
+    const input = document.createElement("input");
+    input.value = defaultValue;
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") resolveAndCloseModal(resolve, input.value);
+    });
+    body.append(text, input);
+    openModal(title, body, [
+      { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, null) },
+      { label: confirmLabel, className: "primary", onClick: () => resolveAndCloseModal(resolve, input.value) },
+    ], { onClose: () => resolve(null) });
+    requestAnimationFrame(() => input.focus());
   });
 }
 
@@ -963,7 +983,7 @@ function actionRow(actions) {
     button.textContent = action.label;
     if (action.className) button.className = action.className;
     button.disabled = Boolean(action.disabled);
-    button.addEventListener("click", action.onClick);
+    button.addEventListener("click", (event) => runAction(action.label, () => action.onClick(event)));
     row.append(button);
   });
   return row;
@@ -1164,7 +1184,16 @@ function openMenuEditor() {
       { label: "上移", disabled: index === 0, onClick: () => { moveSection(index, -1); openMenuEditor(); } },
       { label: "下移", disabled: index === menu.sections.length - 1, onClick: () => { moveSection(index, 1); openMenuEditor(); } },
       { label: "复制", onClick: () => { copySection(index); openMenuEditor(); } },
-      { label: "删除", className: "danger", disabled: menu.sections.length <= 1, onClick: () => { if (confirm("确定删除这个分组？")) { removeSection(index); openMenuEditor(); } } },
+      {
+        label: "删除",
+        className: "danger",
+        disabled: menu.sections.length <= 1,
+        onClick: async () => {
+          const confirmed = await confirmDialog("删除分组？", "确定删除这个分组？", { confirmLabel: "删除分组", danger: true });
+          if (confirmed) removeSection(index);
+          openMenuEditor();
+        },
+      },
     ]));
     list.append(row);
   });
@@ -1195,7 +1224,16 @@ function openSectionEditor(sectionIndex) {
       { label: "上移", disabled: itemIndex === 0, onClick: () => { moveItem(sectionIndex, itemIndex, -1); openSectionEditor(sectionIndex); } },
       { label: "下移", disabled: itemIndex === section.items.length - 1, onClick: () => { moveItem(sectionIndex, itemIndex, 1); openSectionEditor(sectionIndex); } },
       { label: "复制", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
-      { label: "删除", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+      {
+        label: "删除",
+        className: "danger",
+        disabled: section.items.length <= 1,
+        onClick: async () => {
+          const confirmed = await confirmDialog("删除卡片？", "确定删除这张卡片？", { confirmLabel: "删除卡片", danger: true });
+          if (confirmed) removeItem(sectionIndex, itemIndex);
+          openSectionEditor(sectionIndex);
+        },
+      },
     ]));
     list.append(row);
   });
@@ -1226,7 +1264,20 @@ function openItemEditor(sectionIndex, itemIndex) {
   body.append(check);
   openModal(`编辑卡片：${item.label || "未命名"}`, body, [
     { label: "复制卡片", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
-    { label: "删除卡片", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+    {
+      label: "删除卡片",
+      className: "danger",
+      disabled: section.items.length <= 1,
+      onClick: async () => {
+        const confirmed = await confirmDialog("删除卡片？", "确定删除这张卡片？", { confirmLabel: "删除卡片", danger: true });
+        if (confirmed) {
+          removeItem(sectionIndex, itemIndex);
+          openSectionEditor(sectionIndex);
+          return;
+        }
+        openItemEditor(sectionIndex, itemIndex);
+      },
+    },
     { label: "返回分组", onClick: () => openSectionEditor(sectionIndex) },
   ]);
 }
@@ -1310,7 +1361,7 @@ function openStyleEditor() {
   openModal("编辑主题、背景与布局", body, [
     { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
     { label: "一键修复颜色", onClick: () => { fixContrastColors(); openStyleEditor(); } },
-    { label: "一键重置样式", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
+    { label: "一键重置样式", className: "danger", onClick: async () => { if (await resetCurrentStyle()) openStyleEditor(); } },
     { label: "编辑全部分组", onClick: openMenuEditor },
   ]);
   const contrast = contrastWarningText(style);
@@ -2231,7 +2282,11 @@ async function copyStyleToMenus() {
   syncFormToMenu({ mark: false });
   const otherMenus = state.menus.filter((menu) => menu.id !== state.currentId);
   if (!otherMenus.length) return setStatus("没有其他菜单可复制样式。", "warning");
-  const answer = prompt(`输入目标菜单 ID，多个用逗号分隔，或输入 all：\n${otherMenus.map((menu) => menu.id).join(", ")}`, "all");
+  const answer = await promptDialog(
+    "复制样式到其他菜单",
+    `输入目标菜单 ID，多个用逗号分隔，或输入 all：\n${otherMenus.map((menu) => menu.id).join(", ")}`,
+    { defaultValue: "all", confirmLabel: "复制样式" },
+  );
   if (!answer) return;
   const targets = answer.trim().toLowerCase() === "all"
     ? otherMenus
@@ -2264,14 +2319,20 @@ function pickStyleForCopy(style) {
   }, {});
 }
 
-function resetCurrentStyle() {
-  if (!confirm("确定重置当前菜单样式？菜单内容不会被删除。")) return;
+async function resetCurrentStyle() {
+  const confirmed = await confirmDialog(
+    "重置样式？",
+    "确定重置当前菜单样式？菜单内容不会被删除。",
+    { confirmLabel: "重置样式", danger: true },
+  );
+  if (!confirmed) return false;
   discardPendingBackgroundAsset();
   state.menu.style = defaultStyle();
   fillForm();
   markDirty();
   renderAll();
   setStatus("已重置样式，保存后生效。", "success");
+  return true;
 }
 
 function contrastWarningText(style = ensureStyle(state.menu)) {
@@ -2514,9 +2575,14 @@ function batchCopySelection() {
   renderAll();
 }
 
-function batchDeleteSelection() {
+async function batchDeleteSelection() {
   if (!state.selectedKeys.size) return;
-  if (!confirm(`确定删除选中的 ${state.selectedKeys.size} 项？`)) return;
+  const confirmed = await confirmDialog(
+    "批量删除？",
+    `确定删除选中的 ${state.selectedKeys.size} 项？`,
+    { confirmLabel: "批量删除", danger: true },
+  );
+  if (!confirmed) return;
   const entries = selectedEntries();
   const sectionIndexes = entries
     .filter((entry) => entry.type === "section")
@@ -2711,7 +2777,11 @@ function updateSaveState(nextState) {
 
 async function confirmLeaveDirty() {
   if (!state.dirty) return true;
-  return confirm("当前菜单有未保存修改，离开会丢失这些修改。确定继续？");
+  return confirmDialog(
+    "离开未保存菜单？",
+    "当前菜单有未保存修改，离开会丢失这些修改。确定继续？",
+    { confirmLabel: "继续离开", danger: true },
+  );
 }
 
 function currentDraftId() {
@@ -2749,7 +2819,7 @@ function clearDraft(id) {
   safeStorageRemove(draftKey(id));
 }
 
-function maybeRestoreDraft(menu) {
+async function maybeRestoreDraft(menu) {
   const id = menu.id;
   if (!id || state.restoredDraftIds.has(id)) return menu;
   state.restoredDraftIds.add(id);
@@ -2759,11 +2829,11 @@ function maybeRestoreDraft(menu) {
     const draft = JSON.parse(raw);
     const serverTime = Date.parse(menu.updated_at || menu.created_at || "") || 0;
     if (!draft?.menu || Number(draft.saved_at || 0) <= serverTime) return menu;
-    if (confirm(`发现「${menu.name || id}」有较新的本地草稿，是否恢复？`)) {
+    if (await confirmDialog("恢复本地草稿？", `发现「${menu.name || id}」有较新的本地草稿，是否恢复？`, { confirmLabel: "恢复草稿" })) {
       setStatus("已恢复本地草稿，保存后会覆盖服务端菜单。", "warning");
       return draft.menu;
     }
-    if (confirm("是否丢弃该本地草稿？")) clearDraft(id);
+    if (await confirmDialog("丢弃本地草稿？", "是否丢弃该本地草稿？", { confirmLabel: "丢弃草稿", danger: true })) clearDraft(id);
   } catch (error) {
     console.warn("failed to restore draft", error);
   }
