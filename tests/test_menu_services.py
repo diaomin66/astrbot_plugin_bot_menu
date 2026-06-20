@@ -181,11 +181,17 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('renderItemContentBlocks(item)', app_js)
         self.assertIn('id="batchLayoutBtn"', index_html)
         self.assertIn('id="batchSelectToggleBtn"', index_html)
+        self.assertIn('id="batchSelectAllBtn"', index_html)
         self.assertIn("function toggleBatchSelectMode()", app_js)
+        self.assertIn("function selectAllBatchCards()", app_js)
+        self.assertIn("function selectableBatchItemKeys()", app_js)
         self.assertIn("state.batchSelectMode", app_js)
         self.assertIn('class="preview-select-marker"', app_js)
+        self.assertNotIn('selectedClass ? "✓" : ""', app_js)
         self.assertIn('els.batchToolbar.hidden = !state.batchSelectMode && count === 0;', app_js)
+        self.assertIn('els.batchSelectAllBtn.textContent = state.itemSearch ? `全选结果(${selectableCount})` : `全选卡片(${selectableCount})`;', app_js)
         self.assertIn(".preview-card.is-batch-selecting", css)
+        self.assertIn(".preview-item.is-selected .preview-select-marker", css)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
     def test_editor_modal_has_resize_handle(self):

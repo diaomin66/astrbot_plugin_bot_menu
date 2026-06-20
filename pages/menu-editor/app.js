@@ -137,6 +137,7 @@ const els = {
   validationSummary: $("validationSummary"),
   batchToolbar: $("batchToolbar"),
   batchCount: $("batchCount"),
+  batchSelectAllBtn: $("batchSelectAllBtn"),
   batchEnableBtn: $("batchEnableBtn"),
   batchDisableBtn: $("batchDisableBtn"),
   batchLayoutBtn: $("batchLayoutBtn"),
@@ -230,6 +231,7 @@ function bindEvents() {
   bindClick($("addSectionBtn"), "添加分组", addSection);
   bindClick($("exportBtn"), "导出菜单", exportMenus);
   $("importInput").addEventListener("change", importMenus);
+  bindClick(els.batchSelectAllBtn, "全选卡片", selectAllBatchCards);
   bindClick(els.batchEnableBtn, "批量启用", () => batchSetEnabled(true));
   bindClick(els.batchDisableBtn, "批量禁用", () => batchSetEnabled(false));
   bindClick(els.batchLayoutBtn, "批量排版", openBatchLayoutEditor);
@@ -1419,7 +1421,7 @@ function renderPreview() {
                   const selectedClass = state.selectedKeys.has(itemKey) ? "is-selected" : "";
                   return `
                   <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass} ${selectedClass}" style="${itemPreviewStyle(item)}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="${state.batchSelectMode ? "点击选择 / 取消" : "编辑卡片"}">
-                    ${state.batchSelectMode ? `<span class="preview-select-marker" aria-hidden="true">${selectedClass ? "✓" : ""}</span>` : ""}
+                    ${state.batchSelectMode ? '<span class="preview-select-marker" aria-hidden="true"></span>' : ""}
                     <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
                     <div class="preview-item-main">${renderItemContentBlocks(item)}</div>
                   </div>`;
@@ -2321,6 +2323,30 @@ function clearSelection() {
   updateBatchToolbar();
 }
 
+function selectableBatchItemKeys() {
+  const query = state.itemSearch || "";
+  const keys = [];
+  (state.menu?.sections || []).forEach((section, sectionIndex) => {
+    (section.items || []).forEach((item, itemIndex) => {
+      if (query && !itemMatchesSearch(item, query)) return;
+      keys.push(selectionKey("item", sectionIndex, itemIndex));
+    });
+  });
+  return keys;
+}
+
+function selectAllBatchCards() {
+  const keys = selectableBatchItemKeys();
+  if (!keys.length) return setStatus("当前没有可全选的卡片。", "warning");
+  keys.forEach((key) => state.selectedKeys.add(key));
+  if (!state.batchSelectMode) state.batchSelectMode = true;
+  updateBatchSelectToggle();
+  renderSectionsEditor();
+  renderPreview();
+  updateBatchToolbar();
+  setStatus(`已全选 ${keys.length} 张${state.itemSearch ? "搜索结果中的" : ""}卡片。`, "success");
+}
+
 function selectedEntries() {
   return [...state.selectedKeys]
     .map(parseSelectionKey)
@@ -2357,12 +2383,17 @@ function updateBatchToolbar() {
   if (!els.batchToolbar) return;
   const count = state.selectedKeys.size;
   const itemCount = selectedItemEntries().length;
+  const selectableCount = selectableBatchItemKeys().length;
   els.batchToolbar.hidden = !state.batchSelectMode && count === 0;
   els.batchToolbar.classList.toggle("is-selecting", state.batchSelectMode);
   if (els.batchCount) {
     els.batchCount.textContent = state.batchSelectMode
       ? `批量调整中 · 已选择 ${itemCount} 张卡片`
       : `已选择 ${count} 项`;
+  }
+  if (els.batchSelectAllBtn) {
+    els.batchSelectAllBtn.disabled = selectableCount === 0;
+    els.batchSelectAllBtn.textContent = state.itemSearch ? `全选结果(${selectableCount})` : `全选卡片(${selectableCount})`;
   }
   [
     els.batchEnableBtn,
