@@ -1313,8 +1313,8 @@ function renderPreview() {
                   <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
                     <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
                     <div class="preview-item-main">
-                      <div class="preview-command">${escapeHtml(item.command || "")}</div>
-                      <strong class="preview-item-title">${escapeHtml(item.label || "未命名")}</strong>
+                      <strong class="preview-item-title preview-command-title">${escapeHtml(item.command || "")}</strong>
+                      <div class="preview-item-name">${escapeHtml(item.label || "未命名")}</div>
                       <div class="preview-desc">${escapeHtml(item.description || "")}</div>
                     </div>
                   </div>`;

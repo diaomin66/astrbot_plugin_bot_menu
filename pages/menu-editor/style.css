@@ -252,14 +252,16 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .preview-icon { line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }
 .preview-item-main { min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .preview-item-title { display: block; margin-top: 2px; color: var(--preview-text, #111827); font-size: 14px; line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }
+.preview-command-title { margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: Consolas, "JetBrains Mono", monospace; font-weight: 800; }
+.preview-item-name { color: var(--preview-text, #111827); font-size: 11.5px; line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }
 .preview-desc { margin-top: auto; padding-top: 3px; color: var(--preview-muted, #6b7280); font-size: 11.5px; line-height: 1.34; overflow-wrap: anywhere; }
 .preview-command { color: var(--preview-primary, #7c3aed); font-family: Consolas, "JetBrains Mono", monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }
 .preview-item.size-compact .preview-icon { font-size: 18px; }
 .preview-item.size-compact .preview-item-title { font-size: 13px; }
-.preview-item.size-compact .preview-desc, .preview-item.size-compact .preview-command { font-size: 10.5px; }
+.preview-item.size-compact .preview-item-name, .preview-item.size-compact .preview-desc, .preview-item.size-compact .preview-command { font-size: 10.5px; }
 .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon { font-size: 26px; }
 .preview-item.size-large .preview-item-title, .preview-item.size-banner .preview-item-title { font-size: 16px; }
-.preview-item.size-large .preview-desc, .preview-item.size-banner .preview-desc { font-size: 12.5px; }
+.preview-item.size-large .preview-item-name, .preview-item.size-banner .preview-item-name, .preview-item.size-large .preview-desc, .preview-item.size-banner .preview-desc { font-size: 12.5px; }
 .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command { font-size: 12px; }
 .preview-footer { display: flex; justify-content: space-between; gap: 12px; margin-top: 16px; font-size: 12px; }
 .preview-bg-image { position: absolute; z-index: 0; max-width: none; height: auto; user-select: none; pointer-events: none; filter: blur(var(--preview-bg-blur, 0)) brightness(var(--preview-bg-brightness, 1)); }

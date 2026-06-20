@@ -82,7 +82,7 @@ def render_menu_image(
         row_heights = []
         for row in rows:
             row_width = _row_item_width(row, item_area_width, item_gap, columns)
-            row_heights.append(max(_item_height(item, row_width, font_mono, font_small, scale) for item in row))
+            row_heights.append(max(_item_height(item, row_width, font_label, font_small, scale) for item in row))
         section_height = 22 * scale + 30 * scale + 16 * scale + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + 22 * scale
         section_layouts.append({"section": section, "rows": rows, "row_heights": row_heights, "height": int(section_height)})
         y += section_height + section_gap
@@ -738,7 +738,6 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     bottom_pad = (8 if is_compact else 14 if is_large else 11) * scale
     title_line = (21 if is_compact else 26 if is_large else 23) * scale
     desc_line = (18 if is_compact else 20 if is_large else 19) * scale
-    command_line = (18 if is_compact else 20 if is_large else 19) * scale
     desc_max_lines = 3 if is_large else 2
     line_y = y + top_pad
     _draw_translucent_rounded_rectangle(
@@ -759,20 +758,20 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "\u2022")[:2], font=font_icon, fill=primary)
 
     command = str(item.get("command") or "")
-    command_lines = _wrap(command, font_mono, text_width, max_lines=2)
+    command_lines = _wrap(command, font_label, text_width, max_lines=2)
     cursor_y = line_y
     for line in command_lines:
-        draw.text((text_x, cursor_y), line, font=font_mono, fill=command_color)
-        cursor_y += command_line
+        draw.text((text_x, cursor_y), line, font=font_label, fill=command_color)
+        cursor_y += title_line
     if command_lines:
         cursor_y += 4 * scale
 
     label = str(item.get("label") or "\u672a\u547d\u540d")
-    draw.text((text_x, cursor_y), label, font=font_label, fill=fg)
+    draw.text((text_x, cursor_y), label, font=font_small, fill=fg)
 
     desc = str(item.get("description") or "")
     desc_lines = _wrap(desc, font_small, text_width, max_lines=desc_max_lines)
-    desc_y = cursor_y + title_line
+    desc_y = cursor_y + desc_line
     if desc_lines:
         bottom_desc_y = y + height - bottom_pad - len(desc_lines) * desc_line
         desc_y = max(desc_y, bottom_desc_y)
@@ -781,7 +780,7 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
         desc_y += desc_line
 
 
-def _item_height(item, width, font_mono, font_small, scale) -> int:
+def _item_height(item, width, font_label, font_small, scale) -> int:
     size = _card_size(item.get("card_size"))
     is_compact = size == "compact"
     is_large = size in {"large", "banner"}
@@ -790,14 +789,14 @@ def _item_height(item, width, font_mono, font_small, scale) -> int:
     text_width = max(1, width - (text_offset + right_pad) * scale)
     desc_max_lines = 3 if is_large else 2
     desc_lines = len(_wrap(str(item.get("description") or ""), font_small, text_width, max_lines=desc_max_lines))
-    command_lines = len(_wrap(str(item.get("command") or ""), font_mono, text_width, max_lines=2))
+    command_lines = len(_wrap(str(item.get("command") or ""), font_label, text_width, max_lines=2))
     min_height = {"compact": 66, "standard": 78, "large": 112, "banner": 118}[size] * scale
     vertical_pad = {"compact": 16, "standard": 22, "large": 28, "banner": 28}[size] * scale
     title_line = (21 if is_compact else 26 if is_large else 23) * scale
     desc_line = (18 if is_compact else 20 if is_large else 19) * scale
-    command_line = (18 if is_compact else 20 if is_large else 19) * scale
     command_gap = (4 if command_lines else 0) * scale
-    return max(min_height, vertical_pad + title_line + desc_lines * desc_line + command_gap + command_lines * command_line)
+    name_line = desc_line
+    return max(min_height, vertical_pad + command_lines * title_line + command_gap + name_line + desc_lines * desc_line)
 
 
 def _draw_shadow(image, box, radius, blur, offset_y, color):
