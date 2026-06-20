@@ -72,3 +72,23 @@
 - `tests/test_menu_services.py`：新增完整快照持久化与渲染同源测试，调整保存源码断言。
 - `docs/page-editor-verification.md`：记录完整快照保存、渲染同源、背景图不自动回顶的契约。
 - 回滚方式：使用 Git 回滚本轮修改文件，或从提交前状态恢复上述 5 个文件；若只需临时恢复旧渲染兜底，可先回滚 `main.py` 与 `services/renderer.py`。
+
+## 2026-06-21 - Task: 修复 Page 样式在实际渲染图中回退默认值
+### What was done
+- 修复实际渲染 HTML 中 `.preview-card` 内联样式未做 HTML 属性转义的问题，避免字体族里的双引号截断后续 CSS 变量。
+- 确认已保存的 Page 配置在渲染时被浏览器真实读取：当前默认菜单渲染宽度为 520px、每行 1 张、前景透明度为 0。
+- 重新生成本地 AstrBot 默认菜单渲染缓存，覆盖旧的错误缓存图。
+- 将修复文件同步到本地 AstrBot 插件目录，并补充渲染契约文档和回归测试。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_preview_html_uses_page_preview_markup -v`：通过。
+- `python -m unittest discover -s tests -v`：47 项通过。
+- `python -m compileall -q .`：通过。
+- 本机 Edge CDP 打开真实 `default` 菜单渲染 HTML：`.preview-card` style 未再截断，浏览器计算值为 `width=520px`、`--preview-columns=1`、`--preview-foreground-opacity=0.000`、`.preview-inner background=rgba(255, 255, 255, 0)`、`.preview-item background=rgba(241, 245, 249, 0)`。
+- 使用真实本地 `menus.json` 重新生成 PNG：图片已呈现 1 列卡片和透明前景；本地缓存 `default-cached-201564b39ddcf950.png` 已更新为新渲染结果。
+- 本地 AstrBot 同步校验：`services/renderer.py`、`tests/test_menu_services.py`、`docs/page-editor-verification.md` 源/目标 SHA256 一致。
+### Notes
+- `services/renderer.py`：对 `.preview-card` 的 style 属性使用 HTML 转义，修复渲染时 CSS 变量被双引号截断的问题。
+- `tests/test_menu_services.py`：新增 HTMLParser 级断言，确保浏览器可解析的 style 属性中仍包含宽度、列数和前景透明度变量。
+- `docs/page-editor-verification.md`：补充渲染 HTML 内联样式必须做属性转义的契约，防止保存正确但渲染回退默认值。
+- `progress.md`：追加本轮修复、验证、同步和回滚记录。
+- 回滚方式：`git checkout -- services/renderer.py tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如需回滚本地 AstrBot，同步上一提交的同名文件到 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并重新生成或删除对应渲染缓存。

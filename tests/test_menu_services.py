@@ -3,6 +3,7 @@ from __future__ import annotations
 import tempfile
 import unittest
 import re
+from html.parser import HTMLParser
 from pathlib import Path
 
 from services.asset_storage import AssetStorage
@@ -20,6 +21,19 @@ from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
+
+
+class _PreviewCardStyleParser(HTMLParser):
+    def __init__(self) -> None:
+        super().__init__()
+        self.style = ""
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        if self.style or tag != "div":
+            return
+        attr_map = dict(attrs)
+        if attr_map.get("class") == "preview-card":
+            self.style = attr_map.get("style") or ""
 
 
 class MenuModelTests(unittest.TestCase):
@@ -860,6 +874,12 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn(f"--preview-width:{width}px", html)
             self.assertIn("--preview-columns:2", html)
             self.assertIn("--preview-foreground-opacity:0.920", html)
+            parser = _PreviewCardStyleParser()
+            parser.feed(html)
+            self.assertIn("--preview-font-family:", parser.style)
+            self.assertIn(f"--preview-width:{width}px", parser.style)
+            self.assertIn("--preview-columns:2", parser.style)
+            self.assertIn("--preview-foreground-opacity:0.920", parser.style)
             self.assertIn('class="preview-inner"', html)
             self.assertIn('class="preview-item size-standard', html)
             self.assertIn('class="preview-icon"', html)

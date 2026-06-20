@@ -131,7 +131,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
   </style>
 </head>
 <body>
-  <div class="preview-card" style="{style_attr}">
+  <div class="preview-card" style="{_escape(style_attr)}">
     {background_markup}
     <div class="preview-bg-overlay"></div>
     <div class="preview-inner">
