@@ -133,6 +133,9 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("const isSavedMenu = state.serverMenuIds.has(currentId);", app_js)
         self.assertIn("function confirmDialog(title, message", app_js)
         self.assertIn("const confirmed = await confirmDialog(", app_js)
+        self.assertIn("renderDeletedMenuList", app_js)
+        self.assertIn("restoreDeletedMenu", app_js)
+        self.assertIn('assets: Array.isArray(data.assets) ? data.assets : []', app_js)
         self.assertIn('label: "一键重置样式"', app_js)
         self.assertIn("mutator(ensureStyle(state.menu));", app_js)
 
@@ -174,6 +177,11 @@ class MenuEditorSourceTests(unittest.TestCase):
             "activateLocalMenu",
             "createDefaultMenu",
             "chooseFallbackMenuId",
+            "showImportResult",
+            "syncThemeSelectOptions",
+            "morandi",
+            "macaron",
+            "seaSalt",
             "contrastWarningText",
             "fixContrastColors",
             "background_image_asset_id",
@@ -187,7 +195,7 @@ class MenuEditorSourceTests(unittest.TestCase):
         ):
             self.assertIn(token, app_js)
 
-        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong", "confirm-dialog"):
+        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong", "confirm-dialog", "history-panel", "import-result"):
             self.assertIn(token, css)
 
 
@@ -294,6 +302,18 @@ class MenuStorageTests(unittest.TestCase):
                 mode="replace",
             )
             self.assertEqual([menu["id"] for menu in menus], ["imported"])
+
+    def test_import_merge_returns_active_menus_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            storage.save_menu({"id": "old", "sections": [{"title": "功能", "items": [{"label": "帮助"}]}]})
+            storage.delete_menu("old")
+            menus = storage.import_menus(
+                [{"id": "new", "sections": [{"title": "功能", "items": [{"label": "菜单"}]}]}],
+                mode="merge",
+            )
+            self.assertEqual({menu["id"] for menu in menus}, {"default", "new"})
+            self.assertEqual([menu["id"] for menu in storage.list_deleted_menus()], ["old"])
 
     def test_local_renderer_writes_png(self):
         with tempfile.TemporaryDirectory() as tmp:

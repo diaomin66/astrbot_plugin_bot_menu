@@ -231,10 +231,21 @@ class BotMenuPlugin(Star):
             else:
                 raw_menus = payload
                 mode = "merge"
-            menus = self.storage.import_menus(raw_menus, mode=mode)
-            for menu in menus:
+            raw_import_count = len(raw_menus) if isinstance(raw_menus, list) else 0
+            imported_menus = self.storage.import_menus(raw_menus, mode=mode)
+            active_menus = self.storage.list_menus()
+            active_ids = {menu["id"] for menu in active_menus}
+            for menu in active_menus:
                 self.render_coordinator.schedule(menu)
-            return json_response({"menus": menus})
+            return json_response(
+                {
+                    "menus": active_menus,
+                    "deleted_menus": self.storage.list_deleted_menus(),
+                    "default_menu_id": self._effective_default_menu_id(),
+                    "imported_count": raw_import_count,
+                    "active_imported_count": sum(1 for menu in imported_menus if menu["id"] in active_ids),
+                }
+            )
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
 

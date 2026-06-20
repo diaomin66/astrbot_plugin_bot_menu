@@ -64,9 +64,15 @@ const CARD_TEMPLATES = {
 const THEME_PRESETS = {
   aurora: { label: "极光紫", primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
   minimal: { label: "清爽蓝", primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
-  midnight: { label: "午夜蓝", primary_color: "#38bdf8", background_color: "#111827", card_color: "#1f2937", text_color: "#f8fafc", muted_color: "#cbd5e1" },
+  midnight: { label: "午夜蓝", primary_color: "#60a5fa", background_color: "#0b1220", card_color: "#172033", text_color: "#edf3ff", muted_color: "#aebbd2" },
   forest: { label: "森林绿", primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
   sunrise: { label: "日出橙", primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
+  morandi: { label: "莫兰迪雾", primary_color: "#8f9d8a", background_color: "#f1eee8", card_color: "#fbfaf6", text_color: "#3f4640", muted_color: "#7b8179" },
+  sage: { label: "鼠尾草绿", primary_color: "#91a58f", background_color: "#eef3ed", card_color: "#fbfdf8", text_color: "#34403a", muted_color: "#73806f" },
+  macaron: { label: "马卡龙粉", primary_color: "#f29ca3", background_color: "#fff1f3", card_color: "#ffffff", text_color: "#4a3a3f", muted_color: "#9b737b" },
+  lavender: { label: "薰衣草奶", primary_color: "#a78bfa", background_color: "#f4f0ff", card_color: "#ffffff", text_color: "#3e3558", muted_color: "#83779e" },
+  butter: { label: "奶油杏", primary_color: "#e8b86d", background_color: "#fff8e8", card_color: "#fffef9", text_color: "#4d4030", muted_color: "#917f62" },
+  seaSalt: { label: "海盐薄荷", primary_color: "#5bb8a8", background_color: "#eefbf8", card_color: "#ffffff", text_color: "#264844", muted_color: "#6f8b86" },
 };
 
 const STYLE_COPY_KEYS = [
@@ -270,6 +276,7 @@ function bindEvents() {
     event.preventDefault();
     event.returnValue = "";
   });
+  syncThemeSelectOptions();
   renderThemePresetCards();
   bindPreviewInteractions();
   bindModalChrome();
@@ -1626,10 +1633,9 @@ async function exportMenus() {
 async function importMenus(event) {
   const file = event.target.files?.[0];
   if (!file) return;
-  if (!(await confirmLeaveDirty())) {
-    event.target.value = "";
-    return;
-  }
+  const hadDirtyWork = state.dirty;
+  stashActiveMenu();
+  if (hadDirtyWork) setStatus("已先保留当前未保存内容为本地草稿，再继续导入。", "warning");
   try {
     const data = JSON.parse(await file.text());
     const menus = Array.isArray(data) ? data : data.menus;
@@ -1644,51 +1650,173 @@ async function importMenus(event) {
       `无效项：${invalid}`,
       `内联资产：${Array.isArray(data.assets) ? data.assets.length : 0}`,
     ].join("\n");
-    if (!confirm(`导入预览：\n${summary}\n\n继续导入？`)) return;
-    const result = await bridge.apiPost("import", { menus, mode: "merge" });
+    const confirmed = await confirmDialog("导入菜单包？", `导入预览：\n${summary}\n\n继续导入后会合并到当前菜单列表。`, {
+      confirmLabel: "确认导入",
+    });
+    if (!confirmed) {
+      setStatus("已取消导入。");
+      return;
+    }
+    setStatus("正在导入菜单包...");
+    const result = await bridge.apiPost("import", {
+      menus,
+      assets: Array.isArray(data.assets) ? data.assets : [],
+      mode: "merge",
+    });
     state.menus = result.menus || [];
     setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
     refreshSchemeSelect();
-    await selectMenu(state.menus[0]?.id);
-    setStatus("导入成功。");
+    const preferredId = chooseExistingMenuId(added[0], overwritten[0], state.currentId, state.menus[0]?.id);
+    if (preferredId) await selectMenu(preferredId);
+    showImportResult({
+      added,
+      overwritten,
+      invalid,
+      assetCount: Array.isArray(data.assets) ? data.assets.length : 0,
+      activeCount: state.menus.length,
+      importedCount: result.imported_count ?? incoming.length,
+    });
+    setStatus(`导入成功：新增 ${added.length}，覆盖 ${overwritten.length}，当前可用菜单 ${state.menus.length} 个。`, "success");
   } catch (error) {
-    setStatus(`导入失败：${error.message}`);
+    setStatus(`导入失败：${error.message}`, "error");
   } finally {
     event.target.value = "";
   }
 }
 
-async function openHistoryPanel() {
-  if (!state.currentId) return;
+function showImportResult({ added, overwritten, invalid, assetCount, activeCount, importedCount }) {
   const body = document.createElement("div");
-  body.className = "entity-list";
-  openModal("历史版本", body, [{ label: "刷新", onClick: openHistoryPanel }]);
+  body.className = "import-result";
+  body.innerHTML = `
+    <p><strong>导入完成</strong>：读取 ${importedCount} 个菜单，当前可用 ${activeCount} 个菜单。</p>
+    <ul>
+      <li>新增：${escapeHtml(added.length ? added.join(", ") : "无")}</li>
+      <li>覆盖：${escapeHtml(overwritten.length ? overwritten.join(", ") : "无")}</li>
+      <li>无效项：${invalid}</li>
+      <li>内联资产：${assetCount}</li>
+    </ul>`;
+  openModal("导入结果", body, [{ label: "知道了", className: "primary", onClick: closeModal }]);
+}
+
+async function openHistoryPanel() {
+  const body = document.createElement("div");
+  body.className = "history-panel";
+  openModal("历史与恢复", body, [{ label: "刷新", onClick: openHistoryPanel }]);
   try {
-    const data = await bridge.apiGet(`menus/history/${encodeURIComponent(state.currentId)}`);
-    const history = data.history || [];
-    if (!history.length) {
-      body.textContent = "暂无历史快照。保存或删除菜单前会自动创建快照。";
-      return;
-    }
-    history.forEach((snapshot) => {
-      const row = document.createElement("article");
-      row.className = "entity-row";
-      row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(snapshot.menu?.title || snapshot.menu_id)}</strong><small>${escapeHtml(snapshot.created_at || "")} · ${escapeHtml(snapshot.reason || "")}</small></div>`;
-      row.append(actionRow([
-        { label: "恢复此版本", className: "primary", onClick: async () => {
-          if (!confirm("确定恢复此历史版本？当前内容会先创建快照。")) return;
-          const result = await bridge.apiPost("menus/restore", { menu_id: snapshot.menu_id, snapshot_id: snapshot.id });
-          state.menus = result.menus || state.menus;
-          await selectMenu(result.menu?.id || snapshot.menu_id);
-          closeModal();
-        } },
-      ]));
-      body.append(row);
-    });
+    const menuData = await bridge.apiGet("menus");
+    const deletedMenus = menuData.deleted_menus || [];
+    const historyData = state.currentId
+      ? await bridge.apiGet(`menus/history/${encodeURIComponent(state.currentId)}`)
+      : { history: [] };
+    replaceChildrenSafe(body);
+    body.append(
+      historySectionTitle("当前菜单快照", state.currentId ? `菜单 ID：${state.currentId}` : "尚未选择菜单"),
+      renderSnapshotList(historyData.history || []),
+      historySectionTitle("已删除菜单", deletedMenus.length ? "可从这里恢复误删菜单" : "暂无已删除菜单"),
+      renderDeletedMenuList(deletedMenus),
+    );
   } catch (error) {
     body.textContent = `历史加载失败：${error.message}`;
   }
+}
+
+function historySectionTitle(title, subtitle) {
+  const wrap = document.createElement("div");
+  wrap.className = "history-section-title";
+  wrap.innerHTML = `<strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || "")}</small>`;
+  return wrap;
+}
+
+function renderSnapshotList(history) {
+  const list = document.createElement("div");
+  list.className = "entity-list";
+  if (!history.length) {
+    list.append(emptyState("暂无当前菜单快照。保存、删除或恢复菜单前会自动创建快照。"));
+    return list;
+  }
+  history.forEach((snapshot) => {
+    const row = document.createElement("article");
+    row.className = "entity-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(snapshot.menu?.title || snapshot.menu_id)}</strong><small>${escapeHtml(snapshot.created_at || "")} · ${escapeHtml(historyReasonLabel(snapshot.reason))}</small></div>`;
+    row.append(actionRow([
+      { label: "恢复此版本", className: "primary", onClick: async () => restoreSnapshot(snapshot) },
+    ]));
+    list.append(row);
+  });
+  return list;
+}
+
+function renderDeletedMenuList(deletedMenus) {
+  const list = document.createElement("div");
+  list.className = "entity-list";
+  if (!deletedMenus.length) {
+    list.append(emptyState("暂无已删除菜单。删除菜单后会出现在这里。"));
+    return list;
+  }
+  deletedMenus.forEach((menu) => {
+    const row = document.createElement("article");
+    row.className = "entity-row deleted-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(menu.name || menu.title || menu.id)}</strong><small>${escapeHtml(menu.id)} · 删除于 ${escapeHtml(menu.deleted_at || "")}</small></div>`;
+    row.append(actionRow([
+      { label: "恢复菜单", className: "primary", onClick: async () => restoreDeletedMenu(menu.id) },
+      { label: "查看快照", onClick: async () => selectDeletedHistory(menu.id) },
+    ]));
+    list.append(row);
+  });
+  return list;
+}
+
+function emptyState(message) {
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  empty.textContent = message;
+  return empty;
+}
+
+function historyReasonLabel(reason) {
+  return { save: "保存前快照", delete: "删除前快照", restore: "恢复前快照" }[reason] || reason || "快照";
+}
+
+async function restoreSnapshot(snapshot) {
+  const confirmed = await confirmDialog(
+    "恢复历史版本？",
+    "确定恢复此历史版本？当前内容会先创建快照，恢复后需要等待后台刷新缓存。",
+    { confirmLabel: "恢复版本" },
+  );
+  if (!confirmed) return;
+  const result = await bridge.apiPost("menus/restore", { menu_id: snapshot.menu_id, snapshot_id: snapshot.id });
+  state.menus = result.menus || state.menus;
+  setServerMenuIds(state.menus);
+  await selectMenu(result.menu?.id || snapshot.menu_id);
+  setStatus("历史版本已恢复，后台正在刷新缓存。", "success");
+  closeModal();
+}
+
+async function restoreDeletedMenu(menuId) {
+  const confirmed = await confirmDialog(
+    "恢复已删除菜单？",
+    `确定恢复菜单 ${menuId}？恢复后会重新出现在菜单方案列表。`,
+    { confirmLabel: "恢复菜单" },
+  );
+  if (!confirmed) return;
+  const result = await bridge.apiPost("menus/restore", { menu_id: menuId, deleted: true });
+  state.menus = result.menus || state.menus;
+  setServerMenuIds(state.menus);
+  await selectMenu(result.menu?.id || menuId);
+  setStatus("已恢复删除的菜单。", "success");
+  closeModal();
+}
+
+async function selectDeletedHistory(menuId) {
+  const data = await bridge.apiGet(`menus/history/${encodeURIComponent(menuId)}`);
+  const body = document.createElement("div");
+  body.className = "history-panel";
+  body.append(
+    historySectionTitle("已删除菜单快照", `菜单 ID：${menuId}`),
+    renderSnapshotList(data.history || []),
+  );
+  openModal("已删除菜单快照", body, [{ label: "返回历史", onClick: openHistoryPanel }]);
 }
 
 async function handleBackgroundUpload(event) {
@@ -1901,6 +2029,7 @@ function centerBackgroundImage() {
 
 function renderThemePresetCards() {
   if (!els.themePresetCards) return;
+  syncThemeSelectOptions();
   els.themePresetCards.innerHTML = Object.entries(THEME_PRESETS).map(([key, preset]) => `
     <button type="button" class="theme-card" data-theme="${key}" style="--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}">
       <span class="theme-swatch"><i></i></span><strong>${preset.label}</strong><small>${key}</small>
@@ -1913,6 +2042,15 @@ function renderThemePresetCards() {
       renderAll();
     });
   });
+}
+
+function syncThemeSelectOptions() {
+  if (!els.theme) return;
+  const currentValue = els.theme.value || state.menu?.style?.theme || "aurora";
+  els.theme.innerHTML = Object.entries(THEME_PRESETS)
+    .map(([key, preset]) => `<option value="${escapeAttr(key)}">${escapeHtml(preset.label)}</option>`)
+    .join("");
+  els.theme.value = THEME_PRESETS[currentValue] ? currentValue : "aurora";
 }
 
 async function copyStyleToMenus() {

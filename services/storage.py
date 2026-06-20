@@ -146,7 +146,7 @@ class MenuStorage:
                     by_id[menu["id"]] = menu
                 data["menus"] = list(by_id.values())
             self._write(data)
-            return list(data["menus"])
+            return [menu for menu in data["menus"] if not menu.get("deleted_at")]
 
     def export_data(self) -> dict[str, Any]:
         with self._lock:
