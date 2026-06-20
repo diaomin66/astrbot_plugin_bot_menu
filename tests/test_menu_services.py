@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import re
 from pathlib import Path
 
 from services.asset_storage import AssetStorage
@@ -194,6 +195,10 @@ class MenuEditorSourceTests(unittest.TestCase):
             "watermark",
         ):
             self.assertIn(token, app_js)
+        theme_block = app_js.split("const THEME_PRESETS = {", 1)[1].split("};", 1)[0]
+        self.assertEqual(len(re.findall(r"^\s+[A-Za-z0-9_]+:\s+\{ label:", theme_block, re.MULTILINE)), 10)
+        self.assertNotIn("midnight", app_js + index_html)
+        self.assertNotIn("午" + "夜蓝", app_js + index_html)
 
         for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong", "confirm-dialog", "history-panel", "import-result"):
             self.assertIn(token, css)

@@ -64,7 +64,6 @@ const CARD_TEMPLATES = {
 const THEME_PRESETS = {
   aurora: { label: "极光紫", primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
   minimal: { label: "清爽蓝", primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
-  midnight: { label: "午夜蓝", primary_color: "#60a5fa", background_color: "#0b1220", card_color: "#172033", text_color: "#edf3ff", muted_color: "#aebbd2" },
   forest: { label: "森林绿", primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
   sunrise: { label: "日出橙", primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
   morandi: { label: "莫兰迪雾", primary_color: "#8f9d8a", background_color: "#f1eee8", card_color: "#fbfaf6", text_color: "#3f4640", muted_color: "#7b8179" },
