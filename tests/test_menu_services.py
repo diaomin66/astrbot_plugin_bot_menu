@@ -169,6 +169,20 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('assets: Array.isArray(data.assets) ? data.assets : []', app_js)
         self.assertIn('label: "一键重置样式"', app_js)
 
+    def test_save_flushes_live_modal_controls_before_building_payload(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("function flushLiveEditorControls()", app_js)
+        self.assertIn("function dispatchEditorControlEvent(control, eventName)", app_js)
+        self.assertIn('els.editorModal.querySelectorAll("input, select, textarea")', app_js)
+        self.assertIn('if (control.type === "file") return;', app_js)
+        self.assertIn('dispatchEditorControlEvent(control, "input");', app_js)
+        self.assertIn('dispatchEditorControlEvent(control, "change");', app_js)
+        self.assertIn('event.initEvent(eventName, true, false);', app_js)
+        save_body = app_js.split("async function saveMenu()", 1)[1].split("function createDefaultMenu", 1)[0]
+        self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("syncFormToMenu({ mark: false });"))
+        self.assertLess(save_body.index("syncFormToMenu({ mark: false });"), save_body.index('bridge.apiPost("menus/save"'))
+
     def test_editor_exposes_single_and_batch_card_layout_controls(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")

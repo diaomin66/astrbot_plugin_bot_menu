@@ -317,6 +317,30 @@ function bindValueChange(control, handler) {
   events.forEach((eventName) => control.addEventListener(eventName, emitChange));
 }
 
+function flushLiveEditorControls() {
+  const active = document.activeElement;
+  if (active && typeof active.blur === "function" && els.editorModal && els.editorModal.contains(active)) {
+    active.blur();
+  }
+  if (!els.editorModal || els.editorModal.hidden) return;
+  els.editorModal.querySelectorAll("input, select, textarea").forEach((control) => {
+    if (control.type === "file") return;
+    dispatchEditorControlEvent(control, "input");
+    dispatchEditorControlEvent(control, "change");
+  });
+}
+
+function dispatchEditorControlEvent(control, eventName) {
+  let event;
+  if (typeof Event === "function") {
+    event = new Event(eventName, { bubbles: true });
+  } else {
+    event = document.createEvent("Event");
+    event.initEvent(eventName, true, false);
+  }
+  control.dispatchEvent(event);
+}
+
 function controlValueSignature(control) {
   if (!control) return "";
   if (control.type === "checkbox") return control.checked ? "1" : "0";
@@ -1592,6 +1616,7 @@ function removeItem(sectionIndex, itemIndex) {
 
 async function saveMenu() {
   const draftIdBeforeSave = currentDraftId();
+  flushLiveEditorControls();
   await flushPendingBackgroundAsset();
   syncFormToMenu({ mark: false });
   if (!validateMenu({ scroll: true })) {
