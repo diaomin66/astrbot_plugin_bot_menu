@@ -245,6 +245,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       -webkit-font-smoothing: antialiased;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 calc(16px + var(--preview-shadow-strength, 1) * 10px) calc(40px + var(--preview-shadow-strength, 1) * 50px) rgba(15,23,42,calc(.08 + var(--preview-shadow-strength, 1) * .07));
     }}
     .preview-bg-image {{
       position: absolute;

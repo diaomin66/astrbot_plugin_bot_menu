@@ -7,7 +7,7 @@ from pathlib import Path
 
 from services.asset_storage import AssetStorage
 from services.history_storage import MenuHistoryStorage
-from services.menu_model import MenuValidationError, normalize_menu
+from services.menu_model import DEFAULT_STYLE, MenuValidationError, normalize_menu
 from services.local_image import (
     _build_browser_screenshot_command,
     _crop_transparent_padding_png,
@@ -440,6 +440,53 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4))
             self.assertFalse(Path(first_cached).exists())
 
+    def test_render_cache_fingerprint_tracks_every_style_field(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            cache = MenuRenderCache(tmp)
+            base_fingerprint = cache.fingerprint(menu, render_width=900, render_scale=4)
+            data_url = "data:image/png;base64,iVBORw0KGgo="
+            replacements = {
+                "theme": "macaron",
+                "primary_color": "#2563eb",
+                "background_color": "#fef3c7",
+                "background_image": data_url,
+                "background_image_asset_id": "asset-style-test",
+                "background_image_name": "bg-test.png",
+                "background_image_x": 12,
+                "background_image_y": -18,
+                "background_image_width": 160,
+                "background_overlay": 35,
+                "background_blur": 8,
+                "background_brightness": 135,
+                "card_color": "#f1f5f9",
+                "text_color": "#020617",
+                "muted_color": "#475569",
+                "font_family": "Noto Sans CJK SC",
+                "foreground_opacity": 61,
+                "radius": 8,
+                "width_mode": "custom",
+                "width": 980,
+                "columns": 3,
+                "section_gap_mode": "custom",
+                "section_gap": 0,
+                "card_gap": 26,
+                "section_padding": 32,
+                "shadow_strength": 4,
+                "border_strength": 3,
+                "watermark": "demo",
+                "show_updated_at": False,
+            }
+            self.assertEqual(set(DEFAULT_STYLE), set(replacements))
+            for key, value in replacements.items():
+                changed_menu = normalize_menu({**menu, "style": {**menu["style"], key: value}})
+                with self.subTest(style_key=key):
+                    self.assertNotEqual(
+                        base_fingerprint,
+                        cache.fingerprint(changed_menu, render_width=900, render_scale=4),
+                    )
+
     def test_render_status_reports_missing_rendering_ready_and_error(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
@@ -546,6 +593,49 @@ class MenuStorageTests(unittest.TestCase):
             path = render_menu_image(menu, tmp, output_scale=2)
             with Image.open(path) as image:
                 self.assertEqual(image.width, preview_width_for_menu(menu) * 2)
+
+    def test_pillow_renderer_uses_spacing_and_visual_style_fields(self):
+        from PIL import Image
+
+        base_menu = normalize_menu(
+            {
+                "id": "spacing",
+                "style": {"width_mode": "custom", "width": 760, "columns": 2, "show_updated_at": False},
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {"label": "帮助", "command": "/help", "description": "查看帮助"},
+                            {"label": "菜单", "command": "/menu", "description": "查看菜单"},
+                            {"label": "状态", "command": "/status", "description": "查看状态"},
+                        ],
+                    }
+                ],
+            }
+        )
+        spacious_menu = normalize_menu(
+            {
+                **base_menu,
+                "style": {
+                    **base_menu["style"],
+                    "card_gap": 60,
+                    "section_padding": 60,
+                    "shadow_strength": 5,
+                    "border_strength": 4,
+                    "background_overlay": 40,
+                    "background_brightness": 150,
+                    "background_blur": 4,
+                    "watermark": "demo",
+                },
+            }
+        )
+        with tempfile.TemporaryDirectory() as tmp:
+            base_path = render_menu_image(base_menu, tmp, output_scale=1)
+            spacious_path = render_menu_image(spacious_menu, tmp, output_scale=1)
+            with Image.open(base_path) as base_image, Image.open(spacious_path) as spacious_image:
+                self.assertEqual(base_image.width, spacious_image.width)
+                self.assertGreater(spacious_image.height, base_image.height)
+                self.assertNotEqual(base_image.tobytes(), spacious_image.tobytes())
 
     def test_release_metadata_readme_changelog_and_logo_are_consistent(self):
         import re
@@ -763,6 +853,7 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("--preview-card-gap:6px", html)
         self.assertIn("--preview-section-padding:12px", html)
         self.assertIn("--preview-shadow-strength:2", html)
+        self.assertIn("var(--preview-shadow-strength, 1)", html)
         self.assertIn("--preview-border-strength:3", html)
         self.assertIn("--preview-bg-overlay:0.150", html)
         self.assertIn("--preview-bg-blur:4px", html)

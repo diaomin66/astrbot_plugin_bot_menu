@@ -48,22 +48,27 @@ def render_menu_image(
     foreground_opacity = _clamp_int(style.get("foreground_opacity"), default=92, minimum=0, maximum=100) / 100
     columns = _clamp_int(style.get("columns"), default=2, minimum=1, maximum=4)
     section_gap = _section_gap_for_menu(menu, style) * scale
+    item_gap = _clamp_int(style.get("card_gap"), default=10, minimum=0, maximum=60) * scale
+    section_padding = _clamp_int(style.get("section_padding"), default=15, minimum=0, maximum=80) * scale
+    shadow_strength = _clamp_int(style.get("shadow_strength"), default=1, minimum=0, maximum=5)
+    border_strength = _clamp_int(style.get("border_strength"), default=1, minimum=0, maximum=5)
+    border_width = border_strength * scale
+    font_family = str(style.get("font_family") or "").strip()
 
-    font_regular = _font(20 * scale)
-    font_small = _font(17 * scale)
-    font_mono = _font(17 * scale)
-    font_title = _font(46 * scale, weight="bold")
-    font_section = _font(25 * scale, weight="bold")
-    font_label = _font(22 * scale, weight="bold")
-    font_badge = _font(18 * scale, weight="bold")
+    font_regular = _font(20 * scale, family=font_family)
+    font_small = _font(17 * scale, family=font_family)
+    font_mono = _font(17 * scale, family=font_family)
+    font_title = _font(46 * scale, weight="bold", family=font_family)
+    font_section = _font(25 * scale, weight="bold", family=font_family)
+    font_label = _font(22 * scale, weight="bold", family=font_family)
+    font_badge = _font(18 * scale, weight="bold", family=font_family)
     font_icon = _font(28 * scale, emoji=True)
 
     margin = 28 * scale
     shell_pad = 30 * scale
     inner_width = width - margin * 2
     content_width = inner_width - shell_pad * 2
-    item_gap = 12 * scale
-    item_area_width = content_width - 44 * scale
+    item_area_width = content_width - section_padding * 2
     item_width = (item_area_width - item_gap * max(0, columns - 1)) // columns
 
     # Measure dynamic height first, then paint once.
@@ -83,7 +88,8 @@ def render_menu_image(
         for row in rows:
             row_width = _row_item_width(row, item_area_width, item_gap, columns)
             row_heights.append(max(_item_height(item, row_width, font_label, font_small, scale) for item in row))
-        section_height = 22 * scale + 30 * scale + 16 * scale + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + 22 * scale
+        section_header_height = section_padding + 30 * scale + 16 * scale
+        section_height = section_header_height + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + section_padding
         section_layouts.append({"section": section, "rows": rows, "row_heights": row_heights, "height": int(section_height)})
         y += section_height + section_gap
 
@@ -96,10 +102,19 @@ def render_menu_image(
     draw = ImageDraw.Draw(image)
     if not style.get("background_image"):
         _draw_soft_background(draw, width, height, primary, bg, scale)
+    _draw_background_overlay(image, style)
     shell = (margin, margin, width - margin, height - margin)
     
     # Soft shadow
-    _draw_shadow(image, shell, radius, blur=12 * scale, offset_y=8 * scale, color=_mix(muted, bg, 0.4))
+    if shadow_strength:
+        _draw_shadow(
+            image,
+            shell,
+            radius,
+            blur=(8 + shadow_strength * 10) * scale,
+            offset_y=(4 + shadow_strength * 4) * scale,
+            color=(15, 23, 42, min(180, 24 + shadow_strength * 26)),
+        )
     
     _draw_translucent_rounded_rectangle(
         image,
@@ -107,8 +122,8 @@ def render_menu_image(
         radius=radius,
         fill=(255, 255, 255),
         opacity=foreground_opacity,
-        outline=_mix(muted, (255, 255, 255), 0.72),
-        width=1 * scale,
+        outline=_mix(muted, (255, 255, 255), 0.72) if border_width else None,
+        width=max(1, border_width),
     )
     _draw_translucent_rectangle(
         image,
@@ -141,16 +156,21 @@ def render_menu_image(
             radius=radius,
             fill=card,
             opacity=foreground_opacity,
-            outline=_mix(muted, (255, 255, 255), 0.75),
+            outline=_mix(muted, (255, 255, 255), 0.75) if border_width else None,
+            width=max(1, border_width),
         )
-        draw.rounded_rectangle((x + 22 * scale, y + 22 * scale, x + 32 * scale, y + 50 * scale), radius=5 * scale, fill=primary)
-        draw.text((x + 44 * scale, y + 20 * scale), str(section.get("title") or "分组"), font=font_section, fill=text)
-        y += 68 * scale
+        draw.rounded_rectangle(
+            (x + section_padding, y + section_padding, x + section_padding + 10 * scale, y + section_padding + 28 * scale),
+            radius=5 * scale,
+            fill=primary,
+        )
+        draw.text((x + section_padding + 22 * scale, y + section_padding - 2 * scale), str(section.get("title") or "\u5206\u7ec4"), font=font_section, fill=text)
+        y += section_padding + 30 * scale + 16 * scale
         for row, row_height in zip(layout["rows"], layout["row_heights"], strict=False):
-            item_x = x + 22 * scale
+            item_x = x + section_padding
             row_width = _row_item_width(row, item_area_width, item_gap, columns)
             for item in row:
-                _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity)
+                _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity, border_width=border_width)
                 item_x += row_width + item_gap
             y += row_height + item_gap
         y = bottom + section_gap
@@ -162,6 +182,10 @@ def render_menu_image(
             updated = _format_time(menu.get("updated_at"))
             right = f"更新：{updated}"
             draw.text((x + content_width - _text_width(font_small, right), footer_y), right, font=font_small, fill=muted)
+
+    watermark = str(style.get("watermark") or "").strip()
+    if watermark:
+        _draw_watermark(image, watermark, muted, scale, font_family)
 
     target_width = base_width * output_scale
     target_height = int(height * output_scale / scale)
@@ -640,11 +664,28 @@ def _paste_custom_background(image, style: dict[str, Any], width: int, height: i
             target_width = max(1, int(width * image_width_pct / 100))
             target_height = max(1, int(target_width * bg_image.height / bg_image.width))
             bg_image = bg_image.resize((target_width, target_height), Image.Resampling.LANCZOS)
+            brightness = _clamp_int(style.get("background_brightness"), default=100, minimum=20, maximum=200) / 100
+            if brightness != 1:
+                from PIL import ImageEnhance
+
+                bg_image = ImageEnhance.Brightness(bg_image).enhance(brightness)
+            blur = _clamp_int(style.get("background_blur"), default=0, minimum=0, maximum=40) * scale
+            if blur:
+                from PIL import ImageFilter
+
+                bg_image = bg_image.filter(ImageFilter.GaussianBlur(blur))
             x = int(width * _clamp_int(style.get("background_image_x"), default=0, minimum=-300, maximum=300) / 100)
             y = int(height * _clamp_int(style.get("background_image_y"), default=0, minimum=-300, maximum=300) / 100)
             image.paste(bg_image, (x, y))
     except Exception:
         return
+
+
+def _draw_background_overlay(image, style: dict[str, Any]) -> None:
+    overlay = _clamp_int(style.get("background_overlay"), default=0, minimum=0, maximum=100) / 100
+    if overlay <= 0:
+        return
+    _draw_translucent_rectangle(image, (0, 0, image.width, image.height), fill=(15, 23, 42), opacity=overlay)
 
 
 def _draw_translucent_rounded_rectangle(
@@ -758,7 +799,7 @@ def _item_typography(item: dict[str, Any], scale: int) -> dict[str, Any]:
     }
 
 
-def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity) -> None:
+def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity, *, border_width: int = 1) -> None:
     from PIL import ImageDraw
 
     draw = ImageDraw.Draw(image)
@@ -787,7 +828,8 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
         radius=max(12 * scale, radius - 8 * scale),
         fill=fill,
         opacity=opacity,
-        outline=_mix(muted, (255, 255, 255), 0.82),
+        outline=_mix(muted, (255, 255, 255), 0.82) if border_width else None,
+        width=max(1, border_width),
     )
     _draw_translucent_rounded_rectangle(
         image,
@@ -860,6 +902,21 @@ def _draw_shadow(image, box, radius, blur, offset_y, color):
     image.paste(shadow, (0, 0), shadow)
 
 
+def _draw_watermark(image, text: str, color: tuple[int, int, int], scale: int, family: str = "") -> None:
+    from PIL import Image, ImageDraw
+
+    font = _font(42 * scale, weight="bold", family=family)
+    overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(overlay)
+    padding = 26 * scale
+    text_width = _text_width(font, text)
+    text_height = _text_height(font, text, max(1, image.width), 46 * scale) or 46 * scale
+    x = max(padding, image.width - padding - text_width)
+    y = max(padding, image.height - padding - text_height)
+    draw.text((x, y), text, font=font, fill=(*color, 62))
+    image.alpha_composite(overlay)
+
+
 def _draw_soft_background(draw, width, height, primary, bg, scale) -> None:
     for i in range(0, 260 * scale, 8 * scale):
         ratio = i / (260 * scale)
@@ -915,10 +972,14 @@ def _ellipsize(lines: list[str], font, max_width: int) -> list[str]:
     return lines
 
 
-def _font(size: int, *, emoji: bool = False, weight: str = "normal"):
+def _font(size: int, *, emoji: bool = False, weight: str = "normal", family: str = ""):
     from PIL import ImageFont
 
     candidates = []
+    if family:
+        family_path = Path(family)
+        if family_path.exists():
+            candidates.append(str(family_path))
     if emoji:
         candidates.extend([r"C:\Windows\Fonts\seguiemj.ttf", r"C:\Windows\Fonts\msyh.ttc"])
     else:
