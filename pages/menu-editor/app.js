@@ -1,5 +1,58 @@
-const bridge = window.AstrBotPluginPage;
 const $ = (id) => document.getElementById(id);
+let bridge = null;
+const editorRuntime = window.MenuEditorRuntime || {};
+const editorApi = window.MenuEditorApi || {};
+const editorBackground = window.MenuEditorBackground || {};
+const editorPreview = window.MenuEditorPreview || {};
+const editorModal = window.MenuEditorModal || {};
+const editorShortcuts = window.MenuEditorShortcuts || {};
+const editorValidation = window.MenuEditorValidation || {};
+
+function cloneData(value) {
+  if (editorRuntime.cloneData) return editorRuntime.cloneData(value);
+  if (typeof structuredClone === "function") return structuredClone(value);
+  if (value === undefined) return undefined;
+  return JSON.parse(JSON.stringify(value));
+}
+
+function safeStorageGet(key, fallback = "") {
+  if (editorRuntime.safeStorageGet) return editorRuntime.safeStorageGet(key, fallback);
+  try {
+    return window.localStorage?.getItem(key) ?? fallback;
+  } catch (error) {
+    console.warn("localStorage get failed", error);
+    return fallback;
+  }
+}
+
+function safeStorageSet(key, value) {
+  if (editorRuntime.safeStorageSet) return editorRuntime.safeStorageSet(key, value);
+  try {
+    window.localStorage?.setItem(key, value);
+  } catch (error) {
+    console.warn("localStorage set failed", error);
+  }
+}
+
+function safeStorageRemove(key) {
+  if (editorRuntime.safeStorageRemove) return editorRuntime.safeStorageRemove(key);
+  try {
+    window.localStorage?.removeItem(key);
+  } catch (error) {
+    console.warn("localStorage remove failed", error);
+  }
+}
+
+function replaceChildrenSafe(node, ...children) {
+  if (editorRuntime.replaceChildrenSafe) return editorRuntime.replaceChildrenSafe(node, ...children);
+  if (!node) return;
+  if (typeof node.replaceChildren === "function") {
+    node.replaceChildren(...children);
+    return;
+  }
+  while (node.firstChild) node.removeChild(node.firstChild);
+  children.forEach((child) => node.append(child));
+}
 
 const CARD_TEMPLATES = {
   compact: { label: "紧凑", icon: "•", title: "快捷项", command: "/cmd", description: "", width: 190 },
@@ -11,33 +64,62 @@ const CARD_TEMPLATES = {
 const THEME_PRESETS = {
   aurora: { label: "极光紫", primary_color: "#7c3aed", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#6b7280" },
   minimal: { label: "清爽蓝", primary_color: "#2563eb", background_color: "#f8fafc", card_color: "#ffffff", text_color: "#111827", muted_color: "#64748b" },
-  midnight: { label: "午夜蓝", primary_color: "#38bdf8", background_color: "#111827", card_color: "#1f2937", text_color: "#f8fafc", muted_color: "#cbd5e1" },
   forest: { label: "森林绿", primary_color: "#059669", background_color: "#ecfdf5", card_color: "#ffffff", text_color: "#064e3b", muted_color: "#64748b" },
   sunrise: { label: "日出橙", primary_color: "#ea580c", background_color: "#fff7ed", card_color: "#ffffff", text_color: "#1f2937", muted_color: "#78716c" },
+  morandi: { label: "莫兰迪雾", primary_color: "#8f9d8a", background_color: "#f1eee8", card_color: "#fbfaf6", text_color: "#3f4640", muted_color: "#7b8179" },
+  sage: { label: "鼠尾草绿", primary_color: "#91a58f", background_color: "#eef3ed", card_color: "#fbfdf8", text_color: "#34403a", muted_color: "#73806f" },
+  macaron: { label: "马卡龙粉", primary_color: "#f29ca3", background_color: "#fff1f3", card_color: "#ffffff", text_color: "#4a3a3f", muted_color: "#9b737b" },
+  lavender: { label: "薰衣草奶", primary_color: "#a78bfa", background_color: "#f4f0ff", card_color: "#ffffff", text_color: "#3e3558", muted_color: "#83779e" },
+  butter: { label: "奶油杏", primary_color: "#e8b86d", background_color: "#fff8e8", card_color: "#fffef9", text_color: "#4d4030", muted_color: "#917f62" },
+  seaSalt: { label: "海盐薄荷", primary_color: "#5bb8a8", background_color: "#eefbf8", card_color: "#ffffff", text_color: "#264844", muted_color: "#6f8b86" },
+};
+
+const CONTENT_BLOCKS = [
+  { value: "command", label: "指令" },
+  { value: "label", label: "名称" },
+  { value: "description", label: "简介" },
+];
+const DEFAULT_CONTENT_ORDER = ["command", "label", "description"];
+const CONTENT_FONT_LIMITS = {
+  command_font_size: { min: 8, max: 34, fallback: 14 },
+  label_font_size: { min: 8, max: 30, fallback: 11.5 },
+  description_font_size: { min: 8, max: 28, fallback: 11.5 },
 };
 
 const STYLE_COPY_KEYS = [
-  "theme", "primary_color", "background_color", "background_image", "background_image_name",
-  "background_image_x", "background_image_y", "background_image_width", "card_color", "text_color",
+  "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
+  "background_image_x", "background_image_y", "background_image_width", "background_overlay", "background_blur", "background_brightness", "card_color", "text_color",
   "muted_color", "foreground_opacity", "radius", "width_mode", "width", "columns",
-  "section_gap_mode", "section_gap", "show_updated_at",
+  "section_gap_mode", "section_gap", "font_family", "card_gap", "section_padding", "shadow_strength", "border_strength", "watermark", "show_updated_at",
 ];
-const MENU_ID_PATTERN = /^[A-Za-z0-9_-]{1,48}$/;
+const MENU_ID_PATTERN = editorValidation.MENU_ID_PATTERN || /^[A-Za-z0-9_-]{1,48}$/;
 const DRAFT_PREFIX = "astrbot_plugin_bot_menu:draft:";
 const COLLAPSE_PREFIX = "astrbot_plugin_bot_menu:collapsed:";
+const HISTORY_LIMIT = 20;
+const FIXED_DENSITY = "compact";
 
 const state = {
   menus: [],
+  serverMenuIds: new Set(),
   defaultMenuId: "default",
   currentId: null,
   menu: null,
+  switchingMenu: false,
   dirty: false,
   saveState: "saved",
   itemSearch: "",
   restoredDraftIds: new Set(),
   collapsedKeys: new Set(),
+  unsavedMenuIds: new Set(),
+  selectedKeys: new Set(),
+  history: [],
+  historyIndex: -1,
+  historyPaused: false,
+  modalCloseHandler: null,
   renderStatusTimer: 0,
   backgroundEditMode: false,
+  batchSelectMode: false,
+  pendingBackgroundAsset: null,
 };
 
 const els = {
@@ -45,10 +127,25 @@ const els = {
   status: $("status"),
   saveState: $("saveState"),
   saveBtn: $("saveBtn"),
+  undoBtn: $("undoBtn"),
+  redoBtn: $("redoBtn"),
   deleteBtn: $("deleteBtn"),
+  historyBtn: $("historyBtn"),
+  batchSelectToggleBtn: $("batchSelectToggleBtn"),
   backgroundEditToggleBtn: $("backgroundEditToggleBtn"),
   renderStatus: $("renderStatus"),
   validationSummary: $("validationSummary"),
+  batchToolbar: $("batchToolbar"),
+  batchCount: $("batchCount"),
+  batchSelectAllBtn: $("batchSelectAllBtn"),
+  batchEnableBtn: $("batchEnableBtn"),
+  batchDisableBtn: $("batchDisableBtn"),
+  batchLayoutBtn: $("batchLayoutBtn"),
+  batchCopyBtn: $("batchCopyBtn"),
+  batchDeleteBtn: $("batchDeleteBtn"),
+  batchMoveUpBtn: $("batchMoveUpBtn"),
+  batchMoveDownBtn: $("batchMoveDownBtn"),
+  batchClearBtn: $("batchClearBtn"),
   sections: $("sections"),
   preview: $("preview"),
   menuId: $("menuId"),
@@ -89,29 +186,60 @@ const els = {
   modalFooter: $("modalFooter"),
 };
 
-await bridge.ready();
-bindEvents();
-await loadMenus();
+window.addEventListener("error", (event) => {
+  const message = event.error?.message || event.message || "未知脚本错误";
+  console.error("bot menu editor runtime error", event.error || event);
+  setStatus(`页面脚本错误：${message}`, "error");
+});
+
+window.addEventListener("unhandledrejection", (event) => {
+  const reason = event.reason?.message || event.reason || "未知异步错误";
+  console.error("bot menu editor async error", event.reason || event);
+  setStatus(`页面异步错误：${reason}`, "error");
+});
+
+initializeEditor();
+
+async function initializeEditor() {
+  try {
+    bindEvents();
+    bridge = await resolvePageBridge();
+    await loadMenus();
+  } catch (error) {
+    console.error("failed to initialize bot menu editor", error);
+    setStatus(`页面初始化失败：${error.message || error}`, "error");
+    updateSaveState("saved");
+  }
+}
 
 function bindEvents() {
   els.schemeSelect.addEventListener("change", async () => {
     const nextId = els.schemeSelect.value;
-    if (!(await confirmLeaveDirty())) {
-      els.schemeSelect.value = state.currentId || "";
-      return;
-    }
-    await selectMenu(nextId);
+    await switchMenu(nextId, { reason: "select" });
   });
-  $("newBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) newMenu(); });
-  $("copyBtn").addEventListener("click", async () => { if (await confirmLeaveDirty()) copyMenu(); });
-  els.deleteBtn.addEventListener("click", deleteMenu);
-  els.backgroundEditToggleBtn.addEventListener("click", toggleBackgroundEditMode);
-  $("saveBtn").addEventListener("click", saveMenu);
-  $("copyStyleBtn").addEventListener("click", copyStyleToMenus);
-  $("resetStyleBtn").addEventListener("click", resetCurrentStyle);
-  $("addSectionBtn").addEventListener("click", addSection);
-  $("exportBtn").addEventListener("click", exportMenus);
+  bindClick($("newBtn"), "新建菜单", newMenu);
+  bindClick($("copyBtn"), "复制菜单", copyMenu);
+  bindClick(els.deleteBtn, "删除菜单", deleteMenu);
+  bindClick(els.undoBtn, "撤销", undoMenuChange);
+  bindClick(els.redoBtn, "重做", redoMenuChange);
+  bindClick(els.historyBtn, "打开历史版本", openHistoryPanel);
+  bindClick(els.batchSelectToggleBtn, "切换批量调整模式", toggleBatchSelectMode);
+  bindClick(els.backgroundEditToggleBtn, "切换背景编辑模式", toggleBackgroundEditMode);
+  bindClick($("saveBtn"), "保存菜单", saveMenu);
+  bindClick($("copyStyleBtn"), "复制样式", copyStyleToMenus);
+  bindClick($("resetStyleBtn"), "重置样式", resetCurrentStyle);
+  bindClick($("addSectionBtn"), "添加分组", addSection);
+  bindClick($("exportBtn"), "导出菜单", exportMenus);
   $("importInput").addEventListener("change", importMenus);
+  bindClick(els.batchSelectAllBtn, "全选卡片", selectAllBatchCards);
+  bindClick(els.batchEnableBtn, "批量启用", () => batchSetEnabled(true));
+  bindClick(els.batchDisableBtn, "批量禁用", () => batchSetEnabled(false));
+  bindClick(els.batchLayoutBtn, "批量排版", openBatchLayoutEditor);
+  bindClick(els.batchCopyBtn, "批量复制", batchCopySelection);
+  bindClick(els.batchDeleteBtn, "批量删除", batchDeleteSelection);
+  bindClick(els.batchMoveUpBtn, "批量上移", () => batchMoveSelection(-1));
+  bindClick(els.batchMoveDownBtn, "批量下移", () => batchMoveSelection(1));
+  bindClick(els.batchClearBtn, "清除选择", clearSelection);
   if (window.ResizeObserver) {
     new ResizeObserver(fitPreviewToStage).observe(els.preview);
   } else {
@@ -156,7 +284,7 @@ function bindEvents() {
   els.centerBackgroundBtn.addEventListener("click", centerBackgroundImage);
   els.coverBackgroundBtn.addEventListener("click", () => fitBackgroundToCover(true));
   els.clearBackgroundBtn.addEventListener("click", clearBackgroundImage);
-  els.itemSearch.addEventListener("input", () => {
+  bindValueChange(els.itemSearch, () => {
     state.itemSearch = els.itemSearch.value.trim().toLowerCase();
     saveSearchState();
     renderAll();
@@ -166,15 +294,131 @@ function bindEvents() {
     event.preventDefault();
     event.returnValue = "";
   });
+  syncThemeSelectOptions();
   renderThemePresetCards();
   bindPreviewInteractions();
   bindModalChrome();
+  bindGlobalShortcuts();
+  applyDensity();
+  updateBatchSelectToggle();
   updateSaveState("saved");
 }
 
 function bindValueChange(control, handler) {
   if (!control) return;
-  control.addEventListener(control.tagName === "SELECT" ? "change" : "input", handler);
+  const events = control.type === "file" ? ["change"] : ["input", "change"];
+  let lastValue = controlValueSignature(control);
+  const emitChange = () => {
+    const nextValue = controlValueSignature(control);
+    if (nextValue === lastValue) return;
+    lastValue = nextValue;
+    handler(control);
+  };
+  events.forEach((eventName) => control.addEventListener(eventName, emitChange));
+}
+
+function controlValueSignature(control) {
+  if (!control) return "";
+  if (control.type === "checkbox") return control.checked ? "1" : "0";
+  if (control.type === "file") return [...(control.files || [])].map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
+  return String(control.value ?? "");
+}
+
+async function resolvePageBridge() {
+  if (editorApi.resolvePageBridge) return editorApi.resolvePageBridge({ timeoutMs: 6000, sleep });
+  const rawBridge = await waitForPageBridge();
+  if (typeof rawBridge.ready === "function") {
+    await rawBridge.ready();
+  }
+  return normalizePageBridge(rawBridge);
+}
+
+async function waitForPageBridge(timeoutMs = 6000) {
+  const startedAt = Date.now();
+  let pageBridge = findPageBridge();
+  while (!pageBridge) {
+    if (Date.now() - startedAt > timeoutMs) {
+      throw new Error("未检测到 AstrBot 页面桥接对象，请在 AstrBot Pages 中打开本页面。");
+    }
+    await sleep(40);
+    pageBridge = findPageBridge();
+  }
+  return pageBridge;
+}
+
+function findPageBridge() {
+  const candidates = [
+    window.AstrBotPluginPage,
+    window.AstrBotPage,
+    window.PluginPage,
+    window.astrBotPluginPage,
+    window.astrbotPluginPage,
+    window.astrbot?.pluginPage,
+    window.astrbot?.page,
+  ];
+  try {
+    if (window.parent && window.parent !== window) {
+      candidates.push(
+        window.parent.AstrBotPluginPage,
+        window.parent.AstrBotPage,
+        window.parent.PluginPage,
+        window.parent.astrbot?.pluginPage,
+        window.parent.astrbot?.page,
+      );
+    }
+  } catch {
+    // Cross-origin parent access can fail in some WebViews; polling local candidates is enough.
+  }
+  return candidates.find((candidate) => candidate && typeof candidate === "object") || null;
+}
+
+function normalizePageBridge(rawBridge) {
+  const apiGet = rawBridge.apiGet || rawBridge.get || rawBridge.GET;
+  const apiPost = rawBridge.apiPost || rawBridge.post || rawBridge.POST;
+  if (typeof apiGet !== "function" || typeof apiPost !== "function") {
+    throw new Error("AstrBot 页面桥接缺少 apiGet/apiPost，请升级 AstrBot 或刷新页面。");
+  }
+  return {
+    apiGet: async (path) => unwrapBridgeResponse(await apiGet.call(rawBridge, path)),
+    apiPost: async (path, payload) => unwrapBridgeResponse(await apiPost.call(rawBridge, path, payload)),
+  };
+}
+
+function unwrapBridgeResponse(response) {
+  if (editorApi.unwrapBridgeResponse) return editorApi.unwrapBridgeResponse(response);
+  if (response && typeof response === "object" && "status" in response) {
+    if (response.status === "ok") return response.data ?? {};
+    if (response.status === "error") throw new Error(response.message || "请求失败");
+  }
+  return response ?? {};
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function runAction(label, handler) {
+  if (editorRuntime.runAction) return editorRuntime.runAction(label, handler, setStatus);
+  try {
+    const result = handler();
+    if (result && typeof result.catch === "function") {
+      result.catch((error) => {
+        console.error(`menu editor action failed: ${label}`, error);
+        setStatus(`${label}失败：${error.message || error}`, "error");
+      });
+    }
+    return result;
+  } catch (error) {
+    console.error(`menu editor action failed: ${label}`, error);
+    setStatus(`${label}失败：${error.message || error}`, "error");
+    return null;
+  }
+}
+
+function bindClick(control, label, handler) {
+  if (editorRuntime.bindClick) return editorRuntime.bindClick(control, label, handler, setStatus);
+  if (!control) return;
+  control.addEventListener("click", (event) => runAction(label, () => handler(event)));
 }
 
 async function loadMenus(preferredId) {
@@ -182,6 +426,8 @@ async function loadMenus(preferredId) {
     setStatus("正在加载菜单...");
     const data = await bridge.apiGet("menus");
     state.menus = data.menus || [];
+    setServerMenuIds(state.menus);
+    state.unsavedMenuIds.clear();
     state.defaultMenuId = data.default_menu_id || "default";
     const target = preferredId || state.currentId || state.defaultMenuId || state.menus[0]?.id;
     refreshSchemeSelect();
@@ -192,17 +438,67 @@ async function loadMenus(preferredId) {
   }
 }
 
+function setServerMenuIds(menus) {
+  state.serverMenuIds = new Set((menus || []).map((menu) => menu?.id).filter(Boolean));
+}
+
+async function switchMenu(id, { reason = "select" } = {}) {
+  if (!id || state.switchingMenu) {
+    refreshSchemeSelect();
+    return false;
+  }
+  if (id === state.currentId) {
+    refreshSchemeSelect();
+    return true;
+  }
+  state.switchingMenu = true;
+  const hadDirtyWork = state.dirty;
+  try {
+    stashActiveMenu();
+    await selectMenu(id);
+    if (hadDirtyWork && reason === "select") {
+      setStatus("已切换菜单，上一份未保存修改已保留为本地草稿。", "warning");
+    }
+    return true;
+  } catch (error) {
+    console.error("failed to switch menu", error);
+    setStatus(`切换菜单失败：${error.message || error}`, "error");
+    refreshSchemeSelect();
+    return false;
+  } finally {
+    state.switchingMenu = false;
+  }
+}
+
+function stashActiveMenu() {
+  if (!state.menu || !state.currentId) return;
+  syncFormToMenu({ mark: false });
+  if (!state.dirty && !state.unsavedMenuIds.has(state.currentId)) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  const keepPrevious = state.serverMenuIds.has(previousId) && previousId !== nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId: keepPrevious ? "" : previousId });
+  saveDraft();
+  refreshSchemeSelect();
+}
+
 async function selectMenu(id) {
   const menu = state.menus.find((item) => item.id === id) || state.menus[0];
   if (!menu) return;
   state.currentId = menu.id;
   state.backgroundEditMode = false;
-  const serverMenu = structuredClone(menu);
-  state.menu = maybeRestoreDraft(serverMenu);
-  state.dirty = state.menu !== serverMenu;
+  discardPendingBackgroundAsset();
+  const sourceMenu = cloneData(menu);
+  const isUnsaved = state.unsavedMenuIds.has(menu.id);
+  state.menu = isUnsaved ? sourceMenu : maybeRestoreDraft(sourceMenu);
+  state.dirty = isUnsaved || state.menu !== sourceMenu;
   loadSearchState();
   refreshSchemeSelect();
   fillForm();
+  resetLocalHistory(state.menu);
+  state.selectedKeys.clear();
   renderAll();
   updateSaveState(state.dirty ? "dirty" : "saved");
   clearRenderStatus();
@@ -213,7 +509,10 @@ function refreshSchemeSelect() {
   state.menus.forEach((menu) => {
     const option = document.createElement("option");
     option.value = menu.id;
-    option.textContent = `${menu.name || menu.id} (${menu.id})${menu.id === state.defaultMenuId ? " · 默认" : ""}`;
+    const badges = [];
+    if (menu.id === state.defaultMenuId) badges.push("默认");
+    if (state.unsavedMenuIds.has(menu.id)) badges.push("未保存");
+    option.textContent = `${menu.name || menu.id} (${menu.id})${badges.length ? ` · ${badges.join(" · ")}` : ""}`;
     els.schemeSelect.append(option);
   });
   if (state.currentId) els.schemeSelect.value = state.currentId;
@@ -303,8 +602,10 @@ function renderSectionsEditor() {
     const card = document.createElement("section");
     card.className = `section-card ${sectionCollapsed ? "is-collapsed" : ""}`;
     card.dataset.errorKey = `section-${sectionIndex}`;
+    bindDragSort(card, selectionKey("section", sectionIndex));
     card.innerHTML = `
       <div class="section-head">
+        <label class="select-check" title="选择分组"><input type="checkbox" data-action="select-section" ${state.selectedKeys.has(selectionKey("section", sectionIndex)) ? "checked" : ""} /></label>
         <button type="button" class="collapse-toggle" data-action="toggle-section" aria-expanded="${!sectionCollapsed}" title="${sectionCollapsed ? "展开分组" : "折叠分组"}">${sectionCollapsed ? "▸" : "▾"}</button>
         <input class="section-title-input" data-error-key="section-${sectionIndex}-title" value="${escapeAttr(section.title)}" aria-label="分组标题" />
         <div class="actions">
@@ -319,7 +620,7 @@ function renderSectionsEditor() {
         <div class="items-editor"></div>
       </div>`;
     const titleInput = card.querySelector("input");
-    titleInput.addEventListener("input", () => {
+    bindValueChange(titleInput, () => {
       section.title = titleInput.value;
       markDirty();
       renderPreview();
@@ -330,6 +631,10 @@ function renderSectionsEditor() {
       event.stopPropagation();
       setCollapsed("section", sectionIndex, null, !sectionCollapsed);
       renderSectionsEditor();
+    });
+    card.querySelector('[data-action="select-section"]').addEventListener("change", (event) => {
+      event.stopPropagation();
+      toggleSelection(selectionKey("section", sectionIndex), event.target.checked);
     });
     card.querySelector('[data-action="add-item"]').addEventListener("click", () => addItem(sectionIndex, "standard"));
     card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveSection(sectionIndex, -1));
@@ -350,16 +655,20 @@ function renderSectionsEditor() {
     els.sections.append(empty);
   }
   validateMenu({ silent: true });
+  updateBatchToolbar();
 }
 
 function renderItemEditor(item, sectionIndex, itemIndex) {
   const card = document.createElement("article");
   const currentSize = cardSize(item.card_size);
   const itemCollapsed = isCollapsed("item", sectionIndex, itemIndex);
+  const layout = itemContentLayout(item);
   card.className = `item-card size-${currentSize} ${itemCollapsed ? "is-collapsed" : ""}`;
   card.dataset.errorKey = `item-${sectionIndex}-${itemIndex}`;
+  bindDragSort(card, selectionKey("item", sectionIndex, itemIndex));
     card.innerHTML = `
     <div class="item-head">
+      <label class="select-check" title="选择卡片"><input type="checkbox" data-action="select-item" ${state.selectedKeys.has(selectionKey("item", sectionIndex, itemIndex)) ? "checked" : ""} /></label>
       <button type="button" class="collapse-toggle" data-action="toggle-item" aria-expanded="${!itemCollapsed}" title="${itemCollapsed ? "展开菜单项" : "折叠菜单项"}">${itemCollapsed ? "▸" : "▾"}</button>
       <strong>${CARD_TEMPLATES[currentSize].label}卡片 ${itemIndex + 1} · ${escapeHtml(item.label || "未命名")}</strong>
       <div class="actions">
@@ -377,6 +686,16 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
         <label class="field"><span>指令</span><input data-error-key="item-${sectionIndex}-${itemIndex}-command" data-key="command" value="${escapeAttr(item.command || "")}" /></label>
         <label class="field wide"><span>描述</span><input data-error-key="item-${sectionIndex}-${itemIndex}-description" data-key="description" value="${escapeAttr(item.description || "")}" /></label>
       </div>
+      <div class="item-layout-controls">
+        <strong>内容排版</strong>
+        <label><span>上方</span><select data-layout-pos="0">${contentBlockOptions(layout.order[0])}</select></label>
+        <label><span>中间</span><select data-layout-pos="1">${contentBlockOptions(layout.order[1])}</select></label>
+        <label><span>下方</span><select data-layout-pos="2">${contentBlockOptions(layout.order[2])}</select></label>
+        <label><span>块间距(px)</span><input type="number" min="0" max="40" data-layout-key="content_gap" value="${layout.gap}" /></label>
+        <label><span>指令字号</span><input type="number" min="8" max="34" step="0.5" data-layout-key="command_font_size" value="${layout.fonts.command}" /></label>
+        <label><span>名称字号</span><input type="number" min="8" max="30" step="0.5" data-layout-key="label_font_size" value="${layout.fonts.label}" /></label>
+        <label><span>简介字号</span><input type="number" min="8" max="28" step="0.5" data-layout-key="description_font_size" value="${layout.fonts.description}" /></label>
+      </div>
       <label class="check"><input data-key="enabled" type="checkbox" ${item.enabled !== false ? "checked" : ""} /> 启用</label>
     </div>`;
   card.querySelector('[data-action="toggle-item"]').addEventListener("click", (event) => {
@@ -385,16 +704,38 @@ function renderItemEditor(item, sectionIndex, itemIndex) {
     setCollapsed("item", sectionIndex, itemIndex, !itemCollapsed);
     renderSectionsEditor();
   });
+  card.querySelector('[data-action="select-item"]').addEventListener("change", (event) => {
+    event.stopPropagation();
+    toggleSelection(selectionKey("item", sectionIndex, itemIndex), event.target.checked);
+  });
   card.querySelector('[data-action="move-up"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, -1));
   card.querySelector('[data-action="move-down"]').addEventListener("click", () => moveItem(sectionIndex, itemIndex, 1));
   card.querySelector('[data-action="copy-item"]').addEventListener("click", () => copyItem(sectionIndex, itemIndex));
   card.querySelector('[data-action="remove-item"]').addEventListener("click", () => removeItem(sectionIndex, itemIndex));
   card.querySelectorAll("[data-key]").forEach((input) => {
-    input.addEventListener("input", () => {
+    bindValueChange(input, () => {
       const key = input.dataset.key;
       item[key] = input.type === "checkbox" ? input.checked : input.value;
       markDirty();
       if (key === "card_size") renderSectionsEditor();
+      renderPreview();
+      validateMenu({ silent: true });
+    });
+  });
+  card.querySelectorAll("[data-layout-pos]").forEach((select) => {
+    bindValueChange(select, () => {
+      setItemContentOrderAt(item, Number(select.dataset.layoutPos), select.value);
+      markDirty();
+      renderSectionsEditor();
+      renderPreview();
+      validateMenu({ silent: true });
+    });
+  });
+  card.querySelectorAll("[data-layout-key]").forEach((input) => {
+    bindValueChange(input, () => {
+      applyItemLayoutValue(item, input.dataset.layoutKey, input.value);
+      input.value = itemLayoutValue(item, input.dataset.layoutKey);
+      markDirty();
       renderPreview();
       validateMenu({ silent: true });
     });
@@ -420,6 +761,16 @@ function bindPreviewInteractions() {
     event.stopPropagation();
     const sectionIndex = Number(target.dataset.sectionIndex);
     const itemIndex = Number(target.dataset.itemIndex);
+    if (state.batchSelectMode) {
+      if (target.dataset.edit !== "item") {
+        setStatus("批量调整模式中：请直接点击需要多选的卡片。", "warning");
+        return;
+      }
+      const key = selectionKey("item", sectionIndex, itemIndex);
+      toggleSelection(key, !state.selectedKeys.has(key));
+      renderPreview();
+      return;
+    }
     if (target.dataset.edit === "item") return openItemEditor(sectionIndex, itemIndex);
     if (target.dataset.edit === "section") return openSectionEditor(sectionIndex);
     if (target.dataset.edit === "menu") return openMenuEditor();
@@ -433,14 +784,49 @@ function bindModalChrome() {
     if (event.target.closest("[data-close-modal]")) closeModal();
   });
   window.addEventListener("keydown", (event) => {
-    if (event.key === "Escape" && !els.editorModal.hidden) closeModal();
+    const isOpen = editorModal.modalIsOpen ? editorModal.modalIsOpen(els.editorModal) : !els.editorModal.hidden;
+    if (event.key === "Escape" && isOpen) closeModal();
   });
 }
 
-function openModal(title, body, actions = []) {
+function bindGlobalShortcuts() {
+  window.addEventListener("keydown", (event) => {
+    const target = event.target;
+    const isTyping = editorShortcuts.isTypingTarget ? editorShortcuts.isTypingTarget(target) : (target && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName));
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
+      event.preventDefault();
+      saveMenu();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "z") {
+      event.preventDefault();
+      if (event.shiftKey) redoMenuChange();
+      else undoMenuChange();
+      return;
+    }
+    if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "y") {
+      event.preventDefault();
+      redoMenuChange();
+      return;
+    }
+    if (event.key === "/" && !isTyping) {
+      event.preventDefault();
+      els.itemSearch?.focus();
+      return;
+    }
+  });
+}
+
+function openModal(title, body, actions = [], options = {}) {
+  if (state.modalCloseHandler) {
+    const previousCloseHandler = state.modalCloseHandler;
+    state.modalCloseHandler = null;
+    previousCloseHandler();
+  }
+  state.modalCloseHandler = typeof options.onClose === "function" ? options.onClose : null;
   els.modalTitle.textContent = title;
-  els.modalBody.replaceChildren(body);
-  els.modalFooter.replaceChildren();
+  replaceChildrenSafe(els.modalBody, body);
+  replaceChildrenSafe(els.modalFooter);
   actions.forEach((action) => {
     const button = document.createElement("button");
     button.type = "button";
@@ -460,6 +846,29 @@ function openModal(title, body, actions = []) {
 
 function closeModal() {
   if (els.editorModal) els.editorModal.hidden = true;
+  const handler = state.modalCloseHandler;
+  state.modalCloseHandler = null;
+  if (handler) handler();
+}
+
+function resolveAndCloseModal(resolve, value) {
+  state.modalCloseHandler = null;
+  resolve(value);
+  closeModal();
+}
+
+function confirmDialog(title, message, { confirmLabel = "确定", cancelLabel = "取消", danger = false } = {}) {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "confirm-dialog";
+    const text = document.createElement("p");
+    text.textContent = message;
+    body.append(text);
+    openModal(title, body, [
+      { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, false) },
+      { label: confirmLabel, className: danger ? "danger" : "primary", onClick: () => resolveAndCloseModal(resolve, true) },
+    ], { onClose: () => resolve(false) });
+  });
 }
 
 function commitMenuChange({ keepModal = true } = {}) {
@@ -494,7 +903,7 @@ function textInput(value, onInput, attrs = {}) {
     if (value === true) input.setAttribute(key, "");
     else input.setAttribute(key, value);
   });
-  input.addEventListener("input", () => onInput(input.value, input));
+  bindValueChange(input, () => onInput(input.value, input));
   return input;
 }
 
@@ -517,7 +926,7 @@ function checkboxInput(checked, onInput) {
   const input = document.createElement("input");
   input.type = "checkbox";
   input.checked = checked;
-  input.addEventListener("input", () => onInput(input.checked, input));
+  bindValueChange(input, () => onInput(input.checked, input));
   return input;
 }
 
@@ -534,6 +943,54 @@ function actionRow(actions) {
     row.append(button);
   });
   return row;
+}
+
+function appendItemLayoutFields(body, item, onCommit, { live = true } = {}) {
+  const panel = document.createElement("div");
+  panel.className = "item-layout-panel wide";
+  const title = document.createElement("div");
+  title.className = "item-layout-title";
+  title.innerHTML = "<strong>内容自定义</strong><small>调整指令、名称、简介的位置、间距和字号</small>";
+  panel.append(title);
+
+  const orderRow = document.createElement("div");
+  orderRow.className = "item-layout-row";
+  const selects = [];
+  const syncSelects = () => {
+    const order = itemContentOrder(item);
+    selects.forEach((select, index) => {
+      select.value = order[index];
+    });
+  };
+  DEFAULT_CONTENT_ORDER.forEach((_block, index) => {
+    const select = selectInput(itemContentOrder(item)[index], CONTENT_BLOCKS, (value) => {
+      setItemContentOrderAt(item, index, value);
+      syncSelects();
+      onCommit();
+    });
+    selects.push(select);
+    orderRow.append(field(index === 0 ? "上方" : index === 1 ? "中间" : "下方", select));
+  });
+  panel.append(orderRow);
+
+  const sizeRow = document.createElement("div");
+  sizeRow.className = "item-layout-row";
+  const layout = itemContentLayout(item);
+  [
+    ["块间距(px)", "content_gap", layout.gap, { min: 0, max: 40, step: 1 }],
+    ["指令字号", "command_font_size", layout.fonts.command, { min: 8, max: 34, step: 0.5 }],
+    ["名称字号", "label_font_size", layout.fonts.label, { min: 8, max: 30, step: 0.5 }],
+    ["简介字号", "description_font_size", layout.fonts.description, { min: 8, max: 28, step: 0.5 }],
+  ].forEach(([label, key, value, attrs]) => {
+    sizeRow.append(field(label, textInput(value, (nextValue, input) => {
+      applyItemLayoutValue(item, key, nextValue);
+      input.value = itemLayoutValue(item, key);
+      onCommit();
+    }, { type: "number", ...attrs })));
+  });
+  panel.append(sizeRow);
+  if (!live) panel.classList.add("is-batch-draft");
+  body.append(panel);
 }
 
 function appendLayoutFields(body, style = ensureStyle(state.menu)) {
@@ -665,6 +1122,7 @@ function openMenuEditor() {
   body.append(
     field("方案 ID", textInput(menu.id, (value) => { menu.id = value.trim(); commitMenuChange(); }, { maxlength: 48 }), { errorKey: "menuId" }),
     field("方案名称", textInput(menu.name, (value) => { menu.name = value; commitMenuChange(); }, { maxlength: 80 }), { errorKey: "menuName" }),
+    field("别名（逗号分隔）", textInput((menu.aliases || []).join(", "), (value) => { menu.aliases = value.split(",").map((item) => item.trim()).filter(Boolean); commitMenuChange(); }, { maxlength: 220 }), { wide: true }),
     field("标题", textInput(menu.title, (value) => { menu.title = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: "menuTitle" }),
     field("副标题", textInput(menu.subtitle, (value) => { menu.subtitle = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuSubtitle" }),
     field("页脚", textInput(menu.footer, (value) => { menu.footer = value; commitMenuChange(); }, { maxlength: 240 }), { wide: true, errorKey: "menuFooter" }),
@@ -737,6 +1195,7 @@ function openItemEditor(sectionIndex, itemIndex) {
     field("指令", textInput(item.command, (value) => { item.command = value; commitMenuChange(); }, { maxlength: 120 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-command` }),
     field("描述", textInput(item.description, (value) => { item.description = value; commitMenuChange(); }, { multiline: true, maxlength: 240 }), { wide: true, errorKey: `item-${sectionIndex}-${itemIndex}-description` }),
   );
+  appendItemLayoutFields(body, item, () => commitMenuChange());
   const check = document.createElement("label");
   check.className = "check wide";
   check.append(checkboxInput(item.enabled !== false, (checked) => { item.enabled = checked; commitMenuChange(); }), document.createTextNode("启用这张卡片"));
@@ -750,6 +1209,10 @@ function openItemEditor(sectionIndex, itemIndex) {
 
 function openStyleEditor() {
   const style = ensureStyle(state.menu);
+  const updateStyle = (mutator) => {
+    mutator(ensureStyle(state.menu));
+    commitMenuChange();
+  };
   const body = document.createElement("div");
   body.className = "modal-grid";
   const themeCards = document.createElement("div");
@@ -761,30 +1224,40 @@ function openStyleEditor() {
     button.style.cssText = `--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}`;
     button.innerHTML = `<span class="theme-swatch"></span><strong>${escapeHtml(preset.label)}</strong>`;
     button.addEventListener("click", () => {
-      Object.assign(style, { theme: key }, themeStylePatch(preset));
-      commitMenuChange();
+      updateStyle((currentStyle) => Object.assign(currentStyle, { theme: key }, themeStylePatch(preset)));
       openStyleEditor();
     });
     themeCards.append(button);
   });
   body.append(themeCards);
   body.append(
-    field("主题", selectInput(style.theme || "aurora", Object.entries(THEME_PRESETS).map(([value, preset]) => ({ value, label: preset.label })), (value) => { Object.assign(style, { theme: value }, themeStylePatch(THEME_PRESETS[value] || THEME_PRESETS.aurora)); commitMenuChange(); openStyleEditor(); })),
-    field("主色", textInput(toColor(style.primary_color, "#7c3aed"), (value) => { style.primary_color = value; commitMenuChange(); }, { type: "color" })),
-    field("背景色", textInput(toColor(style.background_color, "#f8fafc"), (value) => { style.background_color = value; commitMenuChange(); }, { type: "color" })),
-    field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { style.card_color = value; commitMenuChange(); }, { type: "color" })),
-    field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { style.text_color = value; commitMenuChange(); }, { type: "color" })),
-    field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { style.muted_color = value; commitMenuChange(); }, { type: "color" })),
+    field("主题", selectInput(style.theme || "aurora", Object.entries(THEME_PRESETS).map(([value, preset]) => ({ value, label: preset.label })), (value) => { updateStyle((currentStyle) => Object.assign(currentStyle, { theme: value }, themeStylePatch(THEME_PRESETS[value] || THEME_PRESETS.aurora))); openStyleEditor(); })),
+    field("主色", textInput(toColor(style.primary_color, "#7c3aed"), (value) => { updateStyle((currentStyle) => { currentStyle.primary_color = value; }); }, { type: "color" })),
+    field("背景色", textInput(toColor(style.background_color, "#f8fafc"), (value) => { updateStyle((currentStyle) => { currentStyle.background_color = value; }); }, { type: "color" })),
+    field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { updateStyle((currentStyle) => { currentStyle.card_color = value; }); }, { type: "color" })),
+    field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { updateStyle((currentStyle) => { currentStyle.text_color = value; }); }, { type: "color" })),
+    field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { updateStyle((currentStyle) => { currentStyle.muted_color = value; }); }, { type: "color" })),
+    field("字体族", textInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }, { placeholder: "例如：Noto Sans CJK SC, Microsoft YaHei" }), { wide: true }),
   );
-  const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => { style.foreground_opacity = clampNumber(value, 0, 100, 92); input.previousElementSibling && (input.previousElementSibling.textContent = `${style.foreground_opacity}%`); commitMenuChange(); }, { type: "range", min: 0, max: 100, step: 1 });
+  const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => {
+    updateStyle((currentStyle) => {
+      currentStyle.foreground_opacity = clampNumber(value, 0, 100, 92);
+      if (input.previousElementSibling) input.previousElementSibling.textContent = `前景菜单透明度 ${currentStyle.foreground_opacity}%`;
+    });
+  }, { type: "range", min: 0, max: 100, step: 1 });
   body.append(field(`前景菜单透明度 ${clampNumber(style.foreground_opacity, 0, 100, 92)}%`, opacity, { wide: true }));
   appendLayoutFields(body, style);
   body.append(
-    field("圆角", textInput(style.radius ?? 24, (value) => { style.radius = clampNumber(value, 0, 48, 24); commitMenuChange(); }, { type: "number", min: 0, max: 48 })),
+    field("圆角", textInput(style.radius ?? 24, (value) => { updateStyle((currentStyle) => { currentStyle.radius = clampNumber(value, 0, 48, 24); }); }, { type: "number", min: 0, max: 48 })),
+    field("卡片间距", textInput(style.card_gap ?? 10, (value) => { updateStyle((currentStyle) => { currentStyle.card_gap = clampNumber(value, 0, 60, 10); }); }, { type: "number", min: 0, max: 60 })),
+    field("分组内边距", textInput(style.section_padding ?? 15, (value) => { updateStyle((currentStyle) => { currentStyle.section_padding = clampNumber(value, 0, 80, 15); }); }, { type: "number", min: 0, max: 80 })),
+    field("阴影强度", textInput(style.shadow_strength ?? 1, (value) => { updateStyle((currentStyle) => { currentStyle.shadow_strength = clampNumber(value, 0, 5, 1); }); }, { type: "number", min: 0, max: 5 })),
+    field("边框强度", textInput(style.border_strength ?? 1, (value) => { updateStyle((currentStyle) => { currentStyle.border_strength = clampNumber(value, 0, 5, 1); }); }, { type: "number", min: 0, max: 5 })),
+    field("水印文本", textInput(style.watermark || "", (value) => { updateStyle((currentStyle) => { currentStyle.watermark = value; }); }, { maxlength: 80 }), { wide: true }),
   );
   const updatedAt = document.createElement("label");
   updatedAt.className = "check wide";
-  updatedAt.append(checkboxInput(style.show_updated_at !== false, (checked) => { style.show_updated_at = checked; commitMenuChange(); }), document.createTextNode("显示实时预览/更新时间"));
+  updatedAt.append(checkboxInput(style.show_updated_at !== false, (checked) => { updateStyle((currentStyle) => { currentStyle.show_updated_at = checked; }); }), document.createTextNode("显示实时预览/更新时间"));
   body.append(updatedAt);
 
   const file = document.createElement("input");
@@ -797,20 +1270,27 @@ function openStyleEditor() {
   });
   body.append(field("自定义背景图（不限制尺寸）", file, { wide: true, hint: style.background_image ? (style.background_image_name || "Custom background") : "未设置背景图" }));
   body.append(
-    field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { style.background_image_width = clampNumber(value, 10, 600, 100); commitMenuChange(); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
-    field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { style.background_image_x = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
-    field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { style.background_image_y = clampNumber(value, -300, 300, 0); commitMenuChange(); }, { type: "number", min: -300, max: 300 })),
+    field("背景缩放", textInput(clampNumber(style.background_image_width, 10, 600, 100), (value) => { updateStyle((currentStyle) => { currentStyle.background_image_width = clampNumber(value, 10, 600, 100); }); }, { type: "range", min: 10, max: 600, step: 1 }), { wide: true }),
+    field("背景 X(%)", textInput(style.background_image_x || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_x = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
+    field("背景 Y(%)", textInput(style.background_image_y || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_image_y = clampNumber(value, -300, 300, 0); }); }, { type: "number", min: -300, max: 300 })),
+    field("背景遮罩(%)", textInput(style.background_overlay || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_overlay = clampNumber(value, 0, 100, 0); }); }, { type: "number", min: 0, max: 100 })),
+    field("背景模糊(px)", textInput(style.background_blur || 0, (value) => { updateStyle((currentStyle) => { currentStyle.background_blur = clampNumber(value, 0, 40, 0); }); }, { type: "number", min: 0, max: 40 })),
+    field("背景亮度(%)", textInput(style.background_brightness ?? 100, (value) => { updateStyle((currentStyle) => { currentStyle.background_brightness = clampNumber(value, 20, 200, 100); }); }, { type: "number", min: 20, max: 200 })),
   );
   body.append(actionRow([
     { label: "居中背景", onClick: () => { centerBackgroundImage(); openStyleEditor(); } },
     { label: "铺满背景", onClick: () => { fitBackgroundToCover(true); openStyleEditor(); } },
+    { label: "适应背景", onClick: () => { fitBackgroundToContain(); openStyleEditor(); } },
     { label: "重置背景", onClick: () => { clearBackgroundImage(); openStyleEditor(); } },
   ]));
   openModal("编辑主题、背景与布局", body, [
     { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
-    { label: "未设置背景图", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
+    { label: "一键修复颜色", onClick: () => { fixContrastColors(); openStyleEditor(); } },
+    { label: "一键重置样式", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
     { label: "编辑全部分组", onClick: openMenuEditor },
   ]);
+  const contrast = contrastWarningText(style);
+  if (contrast) setStatus(contrast, "warning");
 }
 
 function themeStylePatch(preset) {
@@ -826,9 +1306,12 @@ async function applyBackgroundFile(file) {
   if (file.size > 2 * 1024 * 1024) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
-  const dataUrl = await readFileAsDataUrl(file);
+  const pending = await createPendingBackgroundAsset(file);
+  discardPendingBackgroundAsset();
+  state.pendingBackgroundAsset = pending;
   Object.assign(ensureStyle(state.menu), {
-    background_image: dataUrl,
+    background_image: pending.previewUrl,
+    background_image_asset_id: "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -838,11 +1321,56 @@ async function applyBackgroundFile(file) {
   fitBackgroundToCover(true);
 }
 
+async function createPendingBackgroundAsset(file) {
+  if (editorBackground.createPendingBackground) {
+    const pending = editorBackground.createPendingBackground(file);
+    return {
+      ...pending,
+      previewUrl: pending.objectUrl || await pending.dataUrlPromise,
+    };
+  }
+  const dataUrl = await readFileAsDataUrl(file);
+  return {
+    name: file.name || "background",
+    size: file.size || 0,
+    type: file.type || "",
+    objectUrl: "",
+    previewUrl: dataUrl,
+    dataUrlPromise: Promise.resolve(dataUrl),
+  };
+}
+
+function discardPendingBackgroundAsset() {
+  if (!state.pendingBackgroundAsset) return;
+  if (editorBackground.revokePendingBackground) editorBackground.revokePendingBackground(state.pendingBackgroundAsset);
+  state.pendingBackgroundAsset = null;
+}
+
+async function flushPendingBackgroundAsset() {
+  const pending = state.pendingBackgroundAsset;
+  if (!pending || !state.menu) return;
+  const style = ensureStyle(state.menu);
+  const shouldFlush = style.background_image === pending.previewUrl || style.background_image === pending.objectUrl;
+  if (!shouldFlush) {
+    discardPendingBackgroundAsset();
+    return;
+  }
+  const dataUrl = await pending.dataUrlPromise;
+  const asset = await saveBackgroundAsset(dataUrl, pending.name);
+  style.background_image = dataUrl;
+  style.background_image_asset_id = asset?.id || "";
+  style.background_image_name = pending.name;
+  discardPendingBackgroundAsset();
+  syncBackgroundControls();
+  renderPreview();
+}
+
 function renderPreview() {
   const menu = state.menu;
   if (!menu) return;
   const style = ensureStyle(menu);
   const layout = previewLayout(menu);
+  const deviceLabel = applyPreviewDeviceLayout(layout);
   const query = state.itemSearch || "";
   const previewStyle = [
     `--preview-primary:${style.primary_color}`,
@@ -851,9 +1379,17 @@ function renderPreview() {
     `--preview-text:${style.text_color || "#111827"}`,
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
+    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : "inherit"}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
+    `--preview-card-gap:${clampNumber(style.card_gap, 0, 60, 10)}px`,
+    `--preview-section-padding:${clampNumber(style.section_padding, 0, 80, 15)}px`,
+    `--preview-shadow-strength:${clampNumber(style.shadow_strength, 0, 5, 1)}`,
+    `--preview-border-strength:${clampNumber(style.border_strength, 0, 5, 1)}`,
+    `--preview-bg-overlay:${clampNumber(style.background_overlay, 0, 100, 0) / 100}`,
+    `--preview-bg-blur:${clampNumber(style.background_blur, 0, 40, 0)}px`,
+    `--preview-bg-brightness:${clampNumber(style.background_brightness, 20, 200, 100) / 100}`,
     `--preview-foreground-opacity:${clampNumber(style.foreground_opacity, 0, 100, 92) / 100}`,
   ].join(";");
   const backgroundMarkup = style.background_image ? `
@@ -866,8 +1402,9 @@ function renderPreview() {
         </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""}" data-edit="style" data-layer-label="主题 / 背景 / 布局" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${previewStyle}">
         ${backgroundMarkup}
+        <div class="preview-bg-overlay"></div>
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
           <div class="kicker">Menu ${escapeHtml(menu.name || menu.id)}</div>
           <h1 class="preview-title">${escapeHtml(menu.title || "Bot 功能菜单")}</h1>
@@ -880,10 +1417,13 @@ function renderPreview() {
                 ${section.items.map((item, itemIndex) => {
                   const matched = !query || itemMatchesSearch(item, query);
                   const searchClass = query ? (matched ? "is-search-match" : "is-search-dim") : "";
+                  const itemKey = selectionKey("item", sectionIndex, itemIndex);
+                  const selectedClass = state.selectedKeys.has(itemKey) ? "is-selected" : "";
                   return `
-                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="编辑卡片">
-                    <div>${escapeHtml(item.icon || "?")}</div>
-                    <div><strong>${escapeHtml(item.label || "未命名")}</strong><div class="preview-command">${escapeHtml(item.command || "")}</div><div class="preview-desc">${escapeHtml(item.description || "")}</div></div>
+                  <div class="preview-item size-${cardSize(item.card_size)} ${item.enabled === false ? "disabled" : ""} ${searchClass} ${selectedClass}" style="${itemPreviewStyle(item)}" data-edit="item" data-section-index="${sectionIndex}" data-item-index="${itemIndex}" data-layer-label="${state.batchSelectMode ? "点击选择 / 取消" : "编辑卡片"}">
+                    ${state.batchSelectMode ? '<span class="preview-select-marker" aria-hidden="true"></span>' : ""}
+                    <div class="preview-icon">${escapeHtml(item.icon || "?")}</div>
+                    <div class="preview-item-main">${renderItemContentBlocks(item)}</div>
                   </div>`;
                 }).join("")}
               </div>
@@ -891,9 +1431,12 @@ function renderPreview() {
           </div>
           <div class="preview-footer"><span>${escapeHtml(menu.footer || "")}</span><span>${style.show_updated_at === false ? "" : "实时预览"}</span></div>
         </div>
+        ${style.watermark ? `<div class="preview-watermark">${escapeHtml(style.watermark)}</div>` : ""}
       </div>
     </div>`;
-  els.previewMeta.textContent = `${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
+  els.previewMeta.textContent = editorPreview.formatPreviewMeta
+    ? editorPreview.formatPreviewMeta(deviceLabel, layout)
+    : `${deviceLabel} · ${layout.width}px · 每行 ${layout.columns} 张 · ${layout.itemCount} 项`;
   updateBackgroundEditToggle();
   attachBackgroundEditor();
   fitPreviewToStage();
@@ -909,6 +1452,12 @@ function toggleBackgroundEditMode() {
     return;
   }
   state.backgroundEditMode = !state.backgroundEditMode;
+  if (state.backgroundEditMode && state.batchSelectMode) {
+    state.batchSelectMode = false;
+    state.selectedKeys.clear();
+    updateBatchSelectToggle();
+    updateBatchToolbar();
+  }
   renderPreview();
   setStatus(
     state.backgroundEditMode
@@ -916,6 +1465,37 @@ function toggleBackgroundEditMode() {
       : "已锁定背景图：现在可以点击分组和卡片进行编辑。",
     state.backgroundEditMode ? "warning" : "success",
   );
+}
+
+function toggleBatchSelectMode() {
+  setBatchSelectMode(!state.batchSelectMode);
+}
+
+function setBatchSelectMode(enabled) {
+  if (!state.menu) {
+    setStatus("菜单尚未加载完成，暂时无法进入批量调整模式。", "warning");
+    return;
+  }
+  state.batchSelectMode = Boolean(enabled);
+  if (state.batchSelectMode && state.backgroundEditMode) state.backgroundEditMode = false;
+  if (!state.batchSelectMode) state.selectedKeys.clear();
+  updateBatchSelectToggle();
+  updateBatchToolbar();
+  renderPreview();
+  renderSectionsEditor();
+  setStatus(
+    state.batchSelectMode
+      ? "已进入批量调整模式：直接点击预览里的卡片进行多选，然后使用上方批量排版/启用/复制/删除。"
+      : "已退出批量调整模式。",
+    state.batchSelectMode ? "warning" : "success",
+  );
+}
+
+function updateBatchSelectToggle() {
+  if (!els.batchSelectToggleBtn) return;
+  els.batchSelectToggleBtn.textContent = state.batchSelectMode ? "退出批量" : "批量调整";
+  els.batchSelectToggleBtn.setAttribute("aria-pressed", state.batchSelectMode ? "true" : "false");
+  els.batchSelectToggleBtn.classList.toggle("is-active", state.batchSelectMode);
 }
 
 function updateBackgroundEditToggle() {
@@ -970,7 +1550,7 @@ function moveSection(index, direction) {
 }
 
 function copySection(index) {
-  const copy = structuredClone(state.menu.sections[index]);
+  const copy = cloneData(state.menu.sections[index]);
   copy.title = `${copy.title || "分组"} 副本`;
   state.menu.sections.splice(index + 1, 0, copy);
   markDirty();
@@ -995,7 +1575,7 @@ function moveItem(sectionIndex, itemIndex, direction) {
 
 function copyItem(sectionIndex, itemIndex) {
   const items = state.menu.sections[sectionIndex].items;
-  const copy = structuredClone(items[itemIndex]);
+  const copy = cloneData(items[itemIndex]);
   copy.label = `${copy.label || "菜单项"} 副本`;
   items.splice(itemIndex + 1, 0, copy);
   markDirty();
@@ -1012,6 +1592,7 @@ function removeItem(sectionIndex, itemIndex) {
 
 async function saveMenu() {
   const draftIdBeforeSave = currentDraftId();
+  await flushPendingBackgroundAsset();
   syncFormToMenu({ mark: false });
   if (!validateMenu({ scroll: true })) {
     setStatus("请先修正表单错误，再保存菜单。", "error");
@@ -1022,8 +1603,12 @@ async function saveMenu() {
     setStatus("正在保存...");
     const result = await bridge.apiPost("menus/save", { menu: state.menu });
     state.menus = result.menus || [result.menu];
+    setServerMenuIds(state.menus);
+    state.unsavedMenuIds.clear();
     state.currentId = result.menu.id;
-    state.menu = structuredClone(result.menu);
+    state.menu = cloneData(result.menu);
+    state.unsavedMenuIds.delete(draftIdBeforeSave);
+    state.unsavedMenuIds.delete(state.currentId);
     state.dirty = false;
     clearDraft(state.currentId);
     if (draftIdBeforeSave !== state.currentId) clearDraft(draftIdBeforeSave);
@@ -1039,9 +1624,8 @@ async function saveMenu() {
   }
 }
 
-function newMenu() {
-  const id = uniqueId("menu");
-  state.menu = {
+function createDefaultMenu(id) {
+  return {
     id,
     name: "新菜单",
     title: "Bot 功能菜单",
@@ -1050,23 +1634,42 @@ function newMenu() {
     style: defaultStyle(),
     sections: [{ title: "常用功能", items: [{ label: "菜单", command: "/menu", description: "查看菜单", icon: "📋", card_size: "standard", enabled: true }] }],
   };
-  state.currentId = id;
-  markDirty();
+}
+
+function activateLocalMenu(menu, { dirty = true, statusText = "" } = {}) {
+  discardPendingBackgroundAsset();
+  state.menu = cloneData(menu);
+  state.currentId = state.menu.id;
+  state.backgroundEditMode = false;
+  state.dirty = Boolean(dirty);
+  state.selectedKeys.clear();
+  upsertMenuEntry(state.menu, { unsaved: dirty });
+  loadSearchState();
   fillForm();
+  refreshSchemeSelect();
+  resetLocalHistory(state.menu);
   renderAll();
-  setStatus("已创建本地新菜单，保存后生效。");
+  updateSaveState(state.dirty ? "dirty" : "saved");
+  clearRenderStatus();
+  if (state.dirty) saveDraft();
+  if (statusText) setStatus(statusText, state.dirty ? "warning" : "success");
+}
+
+function newMenu() {
+  stashActiveMenu();
+  const id = uniqueId("menu");
+  activateLocalMenu(createDefaultMenu(id), { dirty: true, statusText: "已创建本地新菜单，上一菜单修改已自动保留为草稿。" });
 }
 
 function copyMenu() {
-  const copy = structuredClone(state.menu);
+  if (!state.menu) return newMenu();
+  stashActiveMenu();
+  const copy = cloneData(state.menu);
   copy.id = uniqueId(`${copy.id || "menu"}_copy`);
   copy.name = `${copy.name || "菜单"} 副本`;
-  state.menu = copy;
-  state.currentId = copy.id;
-  markDirty();
-  fillForm();
-  renderAll();
-  setStatus("已复制为新菜单，保存后生效。");
+  copy.updated_at = "";
+  copy.created_at = "";
+  activateLocalMenu(copy, { dirty: true, statusText: "已复制为新的本地菜单，保存后生效。" });
 }
 
 async function deleteMenu() {
@@ -1074,32 +1677,44 @@ async function deleteMenu() {
     setStatus("没有可删除的菜单。", "warning");
     return;
   }
+  syncFormToMenu({ mark: false });
   const currentId = state.currentId || state.menu.id;
-  const isSavedMenu = state.menus.some((menu) => menu.id === currentId);
+  const isSavedMenu = state.serverMenuIds.has(currentId);
   if (!isSavedMenu) {
-    if (!confirm(`当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。确定继续？`)) {
+    const confirmed = await confirmDialog(
+      "丢弃本地菜单？",
+      `当前菜单方案 ${currentId || "未命名"} 尚未保存，只会丢弃本地草稿。`,
+      { confirmLabel: "丢弃草稿", danger: true },
+    );
+    if (!confirmed) {
       setStatus("已取消删除。");
       return;
     }
-    discardUnsavedMenu(currentId);
+    await discardUnsavedMenu(currentId);
     return;
   }
-  if (state.menus.length <= 1) {
+  if (state.serverMenuIds.size <= 1) {
     setStatus("至少保留一个菜单方案，无法删除最后一个菜单。", "warning");
     return;
   }
-  if (!confirm(`确定永久删除菜单方案 ${currentId}？`)) {
+  const confirmed = await confirmDialog(
+    "删除菜单方案？",
+    `确定删除菜单方案 ${currentId}？未保存修改会一并丢弃，删除前会由后端保留历史快照。`,
+    { confirmLabel: "确认删除", danger: true },
+  );
+  if (!confirmed) {
     setStatus("已取消删除。");
     return;
   }
-  const fallbackId = state.menus.find((menu) => menu.id !== currentId)?.id;
+  const fallbackId = chooseFallbackMenuId(currentId);
   try {
     setStatus("正在删除菜单...");
     const result = await bridge.apiPost("menus/delete", { id: currentId });
     state.menus = result.menus || state.menus.filter((menu) => menu.id !== currentId);
+    setServerMenuIds(state.menus);
+    state.unsavedMenuIds.delete(currentId);
     clearDraft(currentId);
-    const nextId = result.default_menu_id || fallbackId || state.menus[0]?.id;
-    state.currentId = nextId;
+    const nextId = chooseExistingMenuId(result.default_menu_id, fallbackId, state.menus[0]?.id);
     state.dirty = false;
     if (nextId) await selectMenu(nextId);
     refreshSchemeSelect();
@@ -1110,11 +1725,30 @@ async function deleteMenu() {
   }
 }
 
+function chooseExistingMenuId(...ids) {
+  for (const id of ids) {
+    if (id && state.menus.some((menu) => menu.id === id)) return id;
+  }
+  return state.menus[0]?.id || "";
+}
+
+function chooseFallbackMenuId(excludingId) {
+  const currentIndex = state.menus.findIndex((menu) => menu.id === excludingId);
+  const ordered = [
+    state.menus[currentIndex + 1]?.id,
+    state.menus[currentIndex - 1]?.id,
+    state.defaultMenuId !== excludingId ? state.defaultMenuId : "",
+    ...state.menus.map((menu) => menu.id),
+  ];
+  return chooseExistingMenuId(...ordered.filter((id) => id && id !== excludingId));
+}
+
 async function discardUnsavedMenu(menuId) {
   clearDraft(menuId);
-  const nextId = state.defaultMenuId && state.menus.some((menu) => menu.id === state.defaultMenuId)
-    ? state.defaultMenuId
-    : state.menus[0]?.id;
+  removeMenuEntry(menuId);
+  state.unsavedMenuIds.delete(menuId);
+  refreshSchemeSelect();
+  const nextId = chooseFallbackMenuId(menuId);
   state.dirty = false;
   if (nextId) {
     await selectMenu(nextId);
@@ -1126,31 +1760,210 @@ async function discardUnsavedMenu(menuId) {
 }
 
 async function exportMenus() {
-  const data = await bridge.apiGet("export");
-  const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
-  const link = document.createElement("a");
-  link.href = URL.createObjectURL(blob);
-  link.download = "bot-menus.json";
-  link.click();
-  URL.revokeObjectURL(link.href);
+  try {
+    const data = await bridge.apiGet("export");
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(blob);
+    link.download = "bot-menus.json";
+    link.style.display = "none";
+    document.body.append(link);
+    link.click();
+    URL.revokeObjectURL(link.href);
+    link.remove();
+    setStatus("已导出菜单 JSON。", "success");
+  } catch (error) {
+    setStatus(`导出失败：${error.message}`, "error");
+  }
 }
 
 async function importMenus(event) {
   const file = event.target.files?.[0];
   if (!file) return;
+  const hadDirtyWork = state.dirty;
+  stashActiveMenu();
+  if (hadDirtyWork) setStatus("已先保留当前未保存内容为本地草稿，再继续导入。", "warning");
   try {
     const data = JSON.parse(await file.text());
     const menus = Array.isArray(data) ? data : data.menus;
-    const result = await bridge.apiPost("import", { menus, mode: "merge" });
+    const incoming = Array.isArray(menus) ? menus : [];
+    const existingIds = new Set(state.menus.map((menu) => menu.id));
+    const added = incoming.filter((menu) => menu?.id && !existingIds.has(menu.id)).map((menu) => menu.id);
+    const overwritten = incoming.filter((menu) => menu?.id && existingIds.has(menu.id)).map((menu) => menu.id);
+    const invalid = incoming.filter((menu) => !menu?.id).length;
+    const summary = [
+      `新增：${added.length}${added.length ? `（${added.join(", ")}）` : ""}`,
+      `覆盖：${overwritten.length}${overwritten.length ? `（${overwritten.join(", ")}）` : ""}`,
+      `无效项：${invalid}`,
+      `内联资产：${Array.isArray(data.assets) ? data.assets.length : 0}`,
+    ].join("\n");
+    const confirmed = await confirmDialog("导入菜单包？", `导入预览：\n${summary}\n\n继续导入后会合并到当前菜单列表。`, {
+      confirmLabel: "确认导入",
+    });
+    if (!confirmed) {
+      setStatus("已取消导入。");
+      return;
+    }
+    setStatus("正在导入菜单包...");
+    const result = await bridge.apiPost("import", {
+      menus,
+      assets: Array.isArray(data.assets) ? data.assets : [],
+      mode: "merge",
+    });
     state.menus = result.menus || [];
+    setServerMenuIds(state.menus);
+    state.unsavedMenuIds.clear();
     refreshSchemeSelect();
-    await selectMenu(state.menus[0]?.id);
-    setStatus("导入成功。");
+    const preferredId = chooseExistingMenuId(added[0], overwritten[0], state.currentId, state.menus[0]?.id);
+    if (preferredId) await selectMenu(preferredId);
+    showImportResult({
+      added,
+      overwritten,
+      invalid,
+      assetCount: Array.isArray(data.assets) ? data.assets.length : 0,
+      activeCount: state.menus.length,
+      importedCount: result.imported_count ?? incoming.length,
+    });
+    setStatus(`导入成功：新增 ${added.length}，覆盖 ${overwritten.length}，当前可用菜单 ${state.menus.length} 个。`, "success");
   } catch (error) {
-    setStatus(`导入失败：${error.message}`);
+    setStatus(`导入失败：${error.message}`, "error");
   } finally {
     event.target.value = "";
   }
+}
+
+function showImportResult({ added, overwritten, invalid, assetCount, activeCount, importedCount }) {
+  const body = document.createElement("div");
+  body.className = "import-result";
+  body.innerHTML = `
+    <p><strong>导入完成</strong>：读取 ${importedCount} 个菜单，当前可用 ${activeCount} 个菜单。</p>
+    <ul>
+      <li>新增：${escapeHtml(added.length ? added.join(", ") : "无")}</li>
+      <li>覆盖：${escapeHtml(overwritten.length ? overwritten.join(", ") : "无")}</li>
+      <li>无效项：${invalid}</li>
+      <li>内联资产：${assetCount}</li>
+    </ul>`;
+  openModal("导入结果", body, [{ label: "知道了", className: "primary", onClick: closeModal }]);
+}
+
+async function openHistoryPanel() {
+  const body = document.createElement("div");
+  body.className = "history-panel";
+  openModal("历史与恢复", body, [{ label: "刷新", onClick: openHistoryPanel }]);
+  try {
+    const menuData = await bridge.apiGet("menus");
+    const deletedMenus = menuData.deleted_menus || [];
+    const historyData = state.currentId
+      ? await bridge.apiGet(`menus/history/${encodeURIComponent(state.currentId)}`)
+      : { history: [] };
+    replaceChildrenSafe(body);
+    body.append(
+      historySectionTitle("当前菜单快照", state.currentId ? `菜单 ID：${state.currentId}` : "尚未选择菜单"),
+      renderSnapshotList(historyData.history || []),
+      historySectionTitle("已删除菜单", deletedMenus.length ? "可从这里恢复误删菜单" : "暂无已删除菜单"),
+      renderDeletedMenuList(deletedMenus),
+    );
+  } catch (error) {
+    body.textContent = `历史加载失败：${error.message}`;
+  }
+}
+
+function historySectionTitle(title, subtitle) {
+  const wrap = document.createElement("div");
+  wrap.className = "history-section-title";
+  wrap.innerHTML = `<strong>${escapeHtml(title)}</strong><small>${escapeHtml(subtitle || "")}</small>`;
+  return wrap;
+}
+
+function renderSnapshotList(history) {
+  const list = document.createElement("div");
+  list.className = "entity-list";
+  if (!history.length) {
+    list.append(emptyState("暂无当前菜单快照。保存、删除或恢复菜单前会自动创建快照。"));
+    return list;
+  }
+  history.forEach((snapshot) => {
+    const row = document.createElement("article");
+    row.className = "entity-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(snapshot.menu?.title || snapshot.menu_id)}</strong><small>${escapeHtml(snapshot.created_at || "")} · ${escapeHtml(historyReasonLabel(snapshot.reason))}</small></div>`;
+    row.append(actionRow([
+      { label: "恢复此版本", className: "primary", onClick: async () => restoreSnapshot(snapshot) },
+    ]));
+    list.append(row);
+  });
+  return list;
+}
+
+function renderDeletedMenuList(deletedMenus) {
+  const list = document.createElement("div");
+  list.className = "entity-list";
+  if (!deletedMenus.length) {
+    list.append(emptyState("暂无已删除菜单。删除菜单后会出现在这里。"));
+    return list;
+  }
+  deletedMenus.forEach((menu) => {
+    const row = document.createElement("article");
+    row.className = "entity-row deleted-row";
+    row.innerHTML = `<div class="entity-title"><strong>${escapeHtml(menu.name || menu.title || menu.id)}</strong><small>${escapeHtml(menu.id)} · 删除于 ${escapeHtml(menu.deleted_at || "")}</small></div>`;
+    row.append(actionRow([
+      { label: "恢复菜单", className: "primary", onClick: async () => restoreDeletedMenu(menu.id) },
+      { label: "查看快照", onClick: async () => selectDeletedHistory(menu.id) },
+    ]));
+    list.append(row);
+  });
+  return list;
+}
+
+function emptyState(message) {
+  const empty = document.createElement("div");
+  empty.className = "empty-state";
+  empty.textContent = message;
+  return empty;
+}
+
+function historyReasonLabel(reason) {
+  return { save: "保存前快照", delete: "删除前快照", restore: "恢复前快照" }[reason] || reason || "快照";
+}
+
+async function restoreSnapshot(snapshot) {
+  const confirmed = await confirmDialog(
+    "恢复历史版本？",
+    "确定恢复此历史版本？当前内容会先创建快照，恢复后需要等待后台刷新缓存。",
+    { confirmLabel: "恢复版本" },
+  );
+  if (!confirmed) return;
+  const result = await bridge.apiPost("menus/restore", { menu_id: snapshot.menu_id, snapshot_id: snapshot.id });
+  state.menus = result.menus || state.menus;
+  setServerMenuIds(state.menus);
+  await selectMenu(result.menu?.id || snapshot.menu_id);
+  setStatus("历史版本已恢复，后台正在刷新缓存。", "success");
+  closeModal();
+}
+
+async function restoreDeletedMenu(menuId) {
+  const confirmed = await confirmDialog(
+    "恢复已删除菜单？",
+    `确定恢复菜单 ${menuId}？恢复后会重新出现在菜单方案列表。`,
+    { confirmLabel: "恢复菜单" },
+  );
+  if (!confirmed) return;
+  const result = await bridge.apiPost("menus/restore", { menu_id: menuId, deleted: true });
+  state.menus = result.menus || state.menus;
+  setServerMenuIds(state.menus);
+  await selectMenu(result.menu?.id || menuId);
+  setStatus("已恢复删除的菜单。", "success");
+  closeModal();
+}
+
+async function selectDeletedHistory(menuId) {
+  const data = await bridge.apiGet(`menus/history/${encodeURIComponent(menuId)}`);
+  const body = document.createElement("div");
+  body.className = "history-panel";
+  body.append(
+    historySectionTitle("已删除菜单快照", `菜单 ID：${menuId}`),
+    renderSnapshotList(data.history || []),
+  );
+  openModal("已删除菜单快照", body, [{ label: "返回历史", onClick: openHistoryPanel }]);
 }
 
 async function handleBackgroundUpload(event) {
@@ -1164,10 +1977,13 @@ async function handleBackgroundUpload(event) {
   if (file.size > 2 * 1024 * 1024) {
     setStatus("背景图文件较大，可能影响保存和加载速度，但不会限制上传尺寸。", "warning");
   }
-  const dataUrl = await readFileAsDataUrl(file);
+  const pending = await createPendingBackgroundAsset(file);
+  discardPendingBackgroundAsset();
+  state.pendingBackgroundAsset = pending;
   const style = ensureStyle(state.menu);
   Object.assign(style, {
-    background_image: dataUrl,
+    background_image: pending.previewUrl,
+    background_image_asset_id: "",
     background_image_name: file.name,
     background_image_x: 0,
     background_image_y: 0,
@@ -1181,11 +1997,24 @@ async function handleBackgroundUpload(event) {
   event.target.value = "";
 }
 
+async function saveBackgroundAsset(dataUrl, name) {
+  try {
+    const result = await bridge.apiPost("assets", { data_url: dataUrl, name });
+    state.assets = result.assets || state.assets;
+    return result.asset || null;
+  } catch (error) {
+    setStatus(`背景已用于预览，但保存到资产库失败：${error.message}`, "warning");
+    return null;
+  }
+}
+
 function clearBackgroundImage() {
   const style = ensureStyle(state.menu);
+  discardPendingBackgroundAsset();
   state.backgroundEditMode = false;
   Object.assign(style, {
     background_image: "",
+    background_image_asset_id: "",
     background_image_name: "",
     background_image_x: 0,
     background_image_y: 0,
@@ -1198,6 +2027,7 @@ function clearBackgroundImage() {
 }
 
 function readFileAsDataUrl(file) {
+  if (editorBackground.readFileAsDataUrl) return editorBackground.readFileAsDataUrl(file);
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
     reader.onload = () => resolve(String(reader.result || ""));
@@ -1293,6 +2123,24 @@ function fitBackgroundToCover(forceReset) {
   renderPreview();
 }
 
+function fitBackgroundToContain() {
+  const style = ensureStyle(state.menu);
+  const img = els.preview.querySelector(".preview-bg-image");
+  const card = els.preview.querySelector(".preview-card");
+  if (!img || !card || !style.background_image) return;
+  if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
+    img.addEventListener("load", fitBackgroundToContain, { once: true });
+    return;
+  }
+  const widthByHeight = (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight);
+  style.background_image_width = clampNumber(Math.min(100, widthByHeight), 10, 600, 100);
+  style.background_image_x = clampNumber((100 - style.background_image_width) / 2, -300, 300, 0);
+  style.background_image_y = 0;
+  markDirty();
+  syncBackgroundControls();
+  renderPreview();
+}
+
 
 function updateBackgroundFromControls() {
   const style = ensureStyle(state.menu);
@@ -1328,6 +2176,7 @@ function centerBackgroundImage() {
 
 function renderThemePresetCards() {
   if (!els.themePresetCards) return;
+  syncThemeSelectOptions();
   els.themePresetCards.innerHTML = Object.entries(THEME_PRESETS).map(([key, preset]) => `
     <button type="button" class="theme-card" data-theme="${key}" style="--swatch-primary:${preset.primary_color};--swatch-bg:${preset.background_color};--swatch-card:${preset.card_color};--swatch-text:${preset.text_color}">
       <span class="theme-swatch"><i></i></span><strong>${preset.label}</strong><small>${key}</small>
@@ -1342,8 +2191,18 @@ function renderThemePresetCards() {
   });
 }
 
+function syncThemeSelectOptions() {
+  if (!els.theme) return;
+  const currentValue = els.theme.value || state.menu?.style?.theme || "aurora";
+  els.theme.innerHTML = Object.entries(THEME_PRESETS)
+    .map(([key, preset]) => `<option value="${escapeAttr(key)}">${escapeHtml(preset.label)}</option>`)
+    .join("");
+  els.theme.value = THEME_PRESETS[currentValue] ? currentValue : "aurora";
+}
+
 async function copyStyleToMenus() {
   if (!state.menu) return;
+  await flushPendingBackgroundAsset();
   syncFormToMenu({ mark: false });
   const otherMenus = state.menus.filter((menu) => menu.id !== state.currentId);
   if (!otherMenus.length) return setStatus("没有其他菜单可复制样式。", "warning");
@@ -1358,7 +2217,7 @@ async function copyStyleToMenus() {
     setStatus("正在复制样式到其他菜单...");
     let latestMenus = null;
     for (const target of targets) {
-      const nextMenu = structuredClone(target);
+      const nextMenu = cloneData(target);
       nextMenu.style = { ...ensureStyle(nextMenu), ...stylePatch };
       const result = await bridge.apiPost("menus/save", { menu: nextMenu });
       latestMenus = result.menus || latestMenus;
@@ -1375,13 +2234,14 @@ async function copyStyleToMenus() {
 
 function pickStyleForCopy(style) {
   return STYLE_COPY_KEYS.reduce((copy, key) => {
-    copy[key] = structuredClone(style[key]);
+    copy[key] = cloneData(style[key]);
     return copy;
   }, {});
 }
 
 function resetCurrentStyle() {
   if (!confirm("确定重置当前菜单样式？菜单内容不会被删除。")) return;
+  discardPendingBackgroundAsset();
   state.menu.style = defaultStyle();
   fillForm();
   markDirty();
@@ -1389,14 +2249,429 @@ function resetCurrentStyle() {
   setStatus("已重置样式，保存后生效。", "success");
 }
 
+function contrastWarningText(style = ensureStyle(state.menu)) {
+  const ratio = contrastRatio(style.text_color || "#111827", style.card_color || "#ffffff");
+  return ratio < 4.5 ? `文字与卡片背景对比度不足（${ratio.toFixed(2)}），建议一键修复颜色。` : "";
+}
+
+function fixContrastColors() {
+  const style = ensureStyle(state.menu);
+  const bg = hexToRgb(style.card_color || "#ffffff");
+  if (!bg) return;
+  const luminance = relativeLuminance(bg);
+  style.text_color = luminance > 0.42 ? "#111827" : "#f8fafc";
+  style.muted_color = luminance > 0.42 ? "#475569" : "#cbd5e1";
+  markDirty();
+  renderAll();
+  setStatus("已自动修复文字对比度。", "success");
+}
+
+function contrastRatio(colorA, colorB) {
+  const a = hexToRgb(colorA);
+  const b = hexToRgb(colorB);
+  if (!a || !b) return 21;
+  const l1 = relativeLuminance(a);
+  const l2 = relativeLuminance(b);
+  const lighter = Math.max(l1, l2);
+  const darker = Math.min(l1, l2);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+function relativeLuminance({ r, g, b }) {
+  const transform = (value) => {
+    const channel = value / 255;
+    return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+  };
+  return 0.2126 * transform(r) + 0.7152 * transform(g) + 0.0722 * transform(b);
+}
+
+function hexToRgb(value) {
+  const match = String(value || "").trim().match(/^#?([0-9a-f]{6})$/i);
+  if (!match) return null;
+  const raw = match[1];
+  return {
+    r: parseInt(raw.slice(0, 2), 16),
+    g: parseInt(raw.slice(2, 4), 16),
+    b: parseInt(raw.slice(4, 6), 16),
+  };
+}
+
 function itemMatchesSearch(item, query) {
   return [item.label, item.command, item.description]
     .some((value) => String(value || "").toLowerCase().includes(query));
 }
 
+function selectionKey(type, sectionIndex, itemIndex = null) {
+  return itemIndex === null ? `${type}:${sectionIndex}` : `${type}:${sectionIndex}:${itemIndex}`;
+}
+
+function parseSelectionKey(key) {
+  const [type, sectionRaw, itemRaw] = String(key).split(":");
+  return { type, sectionIndex: Number(sectionRaw), itemIndex: itemRaw === undefined ? null : Number(itemRaw) };
+}
+
+function toggleSelection(key, selected) {
+  if (selected) state.selectedKeys.add(key);
+  else state.selectedKeys.delete(key);
+  updateBatchToolbar();
+}
+
+function clearSelection() {
+  state.selectedKeys.clear();
+  renderSectionsEditor();
+  renderPreview();
+  updateBatchToolbar();
+}
+
+function selectableBatchItemKeys() {
+  const query = state.itemSearch || "";
+  const keys = [];
+  (state.menu?.sections || []).forEach((section, sectionIndex) => {
+    (section.items || []).forEach((item, itemIndex) => {
+      if (query && !itemMatchesSearch(item, query)) return;
+      keys.push(selectionKey("item", sectionIndex, itemIndex));
+    });
+  });
+  return keys;
+}
+
+function selectAllBatchCards() {
+  const keys = selectableBatchItemKeys();
+  if (!keys.length) return setStatus("当前没有可全选的卡片。", "warning");
+  keys.forEach((key) => state.selectedKeys.add(key));
+  if (!state.batchSelectMode) state.batchSelectMode = true;
+  updateBatchSelectToggle();
+  renderSectionsEditor();
+  renderPreview();
+  updateBatchToolbar();
+  setStatus(`已全选 ${keys.length} 张${state.itemSearch ? "搜索结果中的" : ""}卡片。`, "success");
+}
+
+function selectedEntries() {
+  return [...state.selectedKeys]
+    .map(parseSelectionKey)
+    .filter((entry) => Number.isInteger(entry.sectionIndex) && entry.sectionIndex >= 0);
+}
+
+function selectedItemEntries() {
+  const keys = new Set();
+  const entries = [];
+  selectedEntries().forEach((entry) => {
+    if (entry.type === "item" && Number.isInteger(entry.itemIndex)) {
+      const key = `${entry.sectionIndex}:${entry.itemIndex}`;
+      if (!keys.has(key)) {
+        keys.add(key);
+        entries.push(entry);
+      }
+      return;
+    }
+    if (entry.type === "section") {
+      const section = state.menu.sections?.[entry.sectionIndex];
+      (section?.items || []).forEach((_item, itemIndex) => {
+        const key = `${entry.sectionIndex}:${itemIndex}`;
+        if (!keys.has(key)) {
+          keys.add(key);
+          entries.push({ type: "item", sectionIndex: entry.sectionIndex, itemIndex });
+        }
+      });
+    }
+  });
+  return entries;
+}
+
+function updateBatchToolbar() {
+  if (!els.batchToolbar) return;
+  const count = state.selectedKeys.size;
+  const itemCount = selectedItemEntries().length;
+  const selectableCount = selectableBatchItemKeys().length;
+  els.batchToolbar.hidden = !state.batchSelectMode && count === 0;
+  els.batchToolbar.classList.toggle("is-selecting", state.batchSelectMode);
+  if (els.batchCount) {
+    els.batchCount.textContent = state.batchSelectMode
+      ? `批量调整中 · 已选择 ${itemCount} 张卡片`
+      : `已选择 ${count} 项`;
+  }
+  if (els.batchSelectAllBtn) {
+    els.batchSelectAllBtn.disabled = selectableCount === 0;
+    els.batchSelectAllBtn.textContent = state.itemSearch ? `全选结果(${selectableCount})` : `全选卡片(${selectableCount})`;
+  }
+  [
+    els.batchEnableBtn,
+    els.batchDisableBtn,
+    els.batchLayoutBtn,
+    els.batchCopyBtn,
+    els.batchDeleteBtn,
+    els.batchMoveUpBtn,
+    els.batchMoveDownBtn,
+  ].forEach((button) => {
+    if (button) button.disabled = count === 0;
+  });
+  if (els.batchClearBtn) els.batchClearBtn.disabled = count === 0;
+}
+
+function batchSetEnabled(enabled) {
+  const entries = selectedItemEntries();
+  if (!entries.length) return setStatus("请先选择需要启用/禁用的卡片。", "warning");
+  entries.forEach(({ sectionIndex, itemIndex }) => {
+    const item = state.menu.sections?.[sectionIndex]?.items?.[itemIndex];
+    if (item) item.enabled = enabled;
+  });
+  markDirty();
+  renderAll();
+}
+
+function openBatchLayoutEditor() {
+  const entries = selectedItemEntries();
+  if (!entries.length) return setStatus("请先选择需要批量排版的卡片；选中分组时会应用到该分组全部卡片。", "warning");
+  const first = state.menu.sections?.[entries[0].sectionIndex]?.items?.[entries[0].itemIndex];
+  const draft = cloneData(first || {});
+  const body = document.createElement("div");
+  body.className = "modal-grid";
+  const intro = document.createElement("p");
+  intro.className = "batch-layout-hint wide";
+  intro.textContent = `将排版应用到 ${entries.length} 张卡片：顺序、块间距、指令/名称/简介字号都会同步。`;
+  body.append(intro);
+  appendItemLayoutFields(body, draft, () => {}, { live: false });
+  openModal("批量卡片排版", body, [
+    {
+      label: "应用到选中卡片",
+      className: "primary",
+      onClick: () => {
+        const layout = itemContentLayout(draft);
+        entries.forEach(({ sectionIndex, itemIndex }) => {
+          const item = state.menu.sections?.[sectionIndex]?.items?.[itemIndex];
+          if (!item) return;
+          item.content_order = [...layout.order];
+          item.content_gap = layout.gap;
+          item.command_font_size = layout.fonts.command;
+          item.label_font_size = layout.fonts.label;
+          item.description_font_size = layout.fonts.description;
+        });
+        state.selectedKeys.clear();
+        markDirty();
+        closeModal();
+        renderAll();
+        setStatus(`已批量更新 ${entries.length} 张卡片的内容排版。`, "success");
+      },
+    },
+    { label: "取消", onClick: closeModal },
+  ]);
+}
+
+function batchCopySelection() {
+  const entries = selectedEntries();
+  if (!entries.length) return;
+  const sectionIndexes = entries
+    .filter((entry) => entry.type === "section")
+    .map((entry) => entry.sectionIndex)
+    .sort((a, b) => b - a);
+  sectionIndexes.forEach((sectionIndex) => {
+    const section = state.menu.sections?.[sectionIndex];
+    if (!section) return;
+    const copy = cloneData(section);
+    copy.title = `${copy.title || "分组"} 副本`;
+    state.menu.sections.splice(sectionIndex + 1, 0, copy);
+  });
+
+  const itemEntries = entries
+    .filter((entry) => entry.type === "item")
+    .sort((a, b) => b.sectionIndex - a.sectionIndex || b.itemIndex - a.itemIndex);
+  itemEntries.forEach(({ sectionIndex, itemIndex }) => {
+    const items = state.menu.sections?.[sectionIndex]?.items;
+    const item = items?.[itemIndex];
+    if (!items || !item) return;
+    const copy = cloneData(item);
+    copy.label = `${copy.label || "菜单项"} 副本`;
+    items.splice(itemIndex + 1, 0, copy);
+  });
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function batchDeleteSelection() {
+  if (!state.selectedKeys.size) return;
+  if (!confirm(`确定删除选中的 ${state.selectedKeys.size} 项？`)) return;
+  const entries = selectedEntries();
+  const sectionIndexes = entries
+    .filter((entry) => entry.type === "section")
+    .map((entry) => entry.sectionIndex)
+    .sort((a, b) => b - a);
+  const deletedSections = new Set(sectionIndexes);
+  entries
+    .filter((entry) => entry.type === "item" && !deletedSections.has(entry.sectionIndex))
+    .sort((a, b) => b.sectionIndex - a.sectionIndex || b.itemIndex - a.itemIndex)
+    .forEach(({ sectionIndex, itemIndex }) => {
+      const items = state.menu.sections?.[sectionIndex]?.items;
+      if (items && items.length > 1) items.splice(itemIndex, 1);
+    });
+  sectionIndexes.forEach((sectionIndex) => {
+    if (state.menu.sections.length > 1) state.menu.sections.splice(sectionIndex, 1);
+  });
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function batchMoveSelection(direction) {
+  const entries = selectedEntries();
+  if (entries.length !== 1) return setStatus("上移/下移一次只支持选择 1 个分组或 1 张卡片。", "warning");
+  const entry = entries[0];
+  if (entry.type === "section") moveSection(entry.sectionIndex, direction);
+  if (entry.type === "item") moveItem(entry.sectionIndex, entry.itemIndex, direction);
+  state.selectedKeys.clear();
+}
+
+function bindDragSort(node, key) {
+  node.draggable = true;
+  node.dataset.dragKey = key;
+  node.addEventListener("dragstart", (event) => {
+    if (event.target.closest("input, textarea, select, button, label")) {
+      event.preventDefault();
+      return;
+    }
+    event.dataTransfer.effectAllowed = "move";
+    event.dataTransfer.setData("text/plain", key);
+    node.classList.add("is-dragging");
+  });
+  node.addEventListener("dragend", () => {
+    node.classList.remove("is-dragging");
+    document.querySelectorAll(".is-drag-over").forEach((item) => item.classList.remove("is-drag-over"));
+  });
+  node.addEventListener("dragover", (event) => {
+    event.preventDefault();
+    node.classList.add("is-drag-over");
+  });
+  node.addEventListener("dragleave", () => node.classList.remove("is-drag-over"));
+  node.addEventListener("drop", (event) => {
+    event.preventDefault();
+    node.classList.remove("is-drag-over");
+    const sourceKey = event.dataTransfer.getData("text/plain");
+    if (!sourceKey || sourceKey === key) return;
+    moveDraggedEntry(sourceKey, key);
+  });
+}
+
+function moveDraggedEntry(sourceKey, targetKey) {
+  const source = parseSelectionKey(sourceKey);
+  const target = parseSelectionKey(targetKey);
+  if (source.type !== target.type) return;
+  if (source.type === "section") {
+    const [section] = state.menu.sections.splice(source.sectionIndex, 1);
+    let targetIndex = target.sectionIndex;
+    if (source.sectionIndex < targetIndex) targetIndex -= 1;
+    state.menu.sections.splice(targetIndex, 0, section);
+  }
+  if (source.type === "item") {
+    const sourceItems = state.menu.sections?.[source.sectionIndex]?.items;
+    const targetItems = state.menu.sections?.[target.sectionIndex]?.items;
+    if (!sourceItems || !targetItems) return;
+    const [item] = sourceItems.splice(source.itemIndex, 1);
+    let targetIndex = target.itemIndex;
+    if (source.sectionIndex === target.sectionIndex && source.itemIndex < targetIndex) targetIndex -= 1;
+    targetItems.splice(targetIndex, 0, item);
+  }
+  state.selectedKeys.clear();
+  markDirty();
+  renderAll();
+}
+
+function resetLocalHistory(menu) {
+  state.history = [cloneData(menu)];
+  state.historyIndex = 0;
+  updateHistoryButtons();
+}
+
+function captureLocalHistory() {
+  if (state.historyPaused || !state.menu) return;
+  const snapshot = cloneData(state.menu);
+  const current = state.history[state.historyIndex];
+  if (current && JSON.stringify(current) === JSON.stringify(snapshot)) return;
+  if (state.historyIndex < state.history.length - 1) {
+    state.history.splice(state.historyIndex + 1);
+  }
+  state.history.push(snapshot);
+  while (state.history.length > HISTORY_LIMIT) state.history.shift();
+  state.historyIndex = state.history.length - 1;
+  updateHistoryButtons();
+}
+
+function undoMenuChange() {
+  if (state.historyIndex <= 0) return;
+  state.historyPaused = true;
+  state.historyIndex -= 1;
+  state.menu = cloneData(state.history[state.historyIndex]);
+  state.currentId = state.menu.id;
+  fillForm();
+  markDirty();
+  renderAll();
+  state.historyPaused = false;
+  updateHistoryButtons();
+}
+
+function redoMenuChange() {
+  if (state.historyIndex >= state.history.length - 1) return;
+  state.historyPaused = true;
+  state.historyIndex += 1;
+  state.menu = cloneData(state.history[state.historyIndex]);
+  state.currentId = state.menu.id;
+  fillForm();
+  markDirty();
+  renderAll();
+  state.historyPaused = false;
+  updateHistoryButtons();
+}
+
+function updateHistoryButtons() {
+  if (els.undoBtn) els.undoBtn.disabled = state.historyIndex <= 0;
+  if (els.redoBtn) els.redoBtn.disabled = state.historyIndex >= state.history.length - 1;
+}
+
+function upsertMenuEntry(menu, { unsaved = false, previousId = "" } = {}) {
+  if (!menu?.id) return;
+  if (previousId && previousId !== menu.id) {
+    removeMenuEntry(previousId);
+    state.unsavedMenuIds.delete(previousId);
+  }
+  const snapshot = cloneData(menu);
+  const index = state.menus.findIndex((item) => item.id === snapshot.id);
+  if (index >= 0) state.menus[index] = snapshot;
+  else state.menus.push(snapshot);
+  if (unsaved) state.unsavedMenuIds.add(snapshot.id);
+  else state.unsavedMenuIds.delete(snapshot.id);
+}
+
+function removeMenuEntry(menuId) {
+  if (!menuId) return;
+  state.menus = state.menus.filter((menu) => menu.id !== menuId);
+}
+
+function syncUnsavedMenuEntry() {
+  if (!state.menu || !state.currentId || !state.unsavedMenuIds.has(state.currentId)) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId });
+  refreshSchemeSelect();
+}
+
+function syncWorkingMenuEntry() {
+  if (!state.menu || !state.currentId) return;
+  const previousId = state.currentId;
+  const nextId = String(state.menu.id || previousId).trim() || previousId;
+  state.menu.id = nextId;
+  state.currentId = nextId;
+  const keepPrevious = state.serverMenuIds.has(previousId) && previousId !== nextId;
+  upsertMenuEntry(state.menu, { unsaved: true, previousId: keepPrevious ? "" : previousId });
+  refreshSchemeSelect();
+}
+
 function markDirty() {
   if (!state.menu) return;
   state.dirty = true;
+  syncWorkingMenuEntry();
+  captureLocalHistory();
   updateSaveState("dirty");
   saveDraft();
 }
@@ -1426,14 +2701,27 @@ function saveDraft() {
   try {
     const id = currentDraftId();
     if (!id || !state.menu) return;
-    localStorage.setItem(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: state.menu }));
+    const draftMenu = cloneData(state.menu);
+    const pending = state.pendingBackgroundAsset;
+    const style = draftMenu.style || {};
+    if (pending && (style.background_image === pending.previewUrl || style.background_image === pending.objectUrl)) {
+      style.background_image = "";
+      style.background_image_asset_id = "";
+      pending.dataUrlPromise.then((dataUrl) => {
+        if (state.pendingBackgroundAsset !== pending || currentDraftId() !== id || !state.menu) return;
+        const resolvedDraft = cloneData(state.menu);
+        resolvedDraft.style = { ...(resolvedDraft.style || {}), background_image: dataUrl, background_image_asset_id: "" };
+        safeStorageSet(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: resolvedDraft }));
+      }).catch((error) => console.warn("failed to persist pending background draft", error));
+    }
+    safeStorageSet(draftKey(id), JSON.stringify({ saved_at: Date.now(), menu: draftMenu }));
   } catch (error) {
     console.warn("failed to save menu draft", error);
   }
 }
 
 function clearDraft(id) {
-  try { localStorage.removeItem(draftKey(id)); } catch (error) { console.warn("failed to clear draft", error); }
+  safeStorageRemove(draftKey(id));
 }
 
 function maybeRestoreDraft(menu) {
@@ -1441,7 +2729,7 @@ function maybeRestoreDraft(menu) {
   if (!id || state.restoredDraftIds.has(id)) return menu;
   state.restoredDraftIds.add(id);
   try {
-    const raw = localStorage.getItem(draftKey(id));
+    const raw = safeStorageGet(draftKey(id), "");
     if (!raw) return menu;
     const draft = JSON.parse(raw);
     const serverTime = Date.parse(menu.updated_at || menu.created_at || "") || 0;
@@ -1466,7 +2754,7 @@ function isCollapsed(type, sectionIndex, itemIndex = null) {
   const key = collapseKey(type, sectionIndex, itemIndex);
   if (state.collapsedKeys.has(key)) return true;
   try {
-    const collapsed = localStorage.getItem(key) === "1";
+    const collapsed = safeStorageGet(key, "") === "1";
     if (collapsed) state.collapsedKeys.add(key);
     return collapsed;
   } catch {
@@ -1479,19 +2767,19 @@ function setCollapsed(type, sectionIndex, itemIndex, collapsed) {
   if (collapsed) state.collapsedKeys.add(key);
   else state.collapsedKeys.delete(key);
   try {
-    if (collapsed) localStorage.setItem(key, "1");
-    else localStorage.removeItem(key);
+    if (collapsed) safeStorageSet(key, "1");
+    else safeStorageRemove(key);
   } catch (error) {
     console.warn("failed to save collapse state", error);
   }
 }
 
 function saveSearchState() {
-  try { localStorage.setItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, state.itemSearch || ""); } catch {}
+  safeStorageSet(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, state.itemSearch || "");
 }
 
 function loadSearchState() {
-  try { state.itemSearch = localStorage.getItem(`${COLLAPSE_PREFIX}${currentDraftId()}:search`) || ""; } catch { state.itemSearch = ""; }
+  state.itemSearch = safeStorageGet(`${COLLAPSE_PREFIX}${currentDraftId()}:search`, "") || "";
 }
 
 function validateMenu({ scroll = false, silent = false } = {}) {
@@ -1631,13 +2919,18 @@ function defaultStyle() {
     primary_color: "#7c3aed",
     background_color: "#f8fafc",
     background_image: "",
+    background_image_asset_id: "",
     background_image_name: "",
     background_image_x: 0,
     background_image_y: 0,
     background_image_width: 100,
+    background_overlay: 0,
+    background_blur: 0,
+    background_brightness: 100,
     card_color: "#ffffff",
     text_color: "#111827",
     muted_color: "#6b7280",
+    font_family: "",
     foreground_opacity: 92,
     radius: 24,
     width_mode: "auto",
@@ -1645,6 +2938,11 @@ function defaultStyle() {
     columns: 2,
     section_gap_mode: "auto",
     section_gap: 14,
+    card_gap: 10,
+    section_padding: 15,
+    shadow_strength: 1,
+    border_strength: 1,
+    watermark: "",
     show_updated_at: true,
   };
 }
@@ -1717,6 +3015,14 @@ function previewLayout(menu) {
   return { width: clampNumber(Math.max(gridWidth + chromeWidth, titleWidth), 520, 1200, 760), columns, itemCount };
 }
 
+function applyPreviewDeviceLayout(layout) {
+  return "原比例预览";
+}
+
+function applyDensity() {
+  document.documentElement.dataset.density = FIXED_DENSITY;
+}
+
 function createItemFromTemplate(templateKey) {
   const key = cardSize(templateKey);
   const template = CARD_TEMPLATES[key];
@@ -1740,10 +3046,110 @@ function cardSizeOptions(selected) {
     .join("");
 }
 
+function contentBlockOptions(selected) {
+  return CONTENT_BLOCKS
+    .map((block) => `<option value="${block.value}" ${block.value === selected ? "selected" : ""}>${block.label}</option>`)
+    .join("");
+}
+
+function itemContentOrder(item = {}) {
+  const raw = Array.isArray(item.content_order)
+    ? item.content_order
+    : typeof item.content_order === "string"
+      ? item.content_order.split(",")
+      : [];
+  const order = raw.filter((value) => DEFAULT_CONTENT_ORDER.includes(value));
+  DEFAULT_CONTENT_ORDER.forEach((value) => {
+    if (!order.includes(value)) order.push(value);
+  });
+  return order.slice(0, 3);
+}
+
+function setItemContentOrderAt(item, position, block) {
+  const order = itemContentOrder(item);
+  const safePosition = clampNumber(position, 0, 2, 0);
+  if (!DEFAULT_CONTENT_ORDER.includes(block)) return;
+  const existingIndex = order.indexOf(block);
+  const previous = order[safePosition];
+  order[safePosition] = block;
+  if (existingIndex !== -1 && existingIndex !== safePosition) order[existingIndex] = previous;
+  item.content_order = order.slice(0, 3);
+}
+
+function defaultItemFonts(size) {
+  const currentSize = cardSize(size);
+  if (currentSize === "compact") return { command: 13, label: 10.5, description: 10.5 };
+  if (currentSize === "large" || currentSize === "banner") return { command: 16, label: 12.5, description: 12.5 };
+  return { command: 14, label: 11.5, description: 11.5 };
+}
+
+function itemContentLayout(item = {}) {
+  const defaults = defaultItemFonts(item.card_size);
+  return {
+    order: itemContentOrder(item),
+    gap: clampNumber(item.content_gap, 0, 40, 2),
+    fonts: {
+      command: clampFloat(item.command_font_size, 8, 34, defaults.command),
+      label: clampFloat(item.label_font_size, 8, 30, defaults.label),
+      description: clampFloat(item.description_font_size, 8, 28, defaults.description),
+    },
+  };
+}
+
+function applyItemLayoutValue(item, key, value) {
+  if (key === "content_gap") {
+    item.content_gap = clampNumber(value, 0, 40, 2);
+    return;
+  }
+  const limits = CONTENT_FONT_LIMITS[key];
+  if (!limits) return;
+  const defaults = defaultItemFonts(item.card_size);
+  const fallback = key === "command_font_size"
+    ? defaults.command
+    : key === "label_font_size"
+      ? defaults.label
+      : defaults.description;
+  item[key] = clampFloat(value, limits.min, limits.max, fallback || limits.fallback);
+}
+
+function itemLayoutValue(item, key) {
+  const layout = itemContentLayout(item);
+  if (key === "content_gap") return layout.gap;
+  if (key === "command_font_size") return layout.fonts.command;
+  if (key === "label_font_size") return layout.fonts.label;
+  if (key === "description_font_size") return layout.fonts.description;
+  return "";
+}
+
+function itemPreviewStyle(item) {
+  const layout = itemContentLayout(item);
+  return [
+    `--item-content-gap:${layout.gap}px`,
+    `--item-command-size:${layout.fonts.command}px`,
+    `--item-label-size:${layout.fonts.label}px`,
+    `--item-description-size:${layout.fonts.description}px`,
+  ].join(";");
+}
+
+function renderItemContentBlocks(item) {
+  const renderers = {
+    command: () => `<strong class="preview-item-title preview-command-title">${escapeHtml(item.command || "")}</strong>`,
+    label: () => `<div class="preview-item-name">${escapeHtml(item.label || "未命名")}</div>`,
+    description: () => `<div class="preview-desc">${escapeHtml(item.description || "")}</div>`,
+  };
+  return itemContentOrder(item).map((block) => renderers[block]()).join("");
+}
+
 function clampNumber(value, min, max, fallback) {
   const number = Number(value);
   if (!Number.isFinite(number)) return fallback;
   return Math.max(min, Math.min(max, Math.round(number)));
+}
+
+function clampFloat(value, min, max, fallback) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return fallback;
+  return Math.max(min, Math.min(max, Math.round(number * 2) / 2));
 }
 
 function uniqueId(prefix) {

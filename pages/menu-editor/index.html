@@ -23,6 +23,9 @@
       </div>
 
       <div class="topbar-actions">
+        <button id="undoBtn" type="button" disabled>撤销</button>
+        <button id="redoBtn" type="button" disabled>重做</button>
+        <button id="historyBtn" type="button">历史</button>
         <button id="newBtn" type="button">新建</button>
         <button id="copyBtn" type="button">复制</button>
         <button id="deleteBtn" type="button" class="danger">删除</button>
@@ -43,15 +46,30 @@
             <h2>点击预览层直接编辑</h2>
           </div>
           <div class="preview-actions">
+            <span class="hint-pill strong">紧凑编辑</span>
+            <span class="hint-pill strong">原比例预览</span>
             <span class="hint-pill">外框=主题</span>
             <span class="hint-pill">内容层=全部分组</span>
             <span class="hint-pill">分组=卡片列表</span>
             <span class="hint-pill">小卡片=内容</span>
+            <button id="batchSelectToggleBtn" type="button" class="batch-mode-toggle" aria-pressed="false">批量调整</button>
             <button id="backgroundEditToggleBtn" type="button" class="bg-edit-toggle" aria-pressed="false">编辑背景图</button>
             <span id="previewMeta" class="preview-meta"></span>
           </div>
         </div>
         <div id="validationSummary" class="validation-summary" hidden></div>
+        <div id="batchToolbar" class="batch-toolbar" hidden>
+          <strong id="batchCount">已选择 0 项</strong>
+          <button id="batchSelectAllBtn" type="button">全选卡片</button>
+          <button id="batchEnableBtn" type="button">批量启用</button>
+          <button id="batchDisableBtn" type="button">批量禁用</button>
+          <button id="batchLayoutBtn" type="button">批量排版</button>
+          <button id="batchCopyBtn" type="button">批量复制</button>
+          <button id="batchDeleteBtn" type="button" class="danger">批量删除</button>
+          <button id="batchMoveUpBtn" type="button">上移选中</button>
+          <button id="batchMoveDownBtn" type="button">下移选中</button>
+          <button id="batchClearBtn" type="button">清除选择</button>
+        </div>
         <div id="renderStatus" class="render-status" hidden>缓存状态待更新</div>
         <div id="status" class="status">正在加载...</div>
         <div id="preview" class="menu-preview"></div>
@@ -71,6 +89,7 @@
       </header>
       <div id="modalBody" class="modal-body"></div>
       <footer id="modalFooter" class="modal-footer"></footer>
+      <span class="modal-resize-grip" aria-hidden="true" title="拖动调整编辑器大小"></span>
     </section>
   </div>
 
@@ -80,7 +99,7 @@
     <input id="menuTitle" />
     <input id="menuSubtitle" />
     <input id="menuFooter" />
-    <select id="theme"><option value="aurora">Aurora</option><option value="minimal">Minimal</option><option value="midnight">Midnight</option><option value="forest">Forest</option><option value="sunrise">Sunrise</option></select>
+    <select id="theme"><option value="aurora">极光紫</option><option value="minimal">清爽蓝</option><option value="forest">森林绿</option><option value="sunrise">日出橙</option><option value="morandi">莫兰迪雾</option><option value="sage">鼠尾草绿</option><option value="macaron">马卡龙粉</option><option value="lavender">薰衣草奶</option><option value="butter">奶油杏</option><option value="seaSalt">海盐薄荷</option></select>
     <div id="themePresetCards"></div>
     <input id="primaryColor" type="color" />
     <input id="backgroundColor" type="color" />
@@ -111,6 +130,14 @@
     <div id="sections"></div>
   </div>
 
-  <script type="module" src="./app.js"></script>
+  <script src="./runtime.js" defer></script>
+  <script src="./state.js" defer></script>
+  <script src="./api.js" defer></script>
+  <script src="./preview.js" defer></script>
+  <script src="./modal.js" defer></script>
+  <script src="./background.js" defer></script>
+  <script src="./validation.js" defer></script>
+  <script src="./shortcuts.js" defer></script>
+  <script src="./app.js" defer></script>
 </body>
 </html>

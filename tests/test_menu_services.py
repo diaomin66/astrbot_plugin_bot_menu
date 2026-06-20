@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import tempfile
 import unittest
+import re
 from pathlib import Path
 
+from services.asset_storage import AssetStorage
+from services.history_storage import MenuHistoryStorage
 from services.menu_model import MenuValidationError, normalize_menu
 from services.local_image import (
     _build_browser_screenshot_command,
@@ -15,6 +18,7 @@ from services.local_image import (
 from services.render_cache import MenuRenderCache
 from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, preview_width_for_menu
+from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
 
 
@@ -43,10 +47,20 @@ class MenuModelTests(unittest.TestCase):
         menu = normalize_menu(
             {
                 "id": "main",
+                "aliases": ["管理", "main"],
                 "style": {
                     "width_mode": "custom",
                     "width": 680,
                     "columns": 3,
+                    "background_image_asset_id": "asset123",
+                    "font_family": "Noto Sans CJK SC",
+                    "card_gap": 6,
+                    "section_padding": 12,
+                    "shadow_strength": 2,
+                    "border_strength": 3,
+                    "background_overlay": 15,
+                    "background_blur": 4,
+                    "watermark": "demo",
                     "foreground_opacity": 45,
                     "background_image": "data:image/png;base64,AAAA",
                     "background_image_x": -12,
@@ -63,9 +77,19 @@ class MenuModelTests(unittest.TestCase):
                 ],
             }
         )
+        self.assertEqual(menu["aliases"], ["管理"])
         self.assertEqual(menu["style"]["width_mode"], "custom")
         self.assertEqual(menu["style"]["width"], 680)
         self.assertEqual(menu["style"]["columns"], 3)
+        self.assertEqual(menu["style"]["background_image_asset_id"], "asset123")
+        self.assertEqual(menu["style"]["font_family"], "Noto Sans CJK SC")
+        self.assertEqual(menu["style"]["card_gap"], 6)
+        self.assertEqual(menu["style"]["section_padding"], 12)
+        self.assertEqual(menu["style"]["shadow_strength"], 2)
+        self.assertEqual(menu["style"]["border_strength"], 3)
+        self.assertEqual(menu["style"]["background_overlay"], 15)
+        self.assertEqual(menu["style"]["background_blur"], 4)
+        self.assertEqual(menu["style"]["watermark"], "demo")
         self.assertEqual(menu["style"]["foreground_opacity"], 45)
         self.assertEqual(menu["style"]["background_image_x"], -12)
         self.assertEqual(menu["style"]["background_image_y"], 18)
@@ -74,6 +98,36 @@ class MenuModelTests(unittest.TestCase):
         self.assertEqual(menu["style"]["section_gap"], 0)
         self.assertTrue(menu["style"]["background_image"].startswith("data:image/png"))
         self.assertEqual(menu["sections"][0]["items"][0]["card_size"], "banner")
+
+    def test_normalize_menu_accepts_per_card_content_layout(self):
+        menu = normalize_menu(
+            {
+                "id": "layout",
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {
+                                "label": "帮助",
+                                "command": "/help",
+                                "description": "说明",
+                                "content_order": ["description", "command", "label"],
+                                "content_gap": 9,
+                                "command_font_size": 18.4,
+                                "label_font_size": 13,
+                                "description_font_size": 10.2,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        item = menu["sections"][0]["items"][0]
+        self.assertEqual(item["content_order"], ["description", "command", "label"])
+        self.assertEqual(item["content_gap"], 9)
+        self.assertEqual(item["command_font_size"], 18.5)
+        self.assertEqual(item["label_font_size"], 13)
+        self.assertEqual(item["description_font_size"], 10)
 
     def test_normalize_menu_rejects_invalid_id(self):
         with self.assertRaises(MenuValidationError):
@@ -94,6 +148,150 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertNotIn('style: { ...ensureStyle(menu), width_mode: "auto" }', app_js)
         self.assertNotIn('style: { ...ensureStyle(menu), section_gap_mode: "auto" }', app_js)
 
+    def test_page_buttons_use_resilient_bridge_and_change_events(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+
+        self.assertIn("async function resolvePageBridge()", app_js)
+        self.assertIn("function normalizePageBridge(rawBridge)", app_js)
+        self.assertIn('const events = control.type === "file" ? ["change"] : ["input", "change"];', app_js)
+        self.assertIn("bindValueChange(input, () => onInput(input.value, input));", app_js)
+        self.assertIn("bindValueChange(input, () => onInput(input.checked, input));", app_js)
+        self.assertIn('state.unsavedMenuIds.add(snapshot.id);', app_js)
+        self.assertIn('badges.push("未保存");', app_js)
+        self.assertIn("function switchMenu(id", app_js)
+        self.assertIn("function stashActiveMenu()", app_js)
+        self.assertIn("function activateLocalMenu(menu", app_js)
+        self.assertIn("const isSavedMenu = state.serverMenuIds.has(currentId);", app_js)
+        self.assertIn("function confirmDialog(title, message", app_js)
+        self.assertIn("const confirmed = await confirmDialog(", app_js)
+        self.assertIn("renderDeletedMenuList", app_js)
+        self.assertIn("restoreDeletedMenu", app_js)
+        self.assertIn('assets: Array.isArray(data.assets) ? data.assets : []', app_js)
+        self.assertIn('label: "一键重置样式"', app_js)
+
+    def test_editor_exposes_single_and_batch_card_layout_controls(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        self.assertIn('const CONTENT_BLOCKS = [', app_js)
+        self.assertIn('function appendItemLayoutFields(', app_js)
+        self.assertIn('function openBatchLayoutEditor()', app_js)
+        self.assertIn('function selectedItemEntries()', app_js)
+        self.assertIn('style="${itemPreviewStyle(item)}"', app_js)
+        self.assertIn('renderItemContentBlocks(item)', app_js)
+        self.assertIn('id="batchLayoutBtn"', index_html)
+        self.assertIn('id="batchSelectToggleBtn"', index_html)
+        self.assertIn('id="batchSelectAllBtn"', index_html)
+        self.assertIn("function toggleBatchSelectMode()", app_js)
+        self.assertIn("function selectAllBatchCards()", app_js)
+        self.assertIn("function selectableBatchItemKeys()", app_js)
+        self.assertIn("state.batchSelectMode", app_js)
+        self.assertIn('class="preview-select-marker"', app_js)
+        self.assertNotIn('selectedClass ? "✓" : ""', app_js)
+        self.assertIn('els.batchToolbar.hidden = !state.batchSelectMode && count === 0;', app_js)
+        self.assertIn('els.batchSelectAllBtn.textContent = state.itemSearch ? `全选结果(${selectableCount})` : `全选卡片(${selectableCount})`;', app_js)
+        self.assertIn(".preview-card.is-batch-selecting", css)
+        self.assertIn(".preview-item.is-selected .preview-select-marker", css)
+        self.assertIn("mutator(ensureStyle(state.menu));", app_js)
+
+    def test_editor_modal_has_resize_handle(self):
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        self.assertIn('class="modal-resize-grip"', index_html)
+        self.assertIn("resize: both;", css)
+        self.assertIn(".modal-resize-grip", css)
+
+    def test_page_simplifies_operations_console_and_keeps_core_editing_features(self):
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+
+        for token in ('id="undoBtn"', 'id="redoBtn"', 'id="historyBtn"', 'id="newBtn"', 'id="copyBtn"', 'id="deleteBtn"', 'id="batchToolbar"'):
+            self.assertIn(token, index_html)
+
+        for removed in (
+            'id="commandPaletteBtn"',
+            'id="assetCenterBtn"',
+            'id="trashBtn"',
+            'id="routingBtn"',
+            'id="densitySelect"',
+            'id="previewDevice"',
+            "openCommandPalette",
+            "openAssetCenter",
+            "openTrashPanel",
+            "openRoutingPanel",
+            "setDensity",
+            "setPreviewDevice",
+            "command-palette",
+            "asset-grid",
+        ):
+            self.assertNotIn(removed, app_js + index_html + css)
+
+        for token in (
+            "bindGlobalShortcuts",
+            "undoMenuChange",
+            "redoMenuChange",
+            "batchSetEnabled",
+            "batchCopySelection",
+            "openHistoryPanel",
+            "switchMenu",
+            "stashActiveMenu",
+            "activateLocalMenu",
+            "createDefaultMenu",
+            "chooseFallbackMenuId",
+            "showImportResult",
+            "syncThemeSelectOptions",
+            "morandi",
+            "macaron",
+            "seaSalt",
+            "contrastWarningText",
+            "fixContrastColors",
+            "background_image_asset_id",
+            "font_family",
+            "card_gap",
+            "section_padding",
+            "shadow_strength",
+            "background_overlay",
+            "background_blur",
+            "watermark",
+        ):
+            self.assertIn(token, app_js)
+        theme_block = app_js.split("const THEME_PRESETS = {", 1)[1].split("};", 1)[0]
+        self.assertEqual(len(re.findall(r"^\s+[A-Za-z0-9_]+:\s+\{ label:", theme_block, re.MULTILINE)), 10)
+        self.assertNotIn("midnight", app_js + index_html)
+        self.assertNotIn("午" + "夜蓝", app_js + index_html)
+
+        for token in ("batch-toolbar", "preview-watermark", "data-density", "panel-in", "hint-pill.strong", "confirm-dialog", "history-panel", "import-result"):
+            self.assertIn(token, css)
+
+
+
+    def test_page_uses_native_module_split_and_compat_bootstrap(self):
+        page_dir = Path("pages/menu-editor")
+        index_html = (page_dir / "index.html").read_text(encoding="utf-8")
+        app_js = (page_dir / "app.js").read_text(encoding="utf-8")
+
+        for module_name in (
+            "runtime.js",
+            "state.js",
+            "api.js",
+            "preview.js",
+            "modal.js",
+            "background.js",
+            "validation.js",
+            "shortcuts.js",
+        ):
+            self.assertTrue((page_dir / module_name).is_file())
+            self.assertIn(f'src="./{module_name}" defer', index_html)
+
+        self.assertIn('src="./app.js" defer', index_html)
+        self.assertNotIn('<script type="module" src="./app.js"', index_html)
+        self.assertNotIn("await resolvePageBridge();", app_js.split("function initializeEditor", 1)[0])
+        self.assertIn("function cloneData", app_js)
+        self.assertIn("editorRuntime.cloneData", app_js)
+        self.assertIn("createPendingBackgroundAsset", app_js)
+        self.assertIn("flushPendingBackgroundAsset", app_js)
+
 
 class MenuStorageTests(unittest.TestCase):
     def test_storage_creates_default_menu(self):
@@ -110,6 +308,57 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNotNone(storage.get_menu("main"))
             storage.delete_menu("main")
             self.assertIsNone(storage.get_menu("main"))
+            self.assertIsNotNone(storage.get_menu_including_deleted("main"))
+
+    def test_storage_resolves_aliases_and_restores_soft_deleted_menu(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            storage.save_menu(
+                {
+                    "id": "admin",
+                    "name": "管理菜单",
+                    "aliases": ["管理", "tools"],
+                    "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+                }
+            )
+            self.assertEqual(storage.resolve_menu("管理")["id"], "admin")
+            storage.delete_menu("admin")
+            self.assertIsNone(storage.resolve_menu("管理"))
+            restored = storage.restore_menu("admin")
+            self.assertEqual(restored["id"], "admin")
+            self.assertEqual(storage.resolve_menu("tools")["id"], "admin")
+
+    def test_asset_storage_deduplicates_and_tracks_references(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = AssetStorage(tmp)
+            data_url = "data:image/png;base64,iVBORw0KGgo="
+            first = storage.save_data_url(data_url, name="bg.png")
+            second = storage.save_data_url(data_url, name="again.png")
+            self.assertEqual(first["id"], second["id"])
+            menus = [{"id": "main", "style": {"background_image_asset_id": first["id"]}}]
+            assets = storage.list_assets(menus)
+            self.assertEqual(assets[0]["references"], ["main"])
+            with self.assertRaises(MenuValidationError):
+                storage.delete_asset(first["id"], menus)
+
+    def test_history_snapshot_restore_and_routing_defaults(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            history = MenuHistoryStorage(tmp)
+            menu = normalize_menu({"id": "main", "title": "旧标题", "sections": [{"title": "功能", "items": [{"label": "帮助"}]}]})
+            snapshot = history.snapshot(menu, reason="save")
+            self.assertEqual(history.restore_snapshot("main", snapshot["id"])["title"], "旧标题")
+
+            routing = RoutingStorage(tmp)
+            routing.save_rules(
+                {
+                    "global_default": "main",
+                    "platforms": {"telegram": "tg"},
+                    "contexts": {"aiocqhttp:10001": "group-menu", "10002": "plain-group"},
+                }
+            )
+            self.assertEqual(routing.resolve_default(platform="aiocqhttp", group_id="10001", global_default="default"), "group-menu")
+            self.assertEqual(routing.resolve_default(platform="telegram", group_id="", global_default="default"), "tg")
+            self.assertEqual(routing.resolve_default(platform="qq", group_id="", global_default="default"), "main")
 
     def test_import_replace(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -119,6 +368,18 @@ class MenuStorageTests(unittest.TestCase):
                 mode="replace",
             )
             self.assertEqual([menu["id"] for menu in menus], ["imported"])
+
+    def test_import_merge_returns_active_menus_only(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            storage.save_menu({"id": "old", "sections": [{"title": "功能", "items": [{"label": "帮助"}]}]})
+            storage.delete_menu("old")
+            menus = storage.import_menus(
+                [{"id": "new", "sections": [{"title": "功能", "items": [{"label": "菜单"}]}]}],
+                mode="merge",
+            )
+            self.assertEqual({menu["id"] for menu in menus}, {"default", "new"})
+            self.assertEqual([menu["id"] for menu in storage.list_deleted_menus()], ["old"])
 
     def test_local_renderer_writes_png(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -152,16 +413,21 @@ class MenuStorageTests(unittest.TestCase):
             storage = MenuStorage(tmp)
             menu = storage.get_menu("default")
             cache = MenuRenderCache(tmp)
-            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "missing")
+            missing = cache.get_status(menu, render_width=900, render_scale=4)
+            self.assertEqual(missing["status"], "missing")
+            self.assertIn("fingerprint", missing)
 
             cache.mark_rendering(menu, render_width=900, render_scale=4)
-            self.assertEqual(cache.get_status(menu, render_width=900, render_scale=4)["status"], "rendering")
+            rendering = cache.get_status(menu, render_width=900, render_scale=4)
+            self.assertEqual(rendering["status"], "rendering")
+            self.assertEqual(rendering["attempts"], 1)
 
             rendered_path = render_menu_image(menu, tmp)
             cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
             ready = cache.get_status(menu, render_width=900, render_scale=4)
             self.assertEqual(ready["status"], "ready")
             self.assertIsNotNone(ready["rendered_at"])
+            self.assertGreater(ready["cache_size"], 0)
 
             changed_menu = {**menu, "title": "修改后的菜单"}
             self.assertEqual(cache.get_status(changed_menu, render_width=900, render_scale=4)["status"], "missing")
@@ -207,6 +473,14 @@ class MenuStorageTests(unittest.TestCase):
         )
         self.assertIn("self.render_coordinator.schedule(menu)", main_py[main_py.index("async def api_save_menu") :])
         self.assertIn("menus/render-status/<menu_id>", main_py)
+        self.assertIn("self.storage.resolve_menu(menu_id)", main_py)
+        self.assertIn('command.casefold() == "list"', main_py)
+        self.assertIn('command.casefold() == "search"', main_py)
+        self.assertIn('command.casefold() == "refresh"', main_py)
+        self.assertIn("assets/<asset_id>", main_py)
+        self.assertIn("menus/history/<menu_id>", main_py)
+        self.assertIn("menus/render-refresh", main_py)
+        self.assertIn("routing", main_py)
 
     def test_pillow_renderer_can_output_high_resolution_png(self):
         from PIL import Image
@@ -249,7 +523,7 @@ class MenuStorageTests(unittest.TestCase):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
         version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
-        self.assertEqual(version, "0.3.0")
+        self.assertEqual(version, "0.4.0")
         self.assertEqual(author, "雪碧bir")
         self.assertIn(f"当前版本：`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)
@@ -345,8 +619,49 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("--preview-foreground-opacity:0.920", html)
             self.assertIn('class="preview-inner"', html)
             self.assertIn('class="preview-item size-standard', html)
+            self.assertIn('class="preview-icon"', html)
+            self.assertIn('class="preview-item-main"', html)
+            command_index = html.index('class="preview-item-title preview-command-title"')
+            title_index = html.index('class="preview-item-name"')
+            desc_index = html.index('class="preview-desc"')
+            self.assertLess(command_index, title_index)
+            self.assertLess(title_index, desc_index)
             self.assertIn("实时预览", html)
             self.assertNotIn("更新：", html)
+
+    def test_preview_html_uses_custom_card_content_layout(self):
+        menu = normalize_menu(
+            {
+                "id": "cardlayout",
+                "sections": [
+                    {
+                        "title": "功能",
+                        "items": [
+                            {
+                                "label": "帮助",
+                                "command": "/help",
+                                "description": "查看帮助",
+                                "content_order": ["description", "label", "command"],
+                                "content_gap": 8,
+                                "command_font_size": 18,
+                                "label_font_size": 13.5,
+                                "description_font_size": 10,
+                            }
+                        ],
+                    }
+                ],
+            }
+        )
+        html = build_preview_html(menu)
+        desc_index = html.index('class="preview-desc"')
+        title_index = html.index('class="preview-item-name"')
+        command_index = html.index('class="preview-item-title preview-command-title"')
+        self.assertLess(desc_index, title_index)
+        self.assertLess(title_index, command_index)
+        self.assertIn("--item-content-gap:8px", html)
+        self.assertIn("--item-command-size:18px", html)
+        self.assertIn("--item-label-size:13.5px", html)
+        self.assertIn("--item-description-size:10px", html)
 
     def test_preview_width_can_be_customized(self):
         menu = normalize_menu(
@@ -392,6 +707,35 @@ class MenuStorageTests(unittest.TestCase):
         html = build_preview_html(menu)
         self.assertIn("--preview-section-gap:0px", html)
         self.assertIn('class="preview-sections"', html)
+
+    def test_preview_html_uses_v040_style_fields(self):
+        menu = normalize_menu(
+            {
+                "id": "ops",
+                "style": {
+                    "font_family": "Noto Sans CJK SC",
+                    "card_gap": 6,
+                    "section_padding": 12,
+                    "shadow_strength": 2,
+                    "border_strength": 3,
+                    "background_overlay": 15,
+                    "background_blur": 4,
+                    "background_brightness": 88,
+                    "watermark": "demo",
+                },
+                "sections": [{"title": "功能", "items": [{"label": "帮助"}]}],
+            }
+        )
+        html = build_preview_html(menu)
+        self.assertIn("--preview-font-family:", html)
+        self.assertIn("--preview-card-gap:6px", html)
+        self.assertIn("--preview-section-padding:12px", html)
+        self.assertIn("--preview-shadow-strength:2", html)
+        self.assertIn("--preview-border-strength:3", html)
+        self.assertIn("--preview-bg-overlay:0.150", html)
+        self.assertIn("--preview-bg-blur:4px", html)
+        self.assertIn("--preview-bg-brightness:0.880", html)
+        self.assertIn('class="preview-watermark"', html)
 
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
