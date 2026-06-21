@@ -8,7 +8,6 @@ from typing import Any
 
 USER_FONTS_DIRNAME = "fonts"
 SUPPORTED_FONT_EXTENSIONS = {".otf", ".ttc", ".ttf", ".woff", ".woff2"}
-PIL_FONT_EXTENSIONS = {".otf", ".ttc", ".ttf"}
 DEFAULT_FONT_STACK = ("Inter", "PingFang SC", "Microsoft YaHei", "sans-serif")
 DEFAULT_MONO_FONT_STACK = ("Consolas", "JetBrains Mono", "monospace")
 
@@ -120,12 +119,6 @@ class FontRegistry:
         if raw:
             return font_stack_css((raw, *DEFAULT_FONT_STACK))
         return font_stack_css(DEFAULT_FONT_STACK)
-
-    def pillow_font_path(self, value: Any) -> str | None:
-        font = self.resolve(value)
-        if font and font.path.suffix.lower() in PIL_FONT_EXTENSIONS:
-            return str(font.path)
-        return None
 
     def signature_for(self, value: Any) -> str:
         font = self.resolve(value)

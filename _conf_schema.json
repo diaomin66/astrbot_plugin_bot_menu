@@ -12,22 +12,10 @@
     "hint": "菜单未设置手动宽度时的后备宽度；Page 默认会按内容、列数和卡片模板自动计算实际渲染宽度。"
   },
   "render_scale": {
-    "description": "图片清晰度倍率",
+    "description": "Typst 输出倍率",
     "type": "int",
     "default": 4,
-    "hint": "Playwright/browser 截图和 Pillow 降级渲染的输出倍率，范围建议 2-4；4 最清晰但图片文件更大。"
-  },
-  "render_mode": {
-    "description": "菜单图片渲染模式",
-    "type": "string",
-    "default": "browser",
-    "options": [
-      "browser",
-      "auto",
-      "remote",
-      "pillow"
-    ],
-    "hint": "browser 为优先调用 Playwright/Chromium、失败后探测 Windows/macOS/Linux 系统浏览器的无头截图（与 Page 实时预览同款排版，推荐）；auto 先尝试 browser，失败后再尝试 AstrBot 远程 T2I；remote 仅使用远程 T2I；pillow 降级为基础绘图引擎。"
+    "hint": "仅用于旧菜单缺少 Page 完整预览 PNG 时的 Typst 兼容编译；已有完整预览图的菜单会直接复用 Page 像素结果。"
   },
   "show_render_error_detail": {
     "description": "聊天侧显示详细渲染错误",

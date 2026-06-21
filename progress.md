@@ -262,3 +262,369 @@
 - Modified `CHANGELOG.md`: 记录 Page 保存后因 Chromium 缺失导致缓存生成失败的修复。
 - Modified `docs/page-editor-verification.md`: 补充浏览器渲染依赖契约。
 - Rollback: revert this task's changes with `git checkout -- services/local_image.py tests/test_menu_services.py README.md CHANGELOG.md docs/page-editor-verification.md progress.md` before committing, or revert the eventual commit that contains this entry.
+
+## 2026-06-21 - Task: Add Typst menu rendering mode
+### What was done
+- Added a new Typst renderer that consumes the same Page-saved menu snapshot and outputs high-resolution PNG files while keeping the existing browser screenshot path intact.
+- Wired `render_mode=typst` into cache prewarm, save-triggered rendering, manual refresh, dependency installation, and configuration discovery.
+- Split render-cache fingerprints by renderer engine so browser and Typst images never reuse each other's stale cache.
+- Documented the Typst mode and its Page data mapping.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 55 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Typst smoke render generated `data/plugin_data/astrbot_plugin_bot_menu/rendered/default-typst-d29ac5acac67.png` with a valid PNG header and visually verified layout.
+
+### Notes
+- `main.py`: routes cache rendering through the configured render engine and adds the `typst` branch.
+- `requirements.txt`: adds the `typst` Python package dependency.
+- `_conf_schema.json`: exposes `typst` as a selectable render mode.
+- `README.md`: documents the Typst rendering mode.
+- `docs/typst-renderer.md`: records the Typst data mapping, implementation principles, and usage.
+- `services/__init__.py`: exports Typst renderer helpers.
+- `services/typst_renderer.py`: implements Typst source generation, background asset extraction, and PNG compilation.
+- `services/render_cache.py`: includes the render engine in cache fingerprints and cache lookups.
+- `services/render_coordinator.py`: passes the active render engine through status, scheduling, and storage.
+- `tests/test_menu_services.py`: adds Typst render and engine-specific cache coverage.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore main.py requirements.txt _conf_schema.json README.md services/__init__.py services/render_cache.py services/render_coordinator.py tests/test_menu_services.py progress.md` and delete `services/typst_renderer.py` plus `docs/typst-renderer.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Make Typst rendering browser-exact
+### What was done
+- Reworked Typst mode so Chromium/Page preview is the single layout and font source of truth, then Typst packages that exact browser reference into the final PNG.
+- Removed the pure Typst self-layout path from the active renderer to avoid Chinese text, emoji, fallback-font, line-height and wrapping drift.
+- Updated tests and documentation to describe browser-exact Typst mode instead of estimated Typst vector layout.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 55 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Real smoke render produced browser and Typst PNGs at the same 1320x1205 size; visual inspection confirmed text position, font rendering, wrapping, shadows and layout match the browser preview.
+
+### Notes
+- `services/typst_renderer.py`: now captures the Page HTML through Chromium and embeds the exact PNG into a Typst document for final output.
+- `services/__init__.py`: exports the browser-exact Typst helper name.
+- `tests/test_menu_services.py`: verifies Typst mode uses the browser reference and preserves its dimensions.
+- `_conf_schema.json`: clarifies Typst mode uses Chromium as the Page layout/font oracle.
+- `README.md`: documents exact-parity Typst behavior and includes the `typst` render option.
+- `docs/typst-renderer.md`: documents why browser-exact is the stable implementation path.
+- `progress.md`: appends this correction and verification record.
+- Rollback: before merge, run `git restore services/typst_renderer.py services/__init__.py tests/test_menu_services.py _conf_schema.json README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Restore browser-free Typst direct rendering
+### What was done
+- Rejected the browser-reference Typst approach because Typst mode must not depend on browser rendering.
+- Restored Typst to direct document rendering from Page-saved menu data and added custom-font family resolution through Typst's visible font list.
+- Added regression coverage that forbids Typst renderer code from calling browser rendering, Playwright, or browser-reference image packaging.
+- Updated configuration and docs to describe Typst as a browser-free renderer.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 56 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Direct Typst smoke render generated `data/plugin_data/astrbot_plugin_bot_menu/rendered/default-typst-d29ac5acac67.png` as a valid 1320x876 PNG without invoking browser rendering.
+
+### Notes
+- `services/typst_renderer.py`: keeps the direct Typst document path and resolves selected custom font files to Typst-visible families.
+- `tests/test_menu_services.py`: adds a no-browser-dependency guard for Typst mode.
+- `_conf_schema.json`: describes `typst` as a browser-free render mode.
+- `docs/typst-renderer.md`: documents the direct-render data contract, font matching, and engine limits.
+- `progress.md`: appends this correction after the discarded browser-reference attempt.
+- Rollback: before merge, run `git restore services/typst_renderer.py tests/test_menu_services.py _conf_schema.json docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Save fine-grained Page snapshot for direct Typst restoration
+### What was done
+- Added Page-side `render_snapshot` capture during save with canvas size, layout metadata, background images, visual boxes, text boxes, coordinates, colors, opacity, borders, radius, font sizes, line heights, weights, alignment and computed font-family stacks.
+- Preserved `render_snapshot` in backend menu normalization so the saved Page preview data reaches the Typst renderer.
+- Updated Typst rendering to prefer `render_snapshot` and draw from absolute saved geometry without calling browser rendering; older menus still fall back to the previous field-based Typst layout until reopened and saved.
+- Updated docs to explain the pixel-oriented snapshot contract and custom-font matching path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 56 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Snapshot smoke render compiled a 420x220 saved geometry snapshot to a valid 840x440 PNG with `render_scale=2`.
+
+### Notes
+- `pages/menu-editor/app.js`: saves `render_snapshot` from the live preview DOM before posting the menu.
+- `services/menu_model.py`: preserves valid `typst-direct` render snapshots.
+- `services/typst_renderer.py`: uses `render_snapshot` for direct absolute Typst drawing and keeps browser-free rendering.
+- `tests/test_menu_services.py`: verifies snapshot persistence, Typst snapshot source generation, and no browser dependency.
+- `README.md` and `docs/typst-renderer.md`: document the fine-grained snapshot contract and fallback behavior.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/menu_model.py services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+
+## 2026-06-21 - Task: Refine Typst snapshot fidelity and black-card prevention
+### What was done
+- Upgraded Page's Typst `render_snapshot` to v2 with unscaled CSS-pixel geometry, capture scale, device pixel ratio, padding, letter spacing, font style, transform metadata, background metadata, box shadow metadata, and image filter metadata.
+- Adjusted Typst snapshot rendering to skip fully transparent or unsupported CSS-only boxes instead of drawing black fills, while preserving real RGBA alpha from Page colors.
+- Improved text restoration by applying saved padding offsets, letter spacing, line leading, font style, opacity, and computed font-family stacks; cached Typst font-family lookup per font file to avoid repeated scans.
+- Updated docs and config hints to describe browser-free Typst snapshot rendering, v2 snapshot fidelity fields, transparency handling, and Typst output scaling.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 58 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Snapshot smoke render compiled a v2 `render_snapshot` directly through Typst to a valid 320x180 PNG; sampled card pixel was `(241, 244, 249, 240)`, confirming the transparent layer did not turn the card black.
+
+### Notes
+- `pages/menu-editor/app.js`: saves more complete Page-computed geometry and typography data for Typst, normalized out of preview zoom/scale.
+- `services/typst_renderer.py`: skips invisible boxes, preserves RGBA alpha, applies saved text metrics, and caches Typst font-family resolution.
+- `services/menu_model.py`: preserves v2 Typst snapshots instead of forcing every snapshot back to v1.
+- `tests/test_menu_services.py`: adds regression coverage for v2 snapshot fields, transparent-box skipping, RGBA conversion, and text metric emission.
+- `README.md`: documents the refined browser-free Typst snapshot behavior and output scaling.
+- `docs/typst-renderer.md`: documents v2 snapshot contract, font cache behavior, and transparency rules.
+- `_conf_schema.json`: clarifies that `render_scale` also applies to Typst PNG output.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py services/menu_model.py tests/test_menu_services.py README.md docs/typst-renderer.md _conf_schema.json progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add measured text-line restoration for Typst snapshots
+### What was done
+- Extended Page's Typst snapshot capture to record measured text line rectangles from the live preview, normalized back to unscaled CSS pixels.
+- Updated Typst snapshot rendering to prefer saved line rectangles, placing each text line at the Page-recorded x/y position instead of letting Typst reflow multi-line text.
+- Added cache-hit coverage showing unchanged Typst menus return the cached PNG path without invoking the renderer again.
+- Updated Typst documentation and README notes to describe measured line boxes and the cached fast path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 60 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst smoke render compiled a line-box `render_snapshot` to a valid 360x180 PNG; sampled non-text card pixel was `(241, 244, 249, 240)`, confirming the card remained light instead of black.
+- Cache-hit smoke check returned the existing Typst cached PNG path in about `1.000ms` and did not recompile Typst.
+
+### Notes
+- `pages/menu-editor/app.js`: captures real preview text line boxes with DOM Range and saves them under each text snapshot.
+- `services/typst_renderer.py`: renders saved text lines independently when line boxes are present to reduce wrapping and vertical drift.
+- `tests/test_menu_services.py`: verifies line-box capture markers, line-box Typst source generation, and cache-hit short-circuit behavior.
+- `README.md`: documents measured line boxes and unchanged-menu cache reuse for Typst mode.
+- `docs/typst-renderer.md`: documents the measured line-box contract and cached latency-critical path.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Preserve visible text case and prevent Typst rewrapping
+### What was done
+- Updated Page snapshot capture to save CSS `text-transform` results as the final visible text, so uppercase/lowercase styling from preview is not lost in Typst.
+- Added measured grapheme boxes for text snapshots, including emoji-safe segmentation when `Intl.Segmenter` is available.
+- Updated Typst snapshot rendering to prefer saved grapheme boxes before line boxes, and widened fallback text boxes to prevent Typst from introducing new line breaks.
+- Updated docs to describe grapheme-box restoration, `text-transform` preservation, and no-rewrap fallback behavior.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 61 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst glyph smoke render compiled a valid 360x120 PNG from saved grapheme boxes; sampled non-text card pixel was `(241, 244, 249, 240)`.
+- Glyph smoke source check confirmed saved uppercase glyphs were used instead of re-emitting the whole original line, and cache hit returned in `0.856ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: applies computed `text-transform` during snapshot capture and records grapheme boxes plus line boxes.
+- `services/typst_renderer.py`: renders saved grapheme boxes first and uses no-rewrap fallback widths for line/whole-text paths.
+- `tests/test_menu_services.py`: verifies Page capture markers, grapheme-box priority, visible uppercase text, transparency handling, and cache-hit behavior.
+- `README.md`: documents text-transform, grapheme boxes, and no-rewrap Typst behavior.
+- `docs/typst-renderer.md`: documents the updated text snapshot contract and fallback order.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add Page-saved text raster layers for Typst fidelity
+### What was done
+- Added Page-side transparent text raster capture for each saved text element, using the same visible transformed text geometry and effective ancestor opacity from the preview.
+- Updated Typst snapshot rendering to prefer saved text raster layers before grapheme, line, or whole-text fallback rendering.
+- Preserved the browser-free Typst render-time contract: Typst reads saved Page data and embeds saved image layers without launching browser or Playwright.
+- Updated documentation to describe text raster layers as the highest-fidelity path for font shape, uppercase/lowercase, emoji fallback, and no unexpected rewrapping.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 62 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst raster-layer smoke render compiled a valid 300x120 PNG from a saved transparent text raster layer; sampled non-text card pixel was `(241, 244, 249, 240)`.
+- Raster smoke source check confirmed Typst embedded the saved image layer instead of re-emitting `MENU MAIN` or glyph text; cache hit returned in `0.984ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: captures effective text opacity and transparent text raster layers during Page save snapshots.
+- `services/typst_renderer.py`: embeds saved text raster layers before falling back to glyph/line/text rendering.
+- `tests/test_menu_services.py`: verifies Page raster snapshot markers and Typst raster-layer priority.
+- `README.md`: documents text raster restoration before grapheme and line fallback.
+- `docs/typst-renderer.md`: documents the updated high-fidelity text snapshot contract.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add full-card Page raster as Typst highest-fidelity path
+### What was done
+- Added asynchronous Page snapshot capture for a full-card preview raster layer, generated from the current preview card after computed styles are inlined.
+- Updated Typst snapshot rendering to prefer the saved full-card raster and skip structured boxes/text fallback when that raster exists.
+- Kept structured boxes, text geometry, grapheme boxes, and text raster fallback data for older or failed full-raster captures.
+- Optimized Page save snapshots so successful full-card raster capture avoids generating redundant per-text raster layers.
+- Updated README and Typst renderer docs to document the full-card raster as the highest-fidelity browser-free Typst render-time path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 63 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst full-card raster smoke render compiled a valid 300x120 PNG and confirmed fallback black box/text content was not emitted in the Typst source.
+- Cache-hit smoke check returned the cached Typst PNG path in `0.861ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: makes save snapshot building asynchronous, captures a full-card preview raster, and skips redundant text rasters when the full-card raster succeeds.
+- `services/typst_renderer.py`: uses the saved full-card preview raster before boxes/text fallback.
+- `tests/test_menu_services.py`: verifies async snapshot save flow, full-card raster capture markers, and Typst full-raster priority.
+- `README.md`: documents full-card preview raster priority and structured fallback behavior.
+- `docs/typst-renderer.md`: documents the highest-fidelity full-card raster contract.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add pixel-diff proof for Typst full-card raster path
+### What was done
+- Added a pixel-level regression test for the full-card preview raster path.
+- The test renders a saved RGBA PNG through Typst at the same CSS-pixel size and compares the final PNG pixel-for-pixel against the saved raster.
+- Updated Typst renderer documentation to record the pixel-diff gate for the highest-fidelity path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 64 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Pixel-diff regression proved the Typst full-card raster output matched the saved raster exactly for the checked RGBA sample.
+
+### Notes
+- `tests/test_menu_services.py`: adds exact pixel comparison for saved preview raster through Typst output.
+- `docs/typst-renderer.md`: documents the pixel-diff regression gate.
+- `progress.md`: appends this verification record.
+- Rollback: before merge, run `git restore tests/test_menu_services.py docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Fill Typst cache directly from saved Page raster
+### What was done
+- Added a saved preview raster materialization helper that decodes the Page-saved full-card raster, scales it to the configured render scale, and writes a PNG cache source.
+- Updated menu save flow in `typst` mode to store that saved raster directly into the render cache before scheduling background compilation.
+- Kept background Typst compilation as fallback when the saved full-card raster is missing or invalid.
+- Updated docs to explain immediate cache fill from Page raster for the latency-critical chat path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 65 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Fast raster cache smoke check decoded, scaled, stored, and re-read a Typst cache entry in `7.055ms` total.
+
+### Notes
+- `services/typst_renderer.py`: adds `materialize_saved_preview_raster()` for safe Page-raster cache source generation.
+- `services/__init__.py`: exports the saved-raster materialization helper.
+- `main.py`: saves `typst` render cache directly from Page raster when available, otherwise schedules the existing renderer.
+- `tests/test_menu_services.py`: verifies raster materialization, cache fill, and save-flow fast-path source markers.
+- `README.md` and `docs/typst-renderer.md`: document immediate cache fill from saved full-card raster.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore main.py services/__init__.py services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Keep Page-saved Typst raster fonts synchronized
+### What was done
+- Fixed the Page save snapshot path so it waits for loaded preview fonts before measuring text geometry or capturing the full-card raster.
+- Embedded the same user `@font-face` CSS from `#botMenuUserFonts` into the SVG `foreignObject` used for the saved full-card raster.
+- Forced raster-only font CSS from `font-display: swap` to `font-display: block` so one-shot snapshot capture does not paint a fallback font before the selected font is ready.
+- Updated README and Typst renderer docs to explain the refreshed font-synchronized saved raster contract.
+
+### Testing
+- `python -m unittest tests.test_menu_services.MenuEditorSourceTests.test_save_uses_complete_state_snapshot_without_replaying_stale_modal_controls` -> regression failed before the fix on missing `waitForPreviewFonts`, then passed after the fix.
+- `python -m unittest tests.test_menu_services` -> 65 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+
+### Notes
+- `pages/menu-editor/app.js`: waits for preview fonts and embeds user font CSS into saved preview raster SVG captures.
+- `tests/test_menu_services.py`: verifies Page save snapshots include the font-ready wait and raster font CSS injection markers.
+- `README.md`: documents that Typst mode saves a font-synchronized Page preview raster.
+- `docs/typst-renderer.md`: documents the font synchronization contract and the need to resave after font changes.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Restore user fonts in browser rendering
+### What was done
+- Fixed browser-rendered preview HTML so it embeds the complete user `@font-face` table from the plugin `fonts/` directory instead of only the single resolved selected font.
+- Changed browser screenshot HTML font loading from `font-display: swap` to `font-display: block` to avoid one-shot screenshots painting fallback fonts before user fonts are available.
+- Added a regression test that proves browser render HTML includes all user font data URLs and does not keep `font-display: swap`.
+- Updated font system and Page verification docs to describe the browser rendering font contract.
+
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_preview_html_embeds_all_user_fonts_for_browser_capture tests.test_menu_services.MenuStorageTests.test_preview_html_embeds_selected_user_font_face` -> 2 tests passed.
+- `python -m unittest tests.test_menu_services` -> 66 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+
+### Notes
+- `services/renderer.py`: injects complete user font CSS into browser render HTML and forces screenshot-stable font display.
+- `tests/test_menu_services.py`: adds browser font-table regression coverage.
+- `README.md`: documents that browser render HTML embeds the complete user font table.
+- `docs/font-system.md`: documents browser screenshot font loading behavior.
+- `docs/page-editor-verification.md`: updates the verification requirement for browser render fonts.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore services/renderer.py tests/test_menu_services.py README.md docs/font-system.md docs/page-editor-verification.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Remove legacy render paths and keep Typst-only rendering
+### What was done
+- Removed the old multi-renderer path from the plugin runtime so menu images always use Typst.
+- Deleted the local screenshot renderer module and removed the stale render-mode configuration and dependencies.
+- Optimized the Typst fast path so a Page-saved full preview PNG is reused directly instead of being re-laid out or resampled.
+- Updated tests and docs to describe the single Typst path and the Page-saved raster consistency contract.
+
+### Testing
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m unittest tests.test_menu_services` passed: 54 tests OK.
+- Repository keyword scan for legacy render terms returned no matches across source, tests, docs, README, requirements and schema.
+
+### Notes
+- `main.py`: forced runtime rendering to Typst and removed old render-mode branching.
+- `services/local_image.py`: removed the legacy local screenshot renderer module.
+- `services/typst_renderer.py`: made saved preview raster the direct fast path and kept Typst document fallback for old menus.
+- `services/render_cache.py`: changed default render engine metadata to Typst.
+- `services/render_coordinator.py`: made Typst the only render engine reported to cache/status logic.
+- `services/__init__.py`: removed exports for deleted local image helpers.
+- `services/fonts.py`: removed old local-drawing font helper.
+- `services/renderer.py`: renamed the Page font CSS helper away from old renderer wording.
+- `_conf_schema.json`: removed render-mode options and old renderer hints.
+- `requirements.txt`: removed stale non-Typst render dependencies.
+- `README.md`, `CHANGELOG.md`, `docs/font-system.md`, `docs/page-editor-verification.md`, `docs/typst-renderer.md`: updated user-facing behavior to Typst-only rendering.
+- `tests/test_menu_services.py`: removed legacy renderer tests and kept Typst/cache coverage.
+- Rollback: revert this repository to the commit before this task, or restore `services/local_image.py` plus the previous render-mode branches/config/dependencies from Git history.
+
+
+## 2026-06-21 - Task: Repair Chinese text encoding after Typst-only cleanup
+### What was done
+- 修复 README、CHANGELOG、配置 schema 和 docs 中被 Windows 控制台写入破坏的中文。
+- 将测试文件恢复到正确 UTF-8 基线后，重新应用 Typst-only 测试改动，移除残留乱码测试数据。
+- 重新同步插件到本地 AstrBot 实例目录，确保本地运行副本也已恢复正常中文。
+
+### Testing
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m json.tool _conf_schema.json` passed.
+- `python -m unittest tests.test_menu_services` passed: 54 tests OK.
+- 仓库乱码扫描通过：未发现连续问号乱码或典型 UTF-8/GBK mojibake 标记。
+- 本地 AstrBot 插件目录编译、旧路径关键字扫描和乱码扫描均通过。
+
+### Notes
+- `README.md`：恢复正常中文并保留 Typst-only 说明。
+- `CHANGELOG.md`：恢复中文变更记录并记录本次乱码修复。
+- `_conf_schema.json`：恢复中文配置描述。
+- `docs/font-system.md`、`docs/page-editor-verification.md`、`docs/typst-renderer.md`：恢复中文文档。
+- `tests/test_menu_services.py`：恢复 UTF-8 测试内容并清理旧渲染相关测试数据。
+- Rollback: revert this task commit, then rerun the local AstrBot sync step from the previous known-good commit.
+
+
+## 2026-06-21 - Task: Make every menu text use the custom menu font
+### What was done
+- 移除指令文字单独使用等宽字体的例外，指令文字现在和标题、分组、名称、简介、页脚、水印一样继承当前菜单自定义字体。
+- 后端预览 HTML 和 Typst 兼容渲染同步移除指令专用字体栈。
+- 新保存的 Page 快照写入 `font_contract: "menu-font-all-text"`，旧快照不会继续复用可能已固化错误字体的 PNG 快路径。
+- 提升渲染缓存版本，避免继续命中旧的错误字体缓存图。
+- 已同步到本地 AstrBot 插件目录。
+
+### Testing
+- `python -m json.tool _conf_schema.json` passed.
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m unittest tests.test_menu_services` passed: 56 tests OK.
+- 指令专用字体栈扫描通过：未发现 `DEFAULT_MONO`、`preview-mono-font-family`、`mono_stack`、`font: mono`、`Consolas` 或 `JetBrains Mono` 残留于渲染链路。
+- 乱码扫描通过。
+- 本地 AstrBot 插件目录编译、指令专用字体栈扫描和乱码扫描均通过。
+
+### Notes
+- `pages/menu-editor/app.js`：Page 快照升级到 v3 并记录字体契约。
+- `pages/menu-editor/style.css`：指令样式不再声明单独字体。
+- `services/renderer.py`：后端预览 HTML 移除指令专用字体变量。
+- `services/typst_renderer.py`：Typst 兼容路径让指令继承菜单字体，并拒绝旧字体契约缺失快照。
+- `services/menu_model.py`：允许保存 v3 render_snapshot。
+- `services/render_cache.py`：提升缓存版本以失效旧图。
+- `tests/test_menu_services.py`：新增所有菜单文字跟随当前菜单字体、旧快照不复用旧字体 PNG 的回归测试。
+- `docs/font-system.md`、`docs/typst-renderer.md`：记录所有菜单文字跟随自定义字体和旧快照策略。
+- Rollback: revert this task commit, then resync the local AstrBot plugin directory.

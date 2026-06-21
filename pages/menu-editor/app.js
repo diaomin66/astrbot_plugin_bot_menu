@@ -86,7 +86,6 @@ const CONTENT_FONT_LIMITS = {
   description_font_size: { min: 8, max: 28, fallback: 11.5 },
 };
 const DEFAULT_FONT_STACK_CSS = '"Inter", "PingFang SC", "Microsoft YaHei", sans-serif';
-const DEFAULT_MONO_FONT_STACK_CSS = '"Consolas", "JetBrains Mono", monospace';
 
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
@@ -331,6 +330,28 @@ function applyUserFontCss(css) {
     document.head.append(node);
   }
   node.textContent = css || "";
+}
+
+async function waitForPreviewFonts() {
+  if (!document.fonts?.ready) return;
+  try {
+    await document.fonts.ready;
+  } catch (error) {
+    console.warn("failed to wait for preview fonts", error);
+  }
+}
+
+function userFontCssForRaster() {
+  const css = document.getElementById("botMenuUserFonts")?.textContent || "";
+  return css.replace(/font-display\s*:\s*swap\s*;/gi, "font-display:block;");
+}
+
+function userFontStyleElementForRaster() {
+  const css = userFontCssForRaster();
+  if (!css) return "";
+  const style = document.createElement("style");
+  style.textContent = css;
+  return new XMLSerializer().serializeToString(style);
 }
 
 function bindValueChange(control, handler) {
@@ -1501,7 +1522,6 @@ function renderPreview() {
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
     `--preview-font-family:${fontFamilyCss(style.font_family)}`,
-    `--preview-mono-font-family:${DEFAULT_MONO_FONT_STACK_CSS}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
@@ -1720,7 +1740,7 @@ async function saveMenu() {
     setStatus("请先修正表单错误，再保存菜单。", "error");
     return;
   }
-  const menuSnapshot = buildMenuSaveSnapshot();
+  const menuSnapshot = await buildMenuSaveSnapshot();
   try {
     updateSaveState("saving");
     setStatus("正在保存...");
@@ -1747,8 +1767,341 @@ async function saveMenu() {
   }
 }
 
-function buildMenuSaveSnapshot() {
-  return cloneData(state.menu);
+async function buildMenuSaveSnapshot() {
+  const snapshot = cloneData(state.menu);
+  snapshot.render_snapshot = await buildRenderSnapshotForTypst(snapshot);
+  return snapshot;
+}
+
+async function buildRenderSnapshotForTypst(menuSnapshot) {
+  const card = els.preview?.querySelector(".preview-card");
+  if (!card) return null;
+  const cardRect = card.getBoundingClientRect();
+  if (!cardRect.width || !cardRect.height) return null;
+  await waitForPreviewFonts();
+  const visualScale = card.offsetWidth ? cardRect.width / card.offsetWidth : 1;
+  const scale = visualScale > 0 ? visualScale : 1;
+  const style = ensureStyle(menuSnapshot);
+  const layout = previewLayout(menuSnapshot);
+  const rounded = (value) => Math.round(Number(value || 0) * 1000) / 1000;
+  const pixelLength = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "normal") return 0;
+    return rounded(parseFloat(raw) || 0);
+  };
+  const sideBox = (computed, prefix) => ({
+    top: rounded(parseFloat(computed[`${prefix}Top`]) || 0),
+    right: rounded(parseFloat(computed[`${prefix}Right`]) || 0),
+    bottom: rounded(parseFloat(computed[`${prefix}Bottom`]) || 0),
+    left: rounded(parseFloat(computed[`${prefix}Left`]) || 0),
+  });
+  const relDomRect = (rect) => {
+    return {
+      x: rounded((rect.left - cardRect.left) / scale),
+      y: rounded((rect.top - cardRect.top) / scale),
+      width: rounded(rect.width / scale),
+      height: rounded(rect.height / scale),
+    };
+  };
+  const relRect = (node) => relDomRect(node.getBoundingClientRect());
+  const unionRects = (first, second) => {
+    const left = Math.min(first.x, second.x);
+    const top = Math.min(first.y, second.y);
+    const right = Math.max(first.x + first.width, second.x + second.width);
+    const bottom = Math.max(first.y + first.height, second.y + second.height);
+    return {
+      x: rounded(left),
+      y: rounded(top),
+      width: rounded(right - left),
+      height: rounded(bottom - top),
+    };
+  };
+  const textSegments = (value) => {
+    if (window.Intl?.Segmenter) {
+      return Array.from(new Intl.Segmenter("zh", { granularity: "grapheme" }).segment(value)).map((part) => ({
+        segment: part.segment,
+        index: part.index,
+      }));
+    }
+    const segments = [];
+    let offset = 0;
+    while (offset < value.length) {
+      const codePoint = value.codePointAt(offset);
+      const step = codePoint > 0xffff ? 2 : 1;
+      segments.push({ segment: value.slice(offset, offset + step), index: offset });
+      offset += step;
+    }
+    return segments;
+  };
+  const transformedSegment = (segment, source, index, transform) => {
+    const mode = String(transform || "none").toLowerCase();
+    if (mode === "uppercase") return segment.toLocaleUpperCase("zh-CN");
+    if (mode === "lowercase") return segment.toLocaleLowerCase("zh-CN");
+    if (mode === "capitalize") {
+      const previous = index > 0 ? source.slice(Math.max(0, index - 1), index) : "";
+      if (!previous || /\s/.test(previous)) return segment.toLocaleUpperCase("zh-CN");
+    }
+    return segment;
+  };
+  const transformedText = (value, transform) => textSegments(String(value || ""))
+    .map(({ segment, index }) => transformedSegment(segment, String(value || ""), index, transform))
+    .join("");
+  const captureTextGeometry = (node, computed) => {
+    const lines = [];
+    const glyphs = [];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let textNode = walker.nextNode();
+    while (textNode) {
+      const value = textNode.nodeValue || "";
+      textSegments(value).forEach(({ segment, index }) => {
+        if (segment !== "\n" && segment !== "\r") {
+          range.setStart(textNode, index);
+          range.setEnd(textNode, index + segment.length);
+          const rect = range.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const relative = relDomRect(rect);
+            const visibleSegment = transformedSegment(segment, value, index, computed.textTransform);
+            glyphs.push({ text: visibleSegment, rect: relative });
+            const existing = lines.find((line) => Math.abs(line.rect.y - relative.y) <= Math.max(1, relative.height * 0.35));
+            if (existing) {
+              existing.text += visibleSegment;
+              existing.rect = unionRects(existing.rect, relative);
+            } else {
+              lines.push({ text: visibleSegment, rect: relative });
+            }
+          }
+        }
+      });
+      textNode = walker.nextNode();
+    }
+    range.detach?.();
+    return { lines, glyphs };
+  };
+  const css = (node) => getComputedStyle(node);
+  const fontFamilies = (value) => String(value || "").split(",").map((part) => part.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+  const effectiveOpacity = (node) => {
+    let value = 1;
+    let current = node;
+    while (current && current !== card.parentElement) {
+      const opacity = parseFloat(css(current).opacity);
+      if (!Number.isNaN(opacity)) value *= opacity;
+      if (current === card) break;
+      current = current.parentElement;
+    }
+    return rounded(Math.max(0, Math.min(1, value)));
+  };
+  const textRasterLayer = (node, computed, textGeometry, rect, opacity) => {
+    if (!textGeometry.glyphs.length || !rect.width || !rect.height) return null;
+    const rasterScale = Math.max(1, Math.min(3, Math.ceil(window.devicePixelRatio || 1)));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(rect.width * rasterScale));
+    canvas.height = Math.max(1, Math.ceil(rect.height * rasterScale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.scale(rasterScale, rasterScale);
+    context.globalAlpha = Math.max(0, Math.min(1, opacity));
+    context.fillStyle = computed.color || "#000000";
+    context.textAlign = "left";
+    context.textBaseline = "top";
+    context.font = [
+      computed.fontStyle && computed.fontStyle !== "normal" ? computed.fontStyle : "",
+      computed.fontWeight || "400",
+      `${parseFloat(computed.fontSize) || 12}px`,
+      computed.fontFamily || DEFAULT_FONT_STACK_CSS,
+    ].filter(Boolean).join(" ");
+    textGeometry.glyphs.forEach((glyph) => {
+      context.fillText(glyph.text, glyph.rect.x - rect.x, glyph.rect.y - rect.y);
+    });
+    try {
+      return {
+        src: canvas.toDataURL("image/png"),
+        scale: rasterScale,
+      };
+    } catch (error) {
+      console.warn("failed to capture text raster layer", error);
+      return null;
+    }
+  };
+  const previewRaster = await previewRasterLayer(card, cardRect, scale, rounded);
+  const textElement = (node, role, extra = {}) => {
+    if (!node) return null;
+    const computed = css(node);
+    const rect = relRect(node);
+    const textGeometry = captureTextGeometry(node, computed);
+    const opacity = effectiveOpacity(node);
+    return {
+      type: "text",
+      role,
+      text: transformedText(node.innerText || node.textContent || "", computed.textTransform),
+      rect,
+      font_size: rounded(parseFloat(computed.fontSize) || 12),
+      line_height: rounded(parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) || 12),
+      font_weight: computed.fontWeight || "400",
+      font_family: fontFamilies(computed.fontFamily),
+      font_style: computed.fontStyle || "normal",
+      color: computed.color || "#000000",
+      opacity,
+      text_align: computed.textAlign || "left",
+      text_transform: computed.textTransform || "none",
+      letter_spacing: pixelLength(computed.letterSpacing),
+      padding: sideBox(computed, "padding"),
+      white_space: computed.whiteSpace || "normal",
+      overflow_wrap: computed.overflowWrap || computed.wordWrap || "normal",
+      transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
+      lines: textGeometry.lines,
+      glyphs: textGeometry.glyphs,
+      raster: previewRaster ? null : textRasterLayer(node, computed, textGeometry, rect, opacity),
+      ...extra,
+    };
+  };
+  const boxElement = (node, role, extra = {}) => {
+    if (!node) return null;
+    const computed = css(node);
+    return {
+      type: "box",
+      role,
+      rect: relRect(node),
+      background_image: computed.backgroundImage || "none",
+      background: computed.backgroundColor || "transparent",
+      box_shadow: computed.boxShadow || "none",
+      border_color: computed.borderColor || "transparent",
+      border_width: rounded(parseFloat(computed.borderWidth) || 0),
+      border_radius: rounded(parseFloat(computed.borderTopLeftRadius) || 0),
+      padding: sideBox(computed, "padding"),
+      opacity: rounded(parseFloat(computed.opacity) || 1),
+      ...extra,
+    };
+  };
+  const imageElement = (node, role) => {
+    if (!node) return null;
+    const computed = css(node);
+    return {
+      type: "image",
+      role,
+      rect: relRect(node),
+      src: node.getAttribute("src") || "",
+      opacity: rounded(parseFloat(computed.opacity) || 1),
+      filter: computed.filter || "none",
+    };
+  };
+
+  const boxes = [
+    boxElement(card, "card", {
+      background: style.background_color || "#f8fafc",
+      border_radius: rounded(parseFloat(css(card).borderTopLeftRadius) || style.radius || 24),
+    }),
+    boxElement(card.querySelector(".preview-bg-overlay"), "background_overlay"),
+    boxElement(card.querySelector(".preview-inner"), "inner"),
+    ...Array.from(card.querySelectorAll(".preview-section")).map((node, index) => boxElement(node, "section", { section_index: index })),
+    ...Array.from(card.querySelectorAll(".preview-item")).map((node) => boxElement(node, "item", {
+      section_index: Number(node.dataset.sectionIndex || 0),
+      item_index: Number(node.dataset.itemIndex || 0),
+    })),
+  ].filter(Boolean);
+
+  const texts = [
+    textElement(card.querySelector(".kicker"), "kicker"),
+    textElement(card.querySelector(".preview-title"), "title"),
+    textElement(card.querySelector(".preview-sub"), "subtitle"),
+    ...Array.from(card.querySelectorAll(".preview-section h3")).map((node, index) => textElement(node, "section_title", { section_index: index })),
+    ...Array.from(card.querySelectorAll(".preview-icon")).map((node) => textElement(node, "item_icon")),
+    ...Array.from(card.querySelectorAll(".preview-item-title, .preview-item-name, .preview-desc, .preview-command")).map((node) => textElement(node, "item_text")),
+    ...Array.from(card.querySelectorAll(".preview-footer span")).map((node, index) => textElement(node, index === 0 ? "footer_left" : "footer_right")),
+    textElement(card.querySelector(".preview-watermark"), "watermark"),
+  ].filter(Boolean);
+  return {
+    version: 3,
+    renderer: "typst-direct",
+    font_contract: "menu-font-all-text",
+    width: rounded(cardRect.width / scale),
+    height: rounded(cardRect.height / scale),
+    capture: {
+      unit: "css-px",
+      visual_scale: rounded(scale),
+      device_pixel_ratio: rounded(window.devicePixelRatio || 1),
+    },
+    layout: {
+      width: layout.width,
+      columns: layout.columns,
+      item_count: layout.itemCount,
+      section_gap: sectionGapForMenu(menuSnapshot),
+    },
+    style: {
+      font_family: style.font_family || "",
+      background_image: style.background_image || "",
+      background_image_x: style.background_image_x || 0,
+      background_image_y: style.background_image_y || 0,
+      background_image_width: style.background_image_width || 100,
+    },
+    images: [imageElement(card.querySelector(".preview-bg-image"), "background")].filter(Boolean),
+    boxes,
+    texts,
+    raster: previewRaster,
+  };
+}
+
+async function previewRasterLayer(card, cardRect, scale, rounded) {
+  const width = rounded(cardRect.width / scale);
+  const height = rounded(cardRect.height / scale);
+  if (!width || !height) return null;
+  const rasterScale = Math.max(2, Math.min(4, Math.ceil(window.devicePixelRatio || 1) * 2));
+  const clone = card.cloneNode(true);
+  inlineComputedStyles(card, clone);
+  clone.style.margin = "0";
+  clone.style.transform = "none";
+  clone.style.position = "static";
+  clone.style.left = "0";
+  clone.style.top = "0";
+  clone.style.width = `${width}px`;
+  const fontStyle = userFontStyleElementForRaster();
+  const html = new XMLSerializer().serializeToString(clone);
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${fontStyle}${html}</div></foreignObject>`,
+    "</svg>",
+  ].join("");
+  const image = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(width * rasterScale));
+    canvas.height = Math.max(1, Math.ceil(height * rasterScale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.scale(rasterScale, rasterScale);
+    context.drawImage(image, 0, 0, width, height);
+    return {
+      type: "image",
+      role: "preview",
+      rect: { x: 0, y: 0, width, height },
+      src: canvas.toDataURL("image/png"),
+      scale: rasterScale,
+      mode: "page-preview-raster",
+    };
+  } catch (error) {
+    console.warn("failed to capture preview raster layer", error);
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function inlineComputedStyles(source, target) {
+  if (!source || !target || source.nodeType !== Node.ELEMENT_NODE || target.nodeType !== Node.ELEMENT_NODE) return;
+  const computed = getComputedStyle(source);
+  const style = [];
+  for (let index = 0; index < computed.length; index += 1) {
+    const property = computed[index];
+    style.push(`${property}:${computed.getPropertyValue(property)};`);
+  }
+  target.setAttribute("style", style.join(""));
+  Array.from(source.children).forEach((child, index) => inlineComputedStyles(child, target.children[index]));
 }
 
 function createDefaultMenu(id) {

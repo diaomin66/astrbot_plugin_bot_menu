@@ -18,10 +18,8 @@ from .services import (
     FontRegistry,
     RoutingStorage,
     build_preview_html,
-    build_render_payload,
-    preview_width_for_menu,
-    render_menu_image,
-    render_menu_via_browser,
+    materialize_saved_preview_raster,
+    render_menu_via_typst,
 )
 
 PLUGIN_NAME = "astrbot_plugin_bot_menu"
@@ -104,6 +102,7 @@ class BotMenuPlugin(Star):
             render_menu=self._render_menu_for_cache,
             render_width=lambda: self._config_int("render_width", 900),
             render_scale=lambda: max(1, min(4, self._config_int("render_scale", 4))),
+            render_engine=self._render_cache_engine,
             logger=logger,
         )
         self._register_web_apis(context)
@@ -174,7 +173,8 @@ class BotMenuPlugin(Star):
             existing = self.storage.get_menu_including_deleted(str(raw_menu.get("id", "")).strip())
             self.history.snapshot(existing, reason="save")
             menu = self.storage.save_menu(raw_menu)
-            self.render_coordinator.schedule(menu)
+            if not await self._store_saved_typst_preview_cache(menu):
+                self.render_coordinator.schedule(menu)
             return json_response({"menu": menu, "menus": self.storage.list_menus()})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
@@ -345,55 +345,58 @@ class BotMenuPlugin(Star):
         return json_response({"cache": cache, "assets": assets})
 
     async def _render_menu_for_cache(self, menu: dict[str, Any]) -> str:
-        return await self._render_menu_uncached(menu, render_mode="browser")
+        return await self._render_menu_uncached(menu)
+
+    async def _store_saved_typst_preview_cache(self, menu: dict[str, Any]) -> bool:
+        if self._render_cache_engine() != "typst":
+            return False
+        render_width = self._config_int("render_width", 900)
+        render_scale = max(1, min(4, self._config_int("render_scale", 4)))
+        source_path = await asyncio.to_thread(
+            materialize_saved_preview_raster,
+            menu,
+            self.storage.data_dir,
+            output_scale=render_scale,
+        )
+        if not source_path:
+            return False
+        try:
+            self.render_cache.store_rendered(
+                menu,
+                source_path,
+                render_width=render_width,
+                render_scale=render_scale,
+                render_engine="typst",
+            )
+            return True
+        except Exception:
+            logger.exception("Bot menu saved preview raster cache failed: %s", menu.get("id"))
+            return False
+        finally:
+            try:
+                Path(source_path).unlink(missing_ok=True)
+            except Exception:
+                logger.debug("failed to remove temporary saved preview raster: %s", source_path, exc_info=True)
 
     async def _render_menu_uncached(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
         menu = self._menu_with_resolved_assets(menu)
         default_width = self._config_int("render_width", 900)
         render_scale = max(1, min(4, self._config_int("render_scale", 4)))
-        if not render_mode:
-            render_mode = str(self._config_get("render_mode", "browser") or "browser").strip().lower()
+        render_mode = (render_mode or self._render_cache_engine()).strip().lower()
+        if render_mode != "typst":
+            logger.warning("Unsupported render_mode=%s ignored; Typst is the only render path", render_mode)
 
-        if render_mode == "pillow":
-            return await asyncio.to_thread(
-                render_menu_image,
-                menu,
-                self.storage.data_dir,
-                default_width=default_width,
-                output_scale=render_scale,
-            )
+        return await asyncio.to_thread(
+            render_menu_via_typst,
+            menu,
+            self.storage.data_dir,
+            default_width=default_width,
+            output_scale=render_scale,
+            font_registry=self.fonts,
+        )
 
-        if render_mode in {"browser", "local", "auto"}:  # local is fallback mapping to browser for old configs
-            try:
-                html_content = build_preview_html(menu, default_width=default_width, font_registry=self.fonts)
-                viewport_width = preview_width_for_menu(menu, default_width=default_width)
-                return await asyncio.to_thread(
-                    render_menu_via_browser,
-                    menu,
-                    self.storage.data_dir,
-                    html_content,
-                    default_width=default_width,
-                    viewport_width=viewport_width,
-                    device_scale_factor=render_scale,
-                )
-            except Exception as exc:
-                import traceback
-                if render_mode == "auto":
-                    logger.warning("Local browser rendering failed, falling back to remote HTML render: %s\n%s", exc, traceback.format_exc())
-                else:
-                    logger.error("Local browser rendering failed; not using mismatched Pillow fallback: %s\n%s", exc, traceback.format_exc())
-                    raise RuntimeError(
-                        "local browser rendering failed; no image was generated to avoid output that does not match the Page preview"
-                    ) from exc
-
-        template, data, options = build_render_payload(menu, default_width=default_width, font_registry=self.fonts)
-        try:
-            return await self.html_render(template, data, return_url=True, options=options)
-        except Exception as exc:
-            logger.error("Remote HTML rendering failed; not using mismatched Pillow fallback: %s", exc)
-            raise RuntimeError(
-                "remote HTML rendering failed; no image was generated to avoid output that does not match the Page preview"
-            ) from exc
+    def _render_cache_engine(self) -> str:
+        return "typst"
 
     def _register_web_apis(self, context: Context) -> None:
         routes = [
