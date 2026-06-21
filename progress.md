@@ -375,3 +375,26 @@
 - `_conf_schema.json`: clarifies that `render_scale` also applies to Typst PNG output.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py services/menu_model.py tests/test_menu_services.py README.md docs/typst-renderer.md _conf_schema.json progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add measured text-line restoration for Typst snapshots
+### What was done
+- Extended Page's Typst snapshot capture to record measured text line rectangles from the live preview, normalized back to unscaled CSS pixels.
+- Updated Typst snapshot rendering to prefer saved line rectangles, placing each text line at the Page-recorded x/y position instead of letting Typst reflow multi-line text.
+- Added cache-hit coverage showing unchanged Typst menus return the cached PNG path without invoking the renderer again.
+- Updated Typst documentation and README notes to describe measured line boxes and the cached fast path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 60 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst smoke render compiled a line-box `render_snapshot` to a valid 360x180 PNG; sampled non-text card pixel was `(241, 244, 249, 240)`, confirming the card remained light instead of black.
+- Cache-hit smoke check returned the existing Typst cached PNG path in about `1.000ms` and did not recompile Typst.
+
+### Notes
+- `pages/menu-editor/app.js`: captures real preview text line boxes with DOM Range and saves them under each text snapshot.
+- `services/typst_renderer.py`: renders saved text lines independently when line boxes are present to reduce wrapping and vertical drift.
+- `tests/test_menu_services.py`: verifies line-box capture markers, line-box Typst source generation, and cache-hit short-circuit behavior.
+- `README.md`: documents measured line boxes and unchanged-menu cache reuse for Typst mode.
+- `docs/typst-renderer.md`: documents the measured line-box contract and cached latency-critical path.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.

@@ -1774,14 +1774,60 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
     bottom: rounded(parseFloat(computed[`${prefix}Bottom`]) || 0),
     left: rounded(parseFloat(computed[`${prefix}Left`]) || 0),
   });
-  const relRect = (node) => {
-    const rect = node.getBoundingClientRect();
+  const relDomRect = (rect) => {
     return {
       x: rounded((rect.left - cardRect.left) / scale),
       y: rounded((rect.top - cardRect.top) / scale),
       width: rounded(rect.width / scale),
       height: rounded(rect.height / scale),
     };
+  };
+  const relRect = (node) => relDomRect(node.getBoundingClientRect());
+  const unionRects = (first, second) => {
+    const left = Math.min(first.x, second.x);
+    const top = Math.min(first.y, second.y);
+    const right = Math.max(first.x + first.width, second.x + second.width);
+    const bottom = Math.max(first.y + first.height, second.y + second.height);
+    return {
+      x: rounded(left),
+      y: rounded(top),
+      width: rounded(right - left),
+      height: rounded(bottom - top),
+    };
+  };
+  const captureTextLines = (node) => {
+    const lines = [];
+    const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
+    const range = document.createRange();
+    let textNode = walker.nextNode();
+    while (textNode) {
+      const value = textNode.nodeValue || "";
+      let offset = 0;
+      while (offset < value.length) {
+        const codePoint = value.codePointAt(offset);
+        const step = codePoint > 0xffff ? 2 : 1;
+        const segment = value.slice(offset, offset + step);
+        if (segment !== "\n" && segment !== "\r") {
+          range.setStart(textNode, offset);
+          range.setEnd(textNode, offset + step);
+          const rect = range.getBoundingClientRect();
+          if (rect.width > 0 && rect.height > 0) {
+            const relative = relDomRect(rect);
+            const existing = lines.find((line) => Math.abs(line.rect.y - relative.y) <= Math.max(1, relative.height * 0.35));
+            if (existing) {
+              existing.text += segment;
+              existing.rect = unionRects(existing.rect, relative);
+            } else {
+              lines.push({ text: segment, rect: relative });
+            }
+          }
+        }
+        offset += step;
+      }
+      textNode = walker.nextNode();
+    }
+    range.detach?.();
+    return lines;
   };
   const css = (node) => getComputedStyle(node);
   const fontFamilies = (value) => String(value || "").split(",").map((part) => part.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
@@ -1806,6 +1852,7 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       white_space: computed.whiteSpace || "normal",
       overflow_wrap: computed.overflowWrap || computed.wordWrap || "normal",
       transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
+      lines: captureTextLines(node),
       ...extra,
     };
   };

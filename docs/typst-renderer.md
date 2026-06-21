@@ -6,7 +6,9 @@ Typst mode is an additional render mode that coexists with the original browser 
 
 ## Data contract with Page
 
-Page saves a `render_snapshot` for Typst. The snapshot includes canvas width/height, capture scale, device pixel ratio, layout metadata, background images, visual boxes, text boxes, relative x/y/width/height normalized back to CSS pixels, colors, background images, box shadow metadata, border radius, border width, opacity, padding, font size, line height, weight, style, letter spacing, alignment, transform metadata, and computed font-family stack. Typst uses this snapshot first and falls back to field-based layout only for older menus without a snapshot.
+Page saves a `render_snapshot` for Typst. The snapshot includes canvas width/height, capture scale, device pixel ratio, layout metadata, background images, visual boxes, text boxes, relative x/y/width/height normalized back to CSS pixels, colors, background images, box shadow metadata, border radius, border width, opacity, padding, font size, line height, weight, style, letter spacing, alignment, transform metadata, computed font-family stack, and measured text line boxes. Typst uses this snapshot first and falls back to field-based layout only for older menus without a snapshot.
+
+For text, Page records the real rendered line rectangles from the preview DOM. Typst places each saved line at the recorded x/y position when line boxes are present, so wrapping differences between browser layout and Typst do not move later lines.
 
 ## Font matching
 
@@ -15,6 +17,8 @@ Typst receives the plugin `fonts/` directory through `font_paths`. When a user s
 ## Stability rules
 
 Transparent Page layers are not emitted as visible Typst rectangles. `rgba(..., 0)`, `transparent`, and unsupported CSS-only backgrounds are skipped unless they also have a visible border. This prevents browser-only CSS effects from degrading into black Typst cards while keeping real Page RGBA fills such as `rgba(241,245,249,.94)` as the same alpha in Typst.
+
+Cached renders are still the latency-critical path for chat usage. If the menu fingerprint is unchanged, the coordinator returns the cached PNG path and does not invoke Typst again.
 
 ## Limits
 

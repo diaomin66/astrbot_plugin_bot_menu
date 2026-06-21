@@ -211,6 +211,8 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("device_pixel_ratio", app_js)
         self.assertIn("letter_spacing", app_js)
         self.assertIn("padding: sideBox", app_js)
+        self.assertIn("const captureTextLines = (node) =>", app_js)
+        self.assertIn("lines: captureTextLines(node)", app_js)
         self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
@@ -550,6 +552,43 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("tracking: 1.5pt", source)
         self.assertIn("leading: 6pt", source)
 
+    def test_typst_snapshot_uses_saved_text_line_rects_to_avoid_reflow(self):
+        menu = normalize_menu(
+            {
+                "id": "snapshot-lines",
+                "title": "Lines",
+                "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 360,
+                    "height": 160,
+                    "texts": [
+                        {
+                            "role": "description",
+                            "text": "第一行第二行",
+                            "rect": {"x": 20, "y": 20, "width": 180, "height": 48},
+                            "font_size": 12,
+                            "line_height": 16,
+                            "font_family": ["Microsoft YaHei"],
+                            "color": "rgb(15, 23, 42)",
+                            "lines": [
+                                {"text": "第一行", "rect": {"x": 20, "y": 22, "width": 42, "height": 16}},
+                                {"text": "第二行", "rect": {"x": 20, "y": 38, "width": 42, "height": 16}},
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+        source = build_typst_document(menu)
+        self.assertIn("dx: 20pt, dy: 22pt", source)
+        self.assertIn("dx: 20pt, dy: 38pt", source)
+        self.assertIn("第一行", source)
+        self.assertIn("第二行", source)
+        self.assertNotIn("leading: 4pt", source)
+
     def test_typst_css_color_parser_keeps_transparency_from_page(self):
         self.assertEqual(_css_color_expr("rgba(241,245,249,0.94)"), 'rgb("#f1f5f9").transparentize(6%)')
         self.assertEqual(_css_color_components("rgba(0,0,0,0)"), ("#000000", 0.0))
@@ -877,6 +916,41 @@ class MenuStorageTests(unittest.TestCase):
                 await asyncio.sleep(0.1)
                 self.assertEqual(coordinator.status_for_menu(menu)["status"], "ready")
                 self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="browser"))
+
+        asyncio.run(run_case())
+
+    def test_render_coordinator_cache_hit_returns_without_rendering(self):
+        import asyncio
+
+        async def run_case():
+            with tempfile.TemporaryDirectory() as tmp:
+                storage = MenuStorage(tmp)
+                menu = storage.get_menu("default")
+                cache = MenuRenderCache(tmp)
+                rendered = Path(tmp) / "ready.png"
+                rendered.write_bytes(b"\x89PNG\r\n\x1a\ncached")
+                cached_path = cache.store_rendered(
+                    menu,
+                    rendered,
+                    render_width=900,
+                    render_scale=4,
+                    render_engine="typst",
+                )
+
+                async def render_menu(_menu):
+                    raise AssertionError("cached Typst render should not invoke renderer")
+
+                coordinator = MenuRenderCoordinator(
+                    storage=storage,
+                    cache=cache,
+                    render_menu=render_menu,
+                    render_width=lambda: 900,
+                    render_scale=lambda: 4,
+                    render_engine=lambda: "typst",
+                )
+                self.assertEqual(coordinator.get_cached_path(menu), cached_path)
+                self.assertFalse(coordinator.schedule(menu))
+                self.assertEqual(coordinator.status_for_menu(menu)["status"], "ready")
 
         asyncio.run(run_case())
 

@@ -256,6 +256,17 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
     leading = max(0.0, line_height - font_size)
     style = str(element.get("font_style") or "").strip().lower()
     style_arg = f", style: {_typst_str(style)}" if style in {"italic", "oblique"} else ""
+    line_elements = _snapshot_text_lines(
+        element.get("lines"),
+        font_stack=font_stack,
+        font_size=font_size,
+        fill=fill,
+        weight=weight,
+        tracking=tracking,
+        style_arg=style_arg,
+    )
+    if line_elements:
+        return "\n".join(line_elements)
     content = (
         f"set text(font: {font_stack}, size: {font_size:g}pt, fill: {fill}, weight: {weight}, "
         f"tracking: {tracking:g}pt, top-edge: \"bounds\", bottom-edge: \"bounds\"{style_arg});"
@@ -267,6 +278,41 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
         f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
         f"box(width: {width:g}pt, height: {height:g}pt)[#{{{content}}}])"
     )
+
+
+def _snapshot_text_lines(
+    value: Any,
+    *,
+    font_stack: str,
+    font_size: float,
+    fill: str,
+    weight: int | str,
+    tracking: float,
+    style_arg: str,
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    rendered: list[str] = []
+    for line in value:
+        if not isinstance(line, dict):
+            continue
+        text = str(line.get("text") or "")
+        rect = _snapshot_rect(line)
+        if not text or not rect:
+            continue
+        x, y, width, height = rect
+        content = (
+            f"set text(font: {font_stack}, size: {font_size:g}pt, fill: {fill}, weight: {weight}, "
+            f"tracking: {tracking:g}pt, top-edge: \"bounds\", bottom-edge: \"bounds\"{style_arg});"
+            f"set par(leading: 0pt, justify: false);"
+            f"show text: set block(above: 0pt, below: 0pt);"
+            f"text({_typst_str(text)})"
+        )
+        rendered.append(
+            f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
+            f"box(width: {max(1, width + 2):g}pt, height: {height:g}pt)[#{{{content}}}])"
+        )
+    return rendered
 
 
 def _typst_section(section: dict[str, Any], *, columns: int, style: dict[str, Any], width: int) -> str:

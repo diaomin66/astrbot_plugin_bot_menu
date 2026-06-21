@@ -105,7 +105,7 @@ data/plugin_data/astrbot_plugin_bot_menu/fonts/
 
 Set `render_mode` to `typst` to use the new Typst renderer. This mode coexists with the original browser screenshot path: switching back to `browser` restores the existing Playwright/Chromium HTML screenshot renderer.
 
-Typst mode is browser-free: Page saves a fine-grained `render_snapshot` containing preview geometry, capture scale, text metrics, padding, letter spacing, colors, boxes, images and font stacks, and Typst compiles that snapshot directly to PNG. Transparent preview-only layers are skipped instead of being converted to black fills, while real RGBA card colors keep their alpha. It also passes the plugin `fonts/` directory to Typst so selected custom fonts can be resolved by the Typst engine. Old menus without `render_snapshot` still use fallback Typst layout; reopen and save them in Page to generate the pixel-oriented snapshot. `render_scale` still controls the final image resolution.
+Typst mode is browser-free: Page saves a fine-grained `render_snapshot` containing preview geometry, capture scale, text metrics, measured text line boxes, padding, letter spacing, colors, boxes, images and font stacks, and Typst compiles that snapshot directly to PNG. Transparent preview-only layers are skipped instead of being converted to black fills, while real RGBA card colors keep their alpha. It also passes the plugin `fonts/` directory to Typst so selected custom fonts can be resolved by the Typst engine. Old menus without `render_snapshot` still use fallback Typst layout; reopen and save them in Page to generate the pixel-oriented snapshot. `render_scale` still controls the final image resolution, and unchanged menus keep using the existing cached PNG path instead of recompiling.
 
 ## 更新日志
 
