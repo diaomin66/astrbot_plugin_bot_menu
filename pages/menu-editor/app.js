@@ -85,6 +85,8 @@ const CONTENT_FONT_LIMITS = {
   label_font_size: { min: 8, max: 30, fallback: 11.5 },
   description_font_size: { min: 8, max: 28, fallback: 11.5 },
 };
+const DEFAULT_FONT_STACK_CSS = '"Inter", "PingFang SC", "Microsoft YaHei", sans-serif';
+const DEFAULT_MONO_FONT_STACK_CSS = '"Consolas", "JetBrains Mono", monospace';
 
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
@@ -120,6 +122,8 @@ const state = {
   backgroundEditMode: false,
   batchSelectMode: false,
   pendingBackgroundAsset: null,
+  fonts: [],
+  fontsDir: "fonts",
 };
 
 const els = {
@@ -204,6 +208,7 @@ async function initializeEditor() {
   try {
     bindEvents();
     bridge = await resolvePageBridge();
+    await loadFonts();
     await loadMenus();
   } catch (error) {
     console.error("failed to initialize bot menu editor", error);
@@ -304,24 +309,56 @@ function bindEvents() {
   updateSaveState("saved");
 }
 
+async function loadFonts() {
+  try {
+    const data = await bridge.apiGet("fonts");
+    state.fonts = Array.isArray(data.fonts) ? data.fonts : [];
+    state.fontsDir = data.fonts_dir || "fonts";
+    applyUserFontCss(data.css || "");
+    updateFontDatalist();
+  } catch (error) {
+    console.warn("failed to load custom fonts", error);
+    state.fonts = [];
+    applyUserFontCss("");
+  }
+}
+
+function applyUserFontCss(css) {
+  let node = document.getElementById("botMenuUserFonts");
+  if (!node) {
+    node = document.createElement("style");
+    node.id = "botMenuUserFonts";
+    document.head.append(node);
+  }
+  node.textContent = css || "";
+}
+
 function bindValueChange(control, handler) {
   if (!control) return;
   const events = control.type === "file" ? ["change"] : ["input", "change"];
-  let lastValue = controlValueSignature(control);
-  const emitChange = () => {
-    const nextValue = controlValueSignature(control);
-    if (nextValue === lastValue) return;
-    lastValue = nextValue;
-    handler(control);
-  };
-  events.forEach((eventName) => control.addEventListener(eventName, emitChange));
+  events.forEach((eventName) => control.addEventListener(eventName, () => handler(control)));
 }
 
-function controlValueSignature(control) {
-  if (!control) return "";
-  if (control.type === "checkbox") return control.checked ? "1" : "0";
-  if (control.type === "file") return [...(control.files || [])].map((file) => `${file.name}:${file.size}:${file.lastModified}`).join("|");
-  return String(control.value ?? "");
+function flushLiveEditorControls() {
+  const active = document.activeElement;
+  if (active && typeof active.blur === "function" && els.editorModal && els.editorModal.contains(active)) {
+    if (active.type !== "file") {
+      dispatchEditorControlEvent(active, "input");
+      dispatchEditorControlEvent(active, "change");
+    }
+    active.blur();
+  }
+}
+
+function dispatchEditorControlEvent(control, eventName) {
+  let event;
+  if (typeof Event === "function") {
+    event = new Event(eventName, { bubbles: true });
+  } else {
+    event = document.createEvent("Event");
+    event.initEvent(eventName, true, false);
+  }
+  control.dispatchEvent(event);
 }
 
 async function resolvePageBridge() {
@@ -492,7 +529,7 @@ async function selectMenu(id) {
   discardPendingBackgroundAsset();
   const sourceMenu = cloneData(menu);
   const isUnsaved = state.unsavedMenuIds.has(menu.id);
-  state.menu = isUnsaved ? sourceMenu : maybeRestoreDraft(sourceMenu);
+  state.menu = isUnsaved ? sourceMenu : await maybeRestoreDraft(sourceMenu);
   state.dirty = isUnsaved || state.menu !== sourceMenu;
   loadSearchState();
   refreshSchemeSelect();
@@ -562,9 +599,6 @@ function syncFormToMenu({ mark = true } = {}) {
     theme: els.theme.value,
     primary_color: els.primaryColor.value,
     background_color: els.backgroundColor.value,
-    background_image_x: Number(els.backgroundImageX.value) || 0,
-    background_image_y: Number(els.backgroundImageY.value) || 0,
-    background_image_width: Number(els.backgroundImageWidth.value) || 100,
     card_color: els.cardColor.value,
     text_color: els.textColor.value,
     muted_color: els.mutedColor.value,
@@ -833,7 +867,7 @@ function openModal(title, body, actions = [], options = {}) {
     button.textContent = action.label;
     if (action.className) button.className = action.className;
     button.disabled = Boolean(action.disabled);
-    button.addEventListener("click", action.onClick);
+    button.addEventListener("click", (event) => runAction(action.label, () => action.onClick(event)));
     els.modalFooter.append(button);
   });
   const close = document.createElement("button");
@@ -868,6 +902,26 @@ function confirmDialog(title, message, { confirmLabel = "确定", cancelLabel = 
       { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, false) },
       { label: confirmLabel, className: danger ? "danger" : "primary", onClick: () => resolveAndCloseModal(resolve, true) },
     ], { onClose: () => resolve(false) });
+  });
+}
+
+function promptDialog(title, message, { defaultValue = "", confirmLabel = "确定", cancelLabel = "取消" } = {}) {
+  return new Promise((resolve) => {
+    const body = document.createElement("div");
+    body.className = "confirm-dialog";
+    const text = document.createElement("p");
+    text.textContent = message;
+    const input = document.createElement("input");
+    input.value = defaultValue;
+    input.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") resolveAndCloseModal(resolve, input.value);
+    });
+    body.append(text, input);
+    openModal(title, body, [
+      { label: cancelLabel, onClick: () => resolveAndCloseModal(resolve, null) },
+      { label: confirmLabel, className: "primary", onClick: () => resolveAndCloseModal(resolve, input.value) },
+    ], { onClose: () => resolve(null) });
+    requestAnimationFrame(() => input.focus());
   });
 }
 
@@ -907,6 +961,41 @@ function textInput(value, onInput, attrs = {}) {
   return input;
 }
 
+function fontFamilyInput(value, onInput) {
+  updateFontDatalist();
+  return textInput(value, onInput, {
+    list: "fontFamilyOptions",
+    maxlength: 120,
+    placeholder: "例如：Noto Sans CJK SC，或 fonts/ 下字体文件名",
+  });
+}
+
+function updateFontDatalist() {
+  let list = document.getElementById("fontFamilyOptions");
+  if (!list) {
+    list = document.createElement("datalist");
+    list.id = "fontFamilyOptions";
+    document.body.append(list);
+  }
+  list.innerHTML = "";
+  (state.fonts || []).forEach((font) => {
+    const option = document.createElement("option");
+    option.value = font.name || font.relative_path || font.family;
+    option.label = font.relative_path || font.name || font.family;
+    list.append(option);
+  });
+}
+
+function fontFamilyCss(value) {
+  const raw = String(value || "").replace(/"/g, "").trim();
+  const matched = (state.fonts || []).find((font) => {
+    const values = [font.family, font.name, font.relative_path].filter(Boolean).map((item) => String(item).replace(/\\/g, "/").toLowerCase());
+    return values.includes(raw.replace(/\\/g, "/").toLowerCase());
+  });
+  const family = matched ? matched.family : raw;
+  return family ? `"${family}", ${DEFAULT_FONT_STACK_CSS}` : DEFAULT_FONT_STACK_CSS;
+}
+
 function selectInput(value, options, onInput) {
   const select = document.createElement("select");
   select.innerHTML = options.map((option) => `<option value="${escapeAttr(option.value)}" ${String(option.value) === String(value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
@@ -939,7 +1028,7 @@ function actionRow(actions) {
     button.textContent = action.label;
     if (action.className) button.className = action.className;
     button.disabled = Boolean(action.disabled);
-    button.addEventListener("click", action.onClick);
+    button.addEventListener("click", (event) => runAction(action.label, () => action.onClick(event)));
     row.append(button);
   });
   return row;
@@ -1140,7 +1229,16 @@ function openMenuEditor() {
       { label: "上移", disabled: index === 0, onClick: () => { moveSection(index, -1); openMenuEditor(); } },
       { label: "下移", disabled: index === menu.sections.length - 1, onClick: () => { moveSection(index, 1); openMenuEditor(); } },
       { label: "复制", onClick: () => { copySection(index); openMenuEditor(); } },
-      { label: "删除", className: "danger", disabled: menu.sections.length <= 1, onClick: () => { if (confirm("确定删除这个分组？")) { removeSection(index); openMenuEditor(); } } },
+      {
+        label: "删除",
+        className: "danger",
+        disabled: menu.sections.length <= 1,
+        onClick: async () => {
+          const confirmed = await confirmDialog("删除分组？", "确定删除这个分组？", { confirmLabel: "删除分组", danger: true });
+          if (confirmed) removeSection(index);
+          openMenuEditor();
+        },
+      },
     ]));
     list.append(row);
   });
@@ -1171,7 +1269,16 @@ function openSectionEditor(sectionIndex) {
       { label: "上移", disabled: itemIndex === 0, onClick: () => { moveItem(sectionIndex, itemIndex, -1); openSectionEditor(sectionIndex); } },
       { label: "下移", disabled: itemIndex === section.items.length - 1, onClick: () => { moveItem(sectionIndex, itemIndex, 1); openSectionEditor(sectionIndex); } },
       { label: "复制", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
-      { label: "删除", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+      {
+        label: "删除",
+        className: "danger",
+        disabled: section.items.length <= 1,
+        onClick: async () => {
+          const confirmed = await confirmDialog("删除卡片？", "确定删除这张卡片？", { confirmLabel: "删除卡片", danger: true });
+          if (confirmed) removeItem(sectionIndex, itemIndex);
+          openSectionEditor(sectionIndex);
+        },
+      },
     ]));
     list.append(row);
   });
@@ -1202,7 +1309,20 @@ function openItemEditor(sectionIndex, itemIndex) {
   body.append(check);
   openModal(`编辑卡片：${item.label || "未命名"}`, body, [
     { label: "复制卡片", onClick: () => { copyItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } },
-    { label: "删除卡片", className: "danger", disabled: section.items.length <= 1, onClick: () => { if (confirm("确定删除这张卡片？")) { removeItem(sectionIndex, itemIndex); openSectionEditor(sectionIndex); } } },
+    {
+      label: "删除卡片",
+      className: "danger",
+      disabled: section.items.length <= 1,
+      onClick: async () => {
+        const confirmed = await confirmDialog("删除卡片？", "确定删除这张卡片？", { confirmLabel: "删除卡片", danger: true });
+        if (confirmed) {
+          removeItem(sectionIndex, itemIndex);
+          openSectionEditor(sectionIndex);
+          return;
+        }
+        openItemEditor(sectionIndex, itemIndex);
+      },
+    },
     { label: "返回分组", onClick: () => openSectionEditor(sectionIndex) },
   ]);
 }
@@ -1211,6 +1331,7 @@ function openStyleEditor() {
   const style = ensureStyle(state.menu);
   const updateStyle = (mutator) => {
     mutator(ensureStyle(state.menu));
+    fillForm();
     commitMenuChange();
   };
   const body = document.createElement("div");
@@ -1237,7 +1358,7 @@ function openStyleEditor() {
     field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { updateStyle((currentStyle) => { currentStyle.card_color = value; }); }, { type: "color" })),
     field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { updateStyle((currentStyle) => { currentStyle.text_color = value; }); }, { type: "color" })),
     field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { updateStyle((currentStyle) => { currentStyle.muted_color = value; }); }, { type: "color" })),
-    field("字体族", textInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }, { placeholder: "例如：Noto Sans CJK SC, Microsoft YaHei" }), { wide: true }),
+    field("Font family", fontFamilyInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }), { wide: true, hint: `Custom fonts: put .ttf/.otf/.ttc/.woff/.woff2 files in ${state.fontsDir}/, then enter a file name or relative path.` }),
   );
   const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => {
     updateStyle((currentStyle) => {
@@ -1286,7 +1407,7 @@ function openStyleEditor() {
   openModal("编辑主题、背景与布局", body, [
     { label: "复制样式到其他菜单", onClick: copyStyleToMenus },
     { label: "一键修复颜色", onClick: () => { fixContrastColors(); openStyleEditor(); } },
-    { label: "一键重置样式", className: "danger", onClick: () => { resetCurrentStyle(); openStyleEditor(); } },
+    { label: "一键重置样式", className: "danger", onClick: async () => { if (await resetCurrentStyle()) openStyleEditor(); } },
     { label: "编辑全部分组", onClick: openMenuEditor },
   ]);
   const contrast = contrastWarningText(style);
@@ -1379,7 +1500,8 @@ function renderPreview() {
     `--preview-text:${style.text_color || "#111827"}`,
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
-    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : "inherit"}`,
+    `--preview-font-family:${fontFamilyCss(style.font_family)}`,
+    `--preview-mono-font-family:${DEFAULT_MONO_FONT_STACK_CSS}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
@@ -1402,7 +1524,7 @@ function renderPreview() {
         </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${escapeAttr(previewStyle)}">
         ${backgroundMarkup}
         <div class="preview-bg-overlay"></div>
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">
@@ -1592,16 +1714,17 @@ function removeItem(sectionIndex, itemIndex) {
 
 async function saveMenu() {
   const draftIdBeforeSave = currentDraftId();
+  flushLiveEditorControls();
   await flushPendingBackgroundAsset();
-  syncFormToMenu({ mark: false });
   if (!validateMenu({ scroll: true })) {
     setStatus("请先修正表单错误，再保存菜单。", "error");
     return;
   }
+  const menuSnapshot = buildMenuSaveSnapshot();
   try {
     updateSaveState("saving");
     setStatus("正在保存...");
-    const result = await bridge.apiPost("menus/save", { menu: state.menu });
+    const result = await bridge.apiPost("menus/save", { menu: menuSnapshot });
     state.menus = result.menus || [result.menu];
     setServerMenuIds(state.menus);
     state.unsavedMenuIds.clear();
@@ -1622,6 +1745,10 @@ async function saveMenu() {
     updateSaveState("dirty");
     setStatus(`保存失败：${error.message}`, "error");
   }
+}
+
+function buildMenuSaveSnapshot() {
+  return cloneData(state.menu);
 }
 
 function createDefaultMenu(id) {
@@ -2037,7 +2164,6 @@ function readFileAsDataUrl(file) {
 }
 
 function attachBackgroundEditor() {
-  const style = ensureStyle(state.menu);
   const img = els.preview.querySelector(".preview-bg-image");
   const box = els.preview.querySelector(".background-transform-box");
   const card = els.preview.querySelector(".preview-card");
@@ -2051,6 +2177,7 @@ function attachBackgroundEditor() {
   };
 
   const updateImage = () => {
+    const style = ensureStyle(state.menu);
     img.style.left = `${style.background_image_x || 0}%`;
     img.style.top = `${style.background_image_y || 0}%`;
     img.style.width = `${style.background_image_width || 100}%`;
@@ -2066,9 +2193,10 @@ function attachBackgroundEditor() {
     const handle = event.target.dataset.handle;
     const startX = event.clientX;
     const startY = event.clientY;
-    const startLeft = Number(style.background_image_x) || 0;
-    const startTop = Number(style.background_image_y) || 0;
-    const startWidth = Number(style.background_image_width) || 100;
+    const startStyle = ensureStyle(state.menu);
+    const startLeft = Number(startStyle.background_image_x) || 0;
+    const startTop = Number(startStyle.background_image_y) || 0;
+    const startWidth = Number(startStyle.background_image_width) || 100;
     const cardRect = card.getBoundingClientRect();
     box.setPointerCapture(event.pointerId);
     box.classList.add("is-moving");
@@ -2076,6 +2204,7 @@ function attachBackgroundEditor() {
     const onMove = (moveEvent) => {
       const dxPct = ((moveEvent.clientX - startX) / cardRect.width) * 100;
       const dyPct = ((moveEvent.clientY - startY) / cardRect.height) * 100;
+      const style = ensureStyle(state.menu);
       if (handle) {
         const fromLeft = handle.includes("w");
         const nextWidth = clampNumber(startWidth + (fromLeft ? -dxPct : dxPct), 10, 600, startWidth);
@@ -2104,13 +2233,33 @@ function attachBackgroundEditor() {
   });
 }
 
-function fitBackgroundToCover(forceReset) {
+function backgroundTransformSnapshot(style) {
+  return {
+    image: style.background_image || "",
+    x: clampNumber(style.background_image_x, -300, 300, 0),
+    y: clampNumber(style.background_image_y, -300, 300, 0),
+    width: clampNumber(style.background_image_width, 10, 600, 100),
+  };
+}
+
+function backgroundTransformMatches(style, snapshot) {
+  if (!snapshot) return true;
+  const current = backgroundTransformSnapshot(style);
+  return current.image === snapshot.image
+    && current.x === snapshot.x
+    && current.y === snapshot.y
+    && current.width === snapshot.width;
+}
+
+function fitBackgroundToCover(forceReset, expectedTransform = null) {
   const style = ensureStyle(state.menu);
+  if (expectedTransform && !backgroundTransformMatches(style, expectedTransform)) return;
   const img = els.preview.querySelector(".preview-bg-image");
   const card = els.preview.querySelector(".preview-card");
   if (!img || !card || !style.background_image) return;
   if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
-    img.addEventListener("load", () => fitBackgroundToCover(forceReset), { once: true });
+    const transformBeforeLoad = expectedTransform || backgroundTransformSnapshot(style);
+    img.addEventListener("load", () => fitBackgroundToCover(forceReset, transformBeforeLoad), { once: true });
     return;
   }
   const requiredWidth = Math.max(100, (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight));
@@ -2123,13 +2272,15 @@ function fitBackgroundToCover(forceReset) {
   renderPreview();
 }
 
-function fitBackgroundToContain() {
+function fitBackgroundToContain(expectedTransform = null) {
   const style = ensureStyle(state.menu);
+  if (expectedTransform && !backgroundTransformMatches(style, expectedTransform)) return;
   const img = els.preview.querySelector(".preview-bg-image");
   const card = els.preview.querySelector(".preview-card");
   if (!img || !card || !style.background_image) return;
   if (!img.complete || !img.naturalWidth || !img.naturalHeight) {
-    img.addEventListener("load", fitBackgroundToContain, { once: true });
+    const transformBeforeLoad = expectedTransform || backgroundTransformSnapshot(style);
+    img.addEventListener("load", () => fitBackgroundToContain(transformBeforeLoad), { once: true });
     return;
   }
   const widthByHeight = (card.clientHeight * img.naturalWidth * 100) / (card.clientWidth * img.naturalHeight);
@@ -2206,7 +2357,11 @@ async function copyStyleToMenus() {
   syncFormToMenu({ mark: false });
   const otherMenus = state.menus.filter((menu) => menu.id !== state.currentId);
   if (!otherMenus.length) return setStatus("没有其他菜单可复制样式。", "warning");
-  const answer = prompt(`输入目标菜单 ID，多个用逗号分隔，或输入 all：\n${otherMenus.map((menu) => menu.id).join(", ")}`, "all");
+  const answer = await promptDialog(
+    "复制样式到其他菜单",
+    `输入目标菜单 ID，多个用逗号分隔，或输入 all：\n${otherMenus.map((menu) => menu.id).join(", ")}`,
+    { defaultValue: "all", confirmLabel: "复制样式" },
+  );
   if (!answer) return;
   const targets = answer.trim().toLowerCase() === "all"
     ? otherMenus
@@ -2239,14 +2394,20 @@ function pickStyleForCopy(style) {
   }, {});
 }
 
-function resetCurrentStyle() {
-  if (!confirm("确定重置当前菜单样式？菜单内容不会被删除。")) return;
+async function resetCurrentStyle() {
+  const confirmed = await confirmDialog(
+    "重置样式？",
+    "确定重置当前菜单样式？菜单内容不会被删除。",
+    { confirmLabel: "重置样式", danger: true },
+  );
+  if (!confirmed) return false;
   discardPendingBackgroundAsset();
   state.menu.style = defaultStyle();
   fillForm();
   markDirty();
   renderAll();
   setStatus("已重置样式，保存后生效。", "success");
+  return true;
 }
 
 function contrastWarningText(style = ensureStyle(state.menu)) {
@@ -2489,9 +2650,14 @@ function batchCopySelection() {
   renderAll();
 }
 
-function batchDeleteSelection() {
+async function batchDeleteSelection() {
   if (!state.selectedKeys.size) return;
-  if (!confirm(`确定删除选中的 ${state.selectedKeys.size} 项？`)) return;
+  const confirmed = await confirmDialog(
+    "批量删除？",
+    `确定删除选中的 ${state.selectedKeys.size} 项？`,
+    { confirmLabel: "批量删除", danger: true },
+  );
+  if (!confirmed) return;
   const entries = selectedEntries();
   const sectionIndexes = entries
     .filter((entry) => entry.type === "section")
@@ -2686,7 +2852,11 @@ function updateSaveState(nextState) {
 
 async function confirmLeaveDirty() {
   if (!state.dirty) return true;
-  return confirm("当前菜单有未保存修改，离开会丢失这些修改。确定继续？");
+  return confirmDialog(
+    "离开未保存菜单？",
+    "当前菜单有未保存修改，离开会丢失这些修改。确定继续？",
+    { confirmLabel: "继续离开", danger: true },
+  );
 }
 
 function currentDraftId() {
@@ -2724,7 +2894,7 @@ function clearDraft(id) {
   safeStorageRemove(draftKey(id));
 }
 
-function maybeRestoreDraft(menu) {
+async function maybeRestoreDraft(menu) {
   const id = menu.id;
   if (!id || state.restoredDraftIds.has(id)) return menu;
   state.restoredDraftIds.add(id);
@@ -2734,11 +2904,11 @@ function maybeRestoreDraft(menu) {
     const draft = JSON.parse(raw);
     const serverTime = Date.parse(menu.updated_at || menu.created_at || "") || 0;
     if (!draft?.menu || Number(draft.saved_at || 0) <= serverTime) return menu;
-    if (confirm(`发现「${menu.name || id}」有较新的本地草稿，是否恢复？`)) {
+    if (await confirmDialog("恢复本地草稿？", `发现「${menu.name || id}」有较新的本地草稿，是否恢复？`, { confirmLabel: "恢复草稿" })) {
       setStatus("已恢复本地草稿，保存后会覆盖服务端菜单。", "warning");
       return draft.menu;
     }
-    if (confirm("是否丢弃该本地草稿？")) clearDraft(id);
+    if (await confirmDialog("丢弃本地草稿？", "是否丢弃该本地草稿？", { confirmLabel: "丢弃草稿", danger: true })) clearDraft(id);
   } catch (error) {
     console.warn("failed to restore draft", error);
   }
@@ -2909,8 +3079,13 @@ function showRenderStatus(status) {
 }
 
 function ensureStyle(menu) {
-  menu.style = { ...defaultStyle(), ...(menu.style || {}) };
-  return menu.style;
+  const style = menu.style && typeof menu.style === "object" ? menu.style : {};
+  const defaults = defaultStyle();
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (style[key] === undefined || style[key] === null) style[key] = value;
+  });
+  menu.style = style;
+  return style;
 }
 
 function defaultStyle() {

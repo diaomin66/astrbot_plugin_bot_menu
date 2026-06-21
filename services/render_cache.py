@@ -8,9 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .fonts import FontRegistry
+
 
 class MenuRenderCache:
     """File-backed cache for rendered menu images."""
+
+    CACHE_VERSION = 4
 
     def __init__(self, data_dir: str | Path, filename: str = "render_cache.json") -> None:
         self.data_dir = Path(data_dir)
@@ -21,11 +25,13 @@ class MenuRenderCache:
         self.rendered_dir.mkdir(parents=True, exist_ok=True)
 
     def fingerprint(self, menu: dict[str, Any], *, render_width: int, render_scale: int) -> str:
+        style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
         payload = {
-            "cache_version": 1,
+            "cache_version": self.CACHE_VERSION,
             "renderer": "browser-cache",
             "render_width": render_width,
             "render_scale": render_scale,
+            "font_signature": FontRegistry(self.data_dir).signature_for(style.get("font_family")),
             "menu": menu,
         }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -109,9 +115,10 @@ class MenuRenderCache:
             }
         return self._missing_status(fingerprint)
 
-    def cache_path_for_menu(self, menu: dict[str, Any]) -> Path:
+    def cache_path_for_menu(self, menu: dict[str, Any], *, fingerprint: str = "") -> Path:
         safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
-        return self.rendered_dir / f"{safe_id}-cached.png"
+        suffix = f"-{fingerprint[:16]}" if fingerprint else ""
+        return self.rendered_dir / f"{safe_id}-cached{suffix}.png"
 
     def store_rendered(
         self,
@@ -124,14 +131,15 @@ class MenuRenderCache:
         source = Path(rendered_path)
         if not source.is_file():
             raise FileNotFoundError(f"rendered image not found: {source}")
-        target = self.cache_path_for_menu(menu)
+        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+        target = self.cache_path_for_menu(menu, fingerprint=fingerprint)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = target.with_suffix(".tmp")
         shutil.copyfile(source, tmp_path)
         tmp_path.replace(target)
 
         entry = {
-            "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
+            "fingerprint": fingerprint,
             "path": str(target),
             "rendered_at": _now_iso(),
             "status": "ready",
@@ -144,6 +152,9 @@ class MenuRenderCache:
             if isinstance(previous, dict):
                 entry["queued_at"] = previous.get("queued_at")
                 entry["attempts"] = previous.get("attempts", 0)
+                previous_path = Path(str(previous.get("path") or ""))
+                if previous_path != target:
+                    self._unlink_rendered_path(previous_path)
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
         return str(target)
@@ -160,9 +171,10 @@ class MenuRenderCache:
             menus = data.setdefault("menus", {})
             previous = menus.get(str(menu.get("id") or ""))
             previous_attempts = previous.get("attempts", 0) if isinstance(previous, dict) else 0
+            fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
             entry = {
-                "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
-                "path": str(self.cache_path_for_menu(menu)),
+                "fingerprint": fingerprint,
+                "path": str(self.cache_path_for_menu(menu, fingerprint=fingerprint)),
                 "rendered_at": None,
                 "queued_at": _now_iso(),
                 "attempts": previous_attempts + 1,
@@ -179,9 +191,10 @@ class MenuRenderCache:
         render_width: int,
         render_scale: int,
     ) -> None:
+        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
         entry = {
-            "fingerprint": self.fingerprint(menu, render_width=render_width, render_scale=render_scale),
-            "path": str(self.cache_path_for_menu(menu)),
+            "fingerprint": fingerprint,
+            "path": str(self.cache_path_for_menu(menu, fingerprint=fingerprint)),
             "rendered_at": _now_iso(),
             "queued_at": None,
             "attempts": 1,
@@ -197,6 +210,13 @@ class MenuRenderCache:
                 entry["attempts"] = previous.get("attempts", 0)
             menus[str(menu.get("id") or "")] = entry
             self._write(data)
+
+    def _unlink_rendered_path(self, path: Path) -> None:
+        try:
+            if path.is_file() and path.parent.resolve() == self.rendered_dir.resolve():
+                path.unlink()
+        except OSError:
+            pass
 
     def cleanup(self, active_menu_ids: set[str], *, max_total_bytes: int | None = None) -> dict[str, Any]:
         removed: list[str] = []

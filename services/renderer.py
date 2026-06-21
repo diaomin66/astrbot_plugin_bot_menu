@@ -4,6 +4,8 @@ from datetime import datetime
 from html import escape
 from typing import Any
 
+from .fonts import FontRegistry, default_font_stack_css, default_mono_font_stack_css
+
 CARD_SIZE_WIDTHS = {
     "compact": 190,
     "standard": 230,
@@ -14,175 +16,32 @@ CARD_SIZE_VALUES = set(CARD_SIZE_WIDTHS)
 CONTENT_BLOCKS = {"command", "label", "description"}
 DEFAULT_CONTENT_ORDER = ("command", "label", "description")
 
-MENU_TEMPLATE = r"""
-<!doctype html>
-<html lang="zh-CN">
-<head>
-  <meta charset="utf-8" />
-  <style>
-    * { box-sizing: border-box; }
-    html, body { margin: 0; padding: 0; }
-    body {
-      width: {{ menu.style.width }}px;
-      padding: 28px;
-      font-family: "Inter", "PingFang SC", "Microsoft YaHei", "Noto Sans CJK SC", sans-serif;
-      color: {{ menu.style.text_color }};
-      background:
-        radial-gradient(circle at top left, {{ menu.style.primary_color }}33, transparent 34%),
-        linear-gradient(135deg, {{ menu.style.background_color }}, #ffffff 72%);
-    }
-    .shell {
-      border-radius: {{ menu.style.radius }}px;
-      padding: 30px;
-      background: rgba(255, 255, 255, 0.78);
-      border: 1px solid rgba(255, 255, 255, 0.7);
-      box-shadow: 0 24px 70px rgba(15, 23, 42, 0.14);
-      overflow: hidden;
-      position: relative;
-    }
-    .shell::before {
-      content: "";
-      position: absolute;
-      inset: 0 0 auto 0;
-      height: 8px;
-      background: linear-gradient(90deg, {{ menu.style.primary_color }}, #06b6d4, #22c55e);
-    }
-    header { position: relative; padding: 12px 0 24px; }
-    .eyebrow {
-      display: inline-flex;
-      gap: 8px;
-      align-items: center;
-      padding: 7px 12px;
-      border-radius: 999px;
-      color: {{ menu.style.primary_color }};
-      background: {{ menu.style.primary_color }}14;
-      font-size: 18px;
-      font-weight: 700;
-    }
-    h1 {
-      margin: 16px 0 8px;
-      font-size: 46px;
-      line-height: 1.08;
-      letter-spacing: -0.04em;
-    }
-    .subtitle { color: {{ menu.style.muted_color }}; font-size: 22px; line-height: 1.55; }
-    .sections { display: grid; gap: 18px; }
-    .section {
-      padding: 22px;
-      border-radius: {{ menu.style.radius }}px;
-      background: {{ menu.style.card_color }};
-      border: 1px solid rgba(148, 163, 184, 0.22);
-      box-shadow: 0 12px 32px rgba(15, 23, 42, 0.08);
-    }
-    .section-title {
-      margin: 0 0 16px;
-      font-size: 24px;
-      font-weight: 800;
-      display: flex;
-      align-items: center;
-      gap: 10px;
-    }
-    .section-title::before {
-      content: "";
-      width: 10px;
-      height: 24px;
-      border-radius: 999px;
-      background: {{ menu.style.primary_color }};
-      display: inline-block;
-    }
-    .items { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
-    .item {
-      display: grid;
-      grid-template-columns: 44px 1fr;
-      gap: 12px;
-      min-height: 88px;
-      padding: 15px;
-      border-radius: max(14px, calc({{ menu.style.radius }}px - 8px));
-      background: linear-gradient(180deg, rgba(248, 250, 252, 0.92), rgba(241, 245, 249, 0.72));
-      border: 1px solid rgba(148, 163, 184, 0.18);
-      opacity: 1;
-    }
-    .item.disabled { opacity: 0.46; filter: grayscale(0.4); }
-    .icon {
-      width: 44px;
-      height: 44px;
-      display: grid;
-      place-items: center;
-      border-radius: 14px;
-      font-size: 25px;
-      background: {{ menu.style.primary_color }}18;
-    }
-    .item-main { min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 3px); }
-    .label { font-size: var(--item-command-size, 20px); line-height: 1.18; font-weight: 800; overflow-wrap: anywhere; }
-    .command-title { color: {{ menu.style.primary_color }}; font-family: "Cascadia Mono", "Consolas", monospace; }
-    .name { color: {{ menu.style.text_color }}; font-size: var(--item-label-size, 15px); line-height: 1.3; font-weight: 650; overflow-wrap: anywhere; }
-    .desc { margin-top: 0; padding-top: 0; color: {{ menu.style.muted_color }}; font-size: var(--item-description-size, 15px); line-height: 1.38; overflow-wrap: anywhere; }
-    .command {
-      font-size: 15px;
-      line-height: 1.28;
-      font-family: "Cascadia Mono", "Consolas", monospace;
-      color: {{ menu.style.primary_color }};
-      overflow-wrap: anywhere;
-    }
-    footer {
-      display: flex;
-      justify-content: space-between;
-      gap: 18px;
-      margin-top: 22px;
-      color: {{ menu.style.muted_color }};
-      font-size: 16px;
-    }
-  </style>
-</head>
-<body>
-  <main class="shell">
-    <header>
-      <div class="eyebrow">📋 {{ menu.name | e }}</div>
-      <h1>{{ menu.title | e }}</h1>
-      {% if menu.subtitle %}<div class="subtitle">{{ menu.subtitle | e }}</div>{% endif %}
-    </header>
-
-    <div class="sections">
-      {% for section in menu.sections %}
-      <section class="section">
-        <h2 class="section-title">{{ section.title | e }}</h2>
-        <div class="items">
-          {% for item in section.items %}
-          <article class="item {% if not item.enabled %}disabled{% endif %}">
-            <div class="icon">{{ item.icon or "•" }}</div>
-            <div class="item-main">
-              {% if item.command %}<span class="label command-title">{{ item.command | e }}</span>{% endif %}
-              <div class="name">{{ item.label | e }}</div>
-              {% if item.description %}<div class="desc">{{ item.description | e }}</div>{% endif %}
-            </div>
-          </article>
-          {% endfor %}
-        </div>
-      </section>
-      {% endfor %}
-    </div>
-
-    <footer>
-      <span>{{ menu.footer | e }}</span>
-      {% if menu.style.show_updated_at %}<span>更新：{{ generated_at }}</span>{% endif %}
-    </footer>
-  </main>
-</body>
-</html>
-"""
+# The actual image renderer and the Page preview intentionally share the same
+# HTML builder. Keeping a second template here caused saved Page settings to
+# diverge from the rendered /menu image.
 
 
-def build_render_payload(menu: dict[str, Any], *, default_width: int = 900) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def build_render_payload(
+    menu: dict[str, Any],
+    *,
+    default_width: int = 900,
+    font_registry: FontRegistry | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
     options = {
         "type": "png",
         "full_page": True,
         "omit_background": False,
         "animations": "disabled",
     }
-    return build_preview_html(menu, default_width=default_width), {}, options
+    return build_preview_html(menu, default_width=default_width, font_registry=font_registry), {}, options
 
 
-def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str:
+def build_preview_html(
+    menu: dict[str, Any],
+    *,
+    default_width: int = 900,
+    font_registry: FontRegistry | None = None,
+) -> str:
     style = _normalized_style(menu, default_width=default_width)
     width = preview_width_for_menu(menu, default_width=default_width)
     section_gap = _section_gap_for_menu(menu, style)
@@ -196,7 +55,8 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-text:{style['text_color']};"
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
-        f"--preview-font-family:{_css_font_family(style['font_family'])};"
+        f"--preview-font-family:{_css_font_family(style['font_family'], font_registry=font_registry)};"
+        f"--preview-mono-font-family:{default_mono_font_stack_css()};"
         f"--preview-width:{width}px;"
         f"--preview-columns:{style['columns']};"
         f"--preview-section-gap:{section_gap}px;"
@@ -224,27 +84,30 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
 <head>
   <meta charset="utf-8" />
   <style>
+    {font_registry.css_for(style["font_family"]) if font_registry else ""}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; background: transparent; }}
     body {{
       width: {width}px;
-      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: {default_font_stack_css()};
+      font-size: 12px;
       color: #0f172a;
     }}
     h1, h2, p {{ margin-top: 0; }}
-    .kicker {{ margin-bottom: 6px; color: var(--primary, #7c3aed); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }}
+    .kicker {{ margin-bottom: 5px; color: var(--primary, #7c3aed); font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .16em; }}
     .preview-card {{
       width: var(--preview-width, 760px);
       margin: auto;
-      padding: 24px;
+      padding: 18px;
       border-radius: var(--preview-radius, 24px);
       color: var(--preview-text, #111827);
-      font-family: var(--preview-font-family, Inter, "PingFang SC", "Microsoft YaHei", sans-serif);
+      font-family: var(--preview-font-family, {default_font_stack_css()});
       background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
       position: relative;
       overflow: hidden;
+      box-shadow: 0 calc(16px + var(--preview-shadow-strength, 1) * 10px) calc(40px + var(--preview-shadow-strength, 1) * 50px) rgba(15,23,42,calc(.08 + var(--preview-shadow-strength, 1) * .07));
     }}
     .preview-bg-image {{
       position: absolute;
@@ -257,10 +120,11 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     }}
     .preview-bg-overlay {{ position: absolute; inset: 0; z-index: 0; pointer-events: none; background: rgba(15,23,42,var(--preview-bg-overlay,0)); }}
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
-    .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); }}
+    .preview-inner {{ position: relative; z-index: 1; padding: 16px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
     .preview-sections {{ display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }}
     .preview-section {{ padding: var(--preview-section-padding, 15px); border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.16); }}
+    .preview-section h3 {{ margin: 0 0 10px; }}
     .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: var(--preview-card-gap, 10px); }}
     .preview-item {{ display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; min-height: 78px; padding: 11px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
     .preview-item.size-compact {{ grid-template-columns: 28px minmax(0, 1fr); min-height: 66px; padding: 8px; gap: 8px; }}
@@ -270,10 +134,10 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
     .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 2px); }}
     .preview-item-title {{ display: block; margin-top: 0; color: var(--preview-text, #111827); font-size: var(--item-command-size, 14px); line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
-    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-weight: 800; }}
+    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-weight: 800; }}
     .preview-item-name {{ color: var(--preview-text, #111827); font-size: var(--item-label-size, 11.5px); line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }}
     .preview-desc {{ margin-top: 0; padding-top: 0; color: var(--preview-muted, #6b7280); font-size: var(--item-description-size, 11.5px); line-height: 1.34; overflow-wrap: anywhere; }}
-    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
+    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
     .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
     .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon {{ font-size: 26px; }}
     .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command {{ font-size: 12px; }}
@@ -283,7 +147,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
   </style>
 </head>
 <body>
-  <div class="preview-card" style="{style_attr}">
+  <div class="preview-card" style="{_escape(style_attr)}">
     {background_markup}
     <div class="preview-bg-overlay"></div>
     <div class="preview-inner">
@@ -399,11 +263,13 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
     }
 
 
-def _css_font_family(value: Any) -> str:
+def _css_font_family(value: Any, *, font_registry: FontRegistry | None = None) -> str:
+    if font_registry:
+        return font_registry.css_font_family(value)
     raw = str(value or "").replace('"', "").strip()
     if not raw:
-        return 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
-    return f'"{raw}", Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
+        return default_font_stack_css()
+    return f'"{raw}", {default_font_stack_css()}'
 
 
 def _card_size(value: Any) -> str:
