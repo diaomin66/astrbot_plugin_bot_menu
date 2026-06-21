@@ -1612,6 +1612,30 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("BotMenuUserFont-", html)
             self.assertNotIn(str(Path(tmp)), html)
 
+    def test_preview_html_embeds_all_user_fonts_for_browser_capture(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            first_font = Path(tmp) / "fonts" / "AlphaFont.woff2"
+            second_font = Path(tmp) / "fonts" / "nested" / "BetaFont.woff2"
+            first_font.parent.mkdir(parents=True)
+            second_font.parent.mkdir(parents=True)
+            first_font.write_bytes(b"alpha-font")
+            second_font.write_bytes(b"beta-font")
+            registry = FontRegistry(tmp)
+            menu = normalize_menu(
+                {
+                    "id": "font-all",
+                    "style": {"font_family": "AlphaFont"},
+                    "sections": [{"title": "字体", "items": [{"label": "浏览器渲染"}]}],
+                }
+            )
+
+            html = build_preview_html(menu, font_registry=registry)
+
+            self.assertEqual(html.count("@font-face"), 2)
+            self.assertEqual(html.count("data:font/woff2;base64,"), 2)
+            self.assertIn("font-display:block;", html)
+            self.assertNotIn("font-display:swap;", html)
+
     def test_render_cache_fingerprint_changes_when_selected_font_file_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             font_path = Path(tmp) / "fonts" / "DemoFont.ttf"

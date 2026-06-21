@@ -529,3 +529,25 @@
 - `docs/typst-renderer.md`: documents the font synchronization contract and the need to resave after font changes.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Restore user fonts in browser rendering
+### What was done
+- Fixed browser-rendered preview HTML so it embeds the complete user `@font-face` table from the plugin `fonts/` directory instead of only the single resolved selected font.
+- Changed browser screenshot HTML font loading from `font-display: swap` to `font-display: block` to avoid one-shot screenshots painting fallback fonts before user fonts are available.
+- Added a regression test that proves browser render HTML includes all user font data URLs and does not keep `font-display: swap`.
+- Updated font system and Page verification docs to describe the browser rendering font contract.
+
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_preview_html_embeds_all_user_fonts_for_browser_capture tests.test_menu_services.MenuStorageTests.test_preview_html_embeds_selected_user_font_face` -> 2 tests passed.
+- `python -m unittest tests.test_menu_services` -> 66 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+
+### Notes
+- `services/renderer.py`: injects complete user font CSS into browser render HTML and forces screenshot-stable font display.
+- `tests/test_menu_services.py`: adds browser font-table regression coverage.
+- `README.md`: documents that browser render HTML embeds the complete user font table.
+- `docs/font-system.md`: documents browser screenshot font loading behavior.
+- `docs/page-editor-verification.md`: updates the verification requirement for browser render fonts.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore services/renderer.py tests/test_menu_services.py README.md docs/font-system.md docs/page-editor-verification.md progress.md`; after merge, revert the final commit and resync the plugin directory.

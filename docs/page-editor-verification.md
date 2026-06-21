@@ -38,5 +38,5 @@
 
 ## 字体渲染链路
 - Page 字体选择必须从后端 fonts API 获取用户字体列表；用户字体文件只放在运行数据目录的 fonts/ 下，菜单保存值不得依赖本机绝对路径。
-- 实际渲染 HTML 必须通过同一 FontRegistry 解析 font_family 并注入 @font-face，避免 Page 能预览但渲染图片读不到字体。
+- 实际浏览器渲染 HTML 必须通过同一 FontRegistry 解析 font_family，并注入完整用户 @font-face 字体表；截图 HTML 中用户字体必须使用 `font-display: block`，避免 Page 能预览但渲染图片读不到字体或提前落到 fallback 字体。
 - 渲染缓存指纹必须包含当前选中用户字体文件的签名，替换字体文件后不能复用旧图。

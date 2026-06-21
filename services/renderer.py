@@ -84,7 +84,7 @@ def build_preview_html(
 <head>
   <meta charset="utf-8" />
   <style>
-    {font_registry.css_for(style["font_family"]) if font_registry else ""}
+    {_browser_font_face_css(font_registry)}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; background: transparent; }}
     body {{
@@ -270,6 +270,12 @@ def _css_font_family(value: Any, *, font_registry: FontRegistry | None = None) -
     if not raw:
         return default_font_stack_css()
     return f'"{raw}", {default_font_stack_css()}'
+
+
+def _browser_font_face_css(font_registry: FontRegistry | None) -> str:
+    if not font_registry:
+        return ""
+    return font_registry.css_for_all().replace("font-display:swap;", "font-display:block;")
 
 
 def _card_size(value: Any) -> str:
