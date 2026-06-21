@@ -622,7 +622,7 @@ class MenuStorageTests(unittest.TestCase):
             {
                 "id": "snapshot-glyphs",
                 "title": "Glyphs",
-                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
                     "version": 2,
@@ -666,7 +666,7 @@ class MenuStorageTests(unittest.TestCase):
             {
                 "id": "snapshot-preview-raster",
                 "title": "Preview Raster",
-                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
                     "version": 2,
@@ -703,7 +703,7 @@ class MenuStorageTests(unittest.TestCase):
             {
                 "id": "snapshot-pixel-diff",
                 "title": "Pixel Diff",
-                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
                     "version": 2,
@@ -776,7 +776,7 @@ class MenuStorageTests(unittest.TestCase):
             {
                 "id": "snapshot-raster",
                 "title": "Raster",
-                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
                     "version": 2,
@@ -1163,7 +1163,7 @@ class MenuStorageTests(unittest.TestCase):
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
         self.assertEqual(version, "0.5.0")
         self.assertEqual(author, "雪碧bir")
-        self.assertIn(f"`{version}`", readme)
+        self.assertIn(f"当前版本：`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)
         with open("logo.png", "rb") as f:
             self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
@@ -1366,7 +1366,7 @@ class MenuStorageTests(unittest.TestCase):
                 {
                     "id": "font",
                     "style": {"font_family": "DemoFont"},
-                    "sections": [{"title": "鍔熻兘", "items": [{"label": "甯姪"}]}],
+                    "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 }
             )
 
@@ -1390,7 +1390,7 @@ class MenuStorageTests(unittest.TestCase):
                 {
                     "id": "font-all",
                     "style": {"font_family": "AlphaFont"},
-                    "sections": [{"title": "??", "items": [{"label": "????"}]}],
+                    "sections": [{"title": "font", "items": [{"label": "preview"}]}],
                 }
             )
 
@@ -1411,7 +1411,7 @@ class MenuStorageTests(unittest.TestCase):
                 {
                     "id": "fontcache",
                     "style": {"font_family": "DemoFont"},
-                    "sections": [{"title": "鍔熻兘", "items": [{"label": "甯姪"}]}],
+                    "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 }
             )
             first = cache.fingerprint(menu, render_width=900, render_scale=4)

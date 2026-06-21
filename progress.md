@@ -578,3 +578,25 @@
 - `README.md`, `CHANGELOG.md`, `docs/font-system.md`, `docs/page-editor-verification.md`, `docs/typst-renderer.md`: updated user-facing behavior to Typst-only rendering.
 - `tests/test_menu_services.py`: removed legacy renderer tests and kept Typst/cache coverage.
 - Rollback: revert this repository to the commit before this task, or restore `services/local_image.py` plus the previous render-mode branches/config/dependencies from Git history.
+
+
+## 2026-06-21 - Task: Repair Chinese text encoding after Typst-only cleanup
+### What was done
+- 修复 README、CHANGELOG、配置 schema 和 docs 中被 Windows 控制台写入破坏的中文。
+- 将测试文件恢复到正确 UTF-8 基线后，重新应用 Typst-only 测试改动，移除残留乱码测试数据。
+- 重新同步插件到本地 AstrBot 实例目录，确保本地运行副本也已恢复正常中文。
+
+### Testing
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m json.tool _conf_schema.json` passed.
+- `python -m unittest tests.test_menu_services` passed: 54 tests OK.
+- 仓库乱码扫描通过：未发现连续问号乱码或典型 UTF-8/GBK mojibake 标记。
+- 本地 AstrBot 插件目录编译、旧路径关键字扫描和乱码扫描均通过。
+
+### Notes
+- `README.md`：恢复正常中文并保留 Typst-only 说明。
+- `CHANGELOG.md`：恢复中文变更记录并记录本次乱码修复。
+- `_conf_schema.json`：恢复中文配置描述。
+- `docs/font-system.md`、`docs/page-editor-verification.md`、`docs/typst-renderer.md`：恢复中文文档。
+- `tests/test_menu_services.py`：恢复 UTF-8 测试内容并清理旧渲染相关测试数据。
+- Rollback: revert this task commit, then rerun the local AstrBot sync step from the previous known-good commit.

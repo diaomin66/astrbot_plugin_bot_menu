@@ -1,25 +1,27 @@
-# Typst render path
+# Typst 渲染链路
 
-## Goal
+## 目标
 
-The plugin has one image render path: Typst. There is no alternate renderer, no remote HTML render fallback, and no local screenshot fallback.
+插件只有一条图片渲染链路：Typst。旧的多路径图像方案已删除，不再暴露模式切换或降级分支。
 
-## Fast path
+## 快路径
 
-Page saves a `render_snapshot` with a full-card preview raster. When that raster exists, the backend writes the exact saved PNG bytes into the render cache and returns that file. This path avoids second layout, font fallback, text wrapping, color conversion, and resampling, so unchanged saved menus can be served from cache in milliseconds.
+Page 保存菜单时会写入 `render_snapshot.raster`，其中包含完整预览 PNG。只要该 PNG 存在，后端会直接把原始 PNG 字节写入渲染缓存并返回该文件。
 
-## Fallback path
+这条路径不会重新排版、不会重新测量文本、不会重新采样图片，因此可以避免字体缺失、文字多换行、位置错位和颜色漂移。聊天侧缓存命中时只需要返回已有文件路径，是毫秒级路径。
 
-Older menus may not have a full-card raster. For those menus, Typst builds a document from saved geometry, boxes, images, text metrics, text raster layers, and font stacks. This fallback is for compatibility only; to get pixel-identical output, reopen and save the menu in Page so it records a fresh full-card raster.
+## 兼容路径
 
-## Font matching
+旧菜单可能没有完整预览 PNG。此时 Typst 会根据保存的几何、盒子、图片、文本指标、文本层和字体栈生成文档。该路径只用于兼容旧数据；如果要获得像素级一致性，需要重新打开 Page 并保存一次，让菜单获得新的完整预览 PNG。
 
-User fonts live under `plugin_data/astrbot_plugin_bot_menu/fonts/`. Page loads those fonts before saving the raster. Typst also receives the same fonts directory through `font_paths` for older geometry fallback. Cache fingerprints include the selected font file signature so replacing a font invalidates stale images.
+## 字体一致性
 
-## Stability rules
+用户字体统一放在 `plugin_data/astrbot_plugin_bot_menu/fonts/`。Page 保存前会等待字体加载完成；旧数据兼容渲染时，Typst 也会接收同一个字体目录。缓存指纹包含选中字体文件签名，替换字体文件后不会继续命中旧图。
 
-Transparent layers remain transparent. Unsupported visual effects are skipped in geometry fallback instead of becoming visible black boxes. The full-card raster path remains the quality target because it preserves the exact Page preview pixels.
+## 稳定性规则
 
-## Usage
+透明图层保持透明。兼容路径遇到不支持的视觉效果时会跳过该效果，避免生成错误色块。完整预览 PNG 始终是质量目标，因为它直接保留 Page 预览像素。
 
-No render mode switch is exposed. Save the menu in Page, then use `/menu` or `/menu refresh [menu_id]`; the cache coordinator always uses Typst.
+## 使用方式
+
+无需配置渲染模式。保存菜单后使用 `/menu`，或用 `/menu refresh [menu_id]` 刷新缓存即可。
