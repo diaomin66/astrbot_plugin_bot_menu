@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from .fonts import FontRegistry
+
 
 def render_menu_image(
     menu: dict[str, Any],
@@ -54,15 +56,16 @@ def render_menu_image(
     border_strength = _clamp_int(style.get("border_strength"), default=1, minimum=0, maximum=5)
     border_width = border_strength * scale
     font_family = str(style.get("font_family") or "").strip()
+    font_registry = FontRegistry(output_dir)
 
-    font_regular = _font(20 * scale, family=font_family)
-    font_small = _font(17 * scale, family=font_family)
-    font_mono = _font(17 * scale, family=font_family)
-    font_title = _font(46 * scale, weight="bold", family=font_family)
-    font_section = _font(25 * scale, weight="bold", family=font_family)
-    font_label = _font(22 * scale, weight="bold", family=font_family)
-    font_badge = _font(18 * scale, weight="bold", family=font_family)
-    font_icon = _font(28 * scale, emoji=True)
+    font_regular = _font(20 * scale, family=font_family, font_registry=font_registry)
+    font_small = _font(17 * scale, family=font_family, font_registry=font_registry)
+    font_mono = _font(17 * scale, family=font_family, font_registry=font_registry)
+    font_title = _font(46 * scale, weight="bold", family=font_family, font_registry=font_registry)
+    font_section = _font(25 * scale, weight="bold", family=font_family, font_registry=font_registry)
+    font_label = _font(22 * scale, weight="bold", family=font_family, font_registry=font_registry)
+    font_badge = _font(18 * scale, weight="bold", family=font_family, font_registry=font_registry)
+    font_icon = _font(28 * scale, emoji=True, font_registry=font_registry)
 
     margin = 28 * scale
     shell_pad = 30 * scale
@@ -87,7 +90,7 @@ def render_menu_image(
         row_heights = []
         for row in rows:
             row_width = _row_item_width(row, item_area_width, item_gap, columns)
-            row_heights.append(max(_item_height(item, row_width, font_label, font_small, scale) for item in row))
+            row_heights.append(max(_item_height(item, row_width, font_label, font_small, scale, font_family=font_family, font_registry=font_registry) for item in row))
         section_header_height = section_padding + 30 * scale + 16 * scale
         section_height = section_header_height + sum(row_heights) + item_gap * max(0, len(row_heights) - 1) + section_padding
         section_layouts.append({"section": section, "rows": rows, "row_heights": row_heights, "height": int(section_height)})
@@ -170,7 +173,7 @@ def render_menu_image(
             item_x = x + section_padding
             row_width = _row_item_width(row, item_area_width, item_gap, columns)
             for item in row:
-                _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity, border_width=border_width)
+                _draw_item(image, item, item_x, y, row_width, row_height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, foreground_opacity, border_width=border_width, font_family=font_family, font_registry=font_registry)
                 item_x += row_width + item_gap
             y += row_height + item_gap
         y = bottom + section_gap
@@ -185,7 +188,7 @@ def render_menu_image(
 
     watermark = str(style.get("watermark") or "").strip()
     if watermark:
-        _draw_watermark(image, watermark, muted, scale, font_family)
+        _draw_watermark(image, watermark, muted, scale, font_family, font_registry=font_registry)
 
     target_width = base_width * output_scale
     target_height = int(height * output_scale / scale)
@@ -778,7 +781,7 @@ def _default_item_fonts(size: str) -> dict[str, float]:
     return {"command": 14, "label": 11.5, "description": 11.5}
 
 
-def _item_typography(item: dict[str, Any], scale: int) -> dict[str, Any]:
+def _item_typography(item: dict[str, Any], scale: int, *, font_family: str = "", font_registry: FontRegistry | None = None) -> dict[str, Any]:
     size = _card_size(item.get("card_size"))
     defaults = _default_item_fonts(size)
     command_size = _clamp_float(item.get("command_font_size"), default=defaults["command"], minimum=8, maximum=34)
@@ -787,9 +790,9 @@ def _item_typography(item: dict[str, Any], scale: int) -> dict[str, Any]:
     return {
         "gap": _clamp_int(item.get("content_gap"), default=2, minimum=0, maximum=40) * scale,
         "fonts": {
-            "command": _font(max(8, int(command_size * 1.55 * scale)), weight="bold"),
-            "label": _font(max(8, int(label_size * 1.48 * scale))),
-            "description": _font(max(8, int(description_size * 1.48 * scale))),
+            "command": _font(max(8, int(command_size * 1.55 * scale)), weight="bold", family=font_family, font_registry=font_registry),
+            "label": _font(max(8, int(label_size * 1.48 * scale)), family=font_family, font_registry=font_registry),
+            "description": _font(max(8, int(description_size * 1.48 * scale)), family=font_family, font_registry=font_registry),
         },
         "line_heights": {
             "command": max(10 * scale, int(command_size * 1.75 * scale)),
@@ -799,7 +802,7 @@ def _item_typography(item: dict[str, Any], scale: int) -> dict[str, Any]:
     }
 
 
-def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity, *, border_width: int = 1) -> None:
+def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, font_icon, font_label, font_mono, font_small, scale, opacity, *, border_width: int = 1, font_family: str = "", font_registry: FontRegistry | None = None) -> None:
     from PIL import ImageDraw
 
     draw = ImageDraw.Draw(image)
@@ -840,7 +843,7 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
     )
     draw.text((icon_left + 8 * scale, icon_top + 7 * scale), str(item.get("icon") or "\u2022")[:2], font=font_icon, fill=primary)
 
-    typography = _item_typography(item, scale)
+    typography = _item_typography(item, scale, font_family=font_family, font_registry=font_registry)
     block_text = {
         "command": str(item.get("command") or ""),
         "label": str(item.get("label") or "\u672a\u547d\u540d"),
@@ -862,7 +865,7 @@ def _draw_item(image, item, x, y, width, height, radius, primary, text, muted, f
         drew_block = True
 
 
-def _item_height(item, width, font_label, font_small, scale) -> int:
+def _item_height(item, width, font_label, font_small, scale, *, font_family: str = "", font_registry: FontRegistry | None = None) -> int:
     size = _card_size(item.get("card_size"))
     is_compact = size == "compact"
     is_large = size in {"large", "banner"}
@@ -872,7 +875,7 @@ def _item_height(item, width, font_label, font_small, scale) -> int:
     desc_max_lines = 3 if is_large else 2
     min_height = {"compact": 66, "standard": 78, "large": 112, "banner": 118}[size] * scale
     vertical_pad = {"compact": 16, "standard": 22, "large": 28, "banner": 28}[size] * scale
-    typography = _item_typography(item, scale)
+    typography = _item_typography(item, scale, font_family=font_family, font_registry=font_registry)
     block_text = {
         "command": str(item.get("command") or ""),
         "label": str(item.get("label") or "\u672a\u547d\u540d"),
@@ -902,10 +905,10 @@ def _draw_shadow(image, box, radius, blur, offset_y, color):
     image.paste(shadow, (0, 0), shadow)
 
 
-def _draw_watermark(image, text: str, color: tuple[int, int, int], scale: int, family: str = "") -> None:
+def _draw_watermark(image, text: str, color: tuple[int, int, int], scale: int, family: str = "", *, font_registry: FontRegistry | None = None) -> None:
     from PIL import Image, ImageDraw
 
-    font = _font(42 * scale, weight="bold", family=family)
+    font = _font(42 * scale, weight="bold", family=family, font_registry=font_registry)
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
     padding = 26 * scale
@@ -972,24 +975,24 @@ def _ellipsize(lines: list[str], font, max_width: int) -> list[str]:
     return lines
 
 
-def _font(size: int, *, emoji: bool = False, weight: str = "normal", family: str = ""):
+def _font(size: int, *, emoji: bool = False, weight: str = "normal", family: str = "", font_registry: FontRegistry | None = None):
     from PIL import ImageFont
 
     candidates = []
-    if family:
-        family_path = Path(family)
-        if family_path.exists():
-            candidates.append(str(family_path))
-    if emoji:
-        candidates.extend([r"C:\Windows\Fonts\seguiemj.ttf", r"C:\Windows\Fonts\msyh.ttc"])
-    else:
-        if weight == "bold":
-            candidates.extend([r"C:\Windows\Fonts\msyhbd.ttc", r"C:\Windows\Fonts\simhei.ttf"])
-        else:
-            candidates.extend([r"C:\Windows\Fonts\msyh.ttc", r"C:\Windows\Fonts\simhei.ttf", r"C:\Windows\Fonts\arial.ttf"])
+    if family and font_registry:
+        font_path = font_registry.pillow_font_path(family)
+        if font_path:
+            candidates.append(font_path)
+    if family and Path(family).is_file():
+        candidates.append(str(Path(family)))
+    candidates.extend(["DejaVuSans-Bold.ttf" if weight == "bold" else "DejaVuSans.ttf", "Arial Unicode.ttf"])
     for path in candidates:
-        if Path(path).exists():
+        if Path(path).is_absolute() and not Path(path).exists():
+            continue
+        try:
             return ImageFont.truetype(path, size=size)
+        except OSError:
+            continue
     return ImageFont.load_default(size=size)
 
 

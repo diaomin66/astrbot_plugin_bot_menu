@@ -4,6 +4,8 @@ from datetime import datetime
 from html import escape
 from typing import Any
 
+from .fonts import FontRegistry, default_font_stack_css, default_mono_font_stack_css
+
 CARD_SIZE_WIDTHS = {
     "compact": 190,
     "standard": 230,
@@ -19,17 +21,27 @@ DEFAULT_CONTENT_ORDER = ("command", "label", "description")
 # diverge from the rendered /menu image.
 
 
-def build_render_payload(menu: dict[str, Any], *, default_width: int = 900) -> tuple[str, dict[str, Any], dict[str, Any]]:
+def build_render_payload(
+    menu: dict[str, Any],
+    *,
+    default_width: int = 900,
+    font_registry: FontRegistry | None = None,
+) -> tuple[str, dict[str, Any], dict[str, Any]]:
     options = {
         "type": "png",
         "full_page": True,
         "omit_background": False,
         "animations": "disabled",
     }
-    return build_preview_html(menu, default_width=default_width), {}, options
+    return build_preview_html(menu, default_width=default_width, font_registry=font_registry), {}, options
 
 
-def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str:
+def build_preview_html(
+    menu: dict[str, Any],
+    *,
+    default_width: int = 900,
+    font_registry: FontRegistry | None = None,
+) -> str:
     style = _normalized_style(menu, default_width=default_width)
     width = preview_width_for_menu(menu, default_width=default_width)
     section_gap = _section_gap_for_menu(menu, style)
@@ -43,7 +55,8 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
         f"--preview-text:{style['text_color']};"
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
-        f"--preview-font-family:{_css_font_family(style['font_family'])};"
+        f"--preview-font-family:{_css_font_family(style['font_family'], font_registry=font_registry)};"
+        f"--preview-mono-font-family:{default_mono_font_stack_css()};"
         f"--preview-width:{width}px;"
         f"--preview-columns:{style['columns']};"
         f"--preview-section-gap:{section_gap}px;"
@@ -71,11 +84,12 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
 <head>
   <meta charset="utf-8" />
   <style>
+    {font_registry.css_for(style["font_family"]) if font_registry else ""}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; background: transparent; }}
     body {{
       width: {width}px;
-      font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-family: {default_font_stack_css()};
       font-size: 12px;
       color: #0f172a;
     }}
@@ -87,7 +101,7 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
       padding: 18px;
       border-radius: var(--preview-radius, 24px);
       color: var(--preview-text, #111827);
-      font-family: var(--preview-font-family, Inter, "PingFang SC", "Microsoft YaHei", sans-serif);
+      font-family: var(--preview-font-family, {default_font_stack_css()});
       background: radial-gradient(circle at top left, color-mix(in srgb, var(--preview-primary, #7c3aed), transparent 70%), transparent 35%), var(--preview-bg, #f8fafc);
       text-rendering: geometricPrecision;
       -webkit-font-smoothing: antialiased;
@@ -120,10 +134,10 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
     .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 2px); }}
     .preview-item-title {{ display: block; margin-top: 0; color: var(--preview-text, #111827); font-size: var(--item-command-size, 14px); line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
-    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-weight: 800; }}
+    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-weight: 800; }}
     .preview-item-name {{ color: var(--preview-text, #111827); font-size: var(--item-label-size, 11.5px); line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }}
     .preview-desc {{ margin-top: 0; padding-top: 0; color: var(--preview-muted, #6b7280); font-size: var(--item-description-size, 11.5px); line-height: 1.34; overflow-wrap: anywhere; }}
-    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: Consolas, monospace; font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
+    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
     .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
     .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon {{ font-size: 26px; }}
     .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command {{ font-size: 12px; }}
@@ -249,11 +263,13 @@ def _normalized_style(menu: dict[str, Any], *, default_width: int) -> dict[str, 
     }
 
 
-def _css_font_family(value: Any) -> str:
+def _css_font_family(value: Any, *, font_registry: FontRegistry | None = None) -> str:
+    if font_registry:
+        return font_registry.css_font_family(value)
     raw = str(value or "").replace('"', "").strip()
     if not raw:
-        return 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
-    return f'"{raw}", Inter, "PingFang SC", "Microsoft YaHei", sans-serif'
+        return default_font_stack_css()
+    return f'"{raw}", {default_font_stack_css()}'
 
 
 def _card_size(value: Any) -> str:

@@ -7,6 +7,7 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 from services.asset_storage import AssetStorage
+from services.fonts import FontRegistry
 from services.history_storage import MenuHistoryStorage
 from services.menu_model import DEFAULT_STYLE, MenuValidationError, normalize_menu
 from services.local_image import (
@@ -330,7 +331,7 @@ class MenuEditorSourceTests(unittest.TestCase):
             self.assertTrue((page_dir / module_name).is_file())
             self.assertIn(f'src="./{module_name}" defer', index_html)
 
-        self.assertIn('src="./app.js?v=20260621-bgparity" defer', index_html)
+        self.assertIn('src="./app.js?v=20260621-fonts" defer', index_html)
         self.assertNotIn('<script type="module" src="./app.js"', index_html)
         self.assertNotIn("await resolvePageBridge();", app_js.split("function initializeEditor", 1)[0])
         self.assertIn("function cloneData", app_js)
@@ -692,6 +693,8 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('command.casefold() == "search"', main_py)
         self.assertIn('command.casefold() == "refresh"', main_py)
         self.assertIn("assets/<asset_id>", main_py)
+        self.assertIn("api_list_fonts", main_py)
+        self.assertIn("/fonts", main_py)
         self.assertIn("menus/history/<menu_id>", main_py)
         self.assertIn("menus/render-refresh", main_py)
         self.assertIn("routing", main_py)
@@ -1001,6 +1004,63 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("--preview-bg-brightness:0.880", html)
         self.assertIn('class="preview-watermark"', html)
 
+    def test_font_registry_lists_user_fonts_by_relative_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            font_path = Path(tmp) / "fonts" / "brand" / "DemoFont.ttf"
+            font_path.parent.mkdir(parents=True)
+            font_path.write_bytes(b"demo-font")
+
+            registry = FontRegistry(tmp)
+            fonts = registry.list_fonts()
+
+            self.assertEqual(len(fonts), 1)
+            self.assertEqual(fonts[0].name, "DemoFont")
+            self.assertEqual(fonts[0].relative_path, "brand/DemoFont.ttf")
+            self.assertNotIn(str(Path(tmp)), fonts[0].as_dict()["relative_path"])
+            self.assertIsNotNone(registry.resolve("brand/DemoFont.ttf"))
+            self.assertIsNotNone(registry.resolve("DemoFont"))
+
+    def test_preview_html_embeds_selected_user_font_face(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            font_path = Path(tmp) / "fonts" / "DemoFont.woff2"
+            font_path.parent.mkdir(parents=True)
+            font_path.write_bytes(b"demo-font")
+            registry = FontRegistry(tmp)
+            menu = normalize_menu(
+                {
+                    "id": "font",
+                    "style": {"font_family": "DemoFont"},
+                    "sections": [{"title": "鍔熻兘", "items": [{"label": "甯姪"}]}],
+                }
+            )
+
+            html = build_preview_html(menu, font_registry=registry)
+
+            self.assertIn("@font-face", html)
+            self.assertIn("data:font/woff2;base64,", html)
+            self.assertIn("BotMenuUserFont-", html)
+            self.assertNotIn(str(Path(tmp)), html)
+
+    def test_render_cache_fingerprint_changes_when_selected_font_file_changes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            font_path = Path(tmp) / "fonts" / "DemoFont.ttf"
+            font_path.parent.mkdir(parents=True)
+            font_path.write_bytes(b"demo-font-1")
+            cache = MenuRenderCache(tmp)
+            menu = normalize_menu(
+                {
+                    "id": "fontcache",
+                    "style": {"font_family": "DemoFont"},
+                    "sections": [{"title": "鍔熻兘", "items": [{"label": "甯姪"}]}],
+                }
+            )
+            first = cache.fingerprint(menu, render_width=900, render_scale=4)
+
+            font_path.write_bytes(b"demo-font-2-changed")
+            second = cache.fingerprint(menu, render_width=900, render_scale=4)
+
+            self.assertNotEqual(first, second)
+
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
@@ -1018,9 +1078,12 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("function ensureStyle(menu)", app_js)
         self.assertIn("Object.entries(defaults).forEach", app_js)
         self.assertNotIn("menu.style = { ...defaultStyle(), ...(menu.style || {}) };", app_js)
-        self.assertIn("./app.js?v=20260621-bgparity", index_html)
+        self.assertIn("./app.js?v=20260621-fonts", index_html)
         self.assertIn('style="${escapeAttr(previewStyle)}"', app_js)
-        self.assertIn('Inter, "PingFang SC", "Microsoft YaHei", sans-serif', app_js)
+        self.assertIn('const DEFAULT_FONT_STACK_CSS', app_js)
+        self.assertIn('await loadFonts();', app_js)
+        self.assertIn('bridge.apiGet("fonts")', app_js)
+        self.assertIn("function fontFamilyCss(value)", app_js)
         self.assertIn(".preview-title { margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }", css)
         self.assertIn("font-size: 12px;", renderer_py)
         self.assertIn("padding: 18px;", renderer_py)

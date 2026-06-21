@@ -85,6 +85,8 @@ const CONTENT_FONT_LIMITS = {
   label_font_size: { min: 8, max: 30, fallback: 11.5 },
   description_font_size: { min: 8, max: 28, fallback: 11.5 },
 };
+const DEFAULT_FONT_STACK_CSS = '"Inter", "PingFang SC", "Microsoft YaHei", sans-serif';
+const DEFAULT_MONO_FONT_STACK_CSS = '"Consolas", "JetBrains Mono", monospace';
 
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
@@ -120,6 +122,8 @@ const state = {
   backgroundEditMode: false,
   batchSelectMode: false,
   pendingBackgroundAsset: null,
+  fonts: [],
+  fontsDir: "fonts",
 };
 
 const els = {
@@ -204,6 +208,7 @@ async function initializeEditor() {
   try {
     bindEvents();
     bridge = await resolvePageBridge();
+    await loadFonts();
     await loadMenus();
   } catch (error) {
     console.error("failed to initialize bot menu editor", error);
@@ -302,6 +307,30 @@ function bindEvents() {
   applyDensity();
   updateBatchSelectToggle();
   updateSaveState("saved");
+}
+
+async function loadFonts() {
+  try {
+    const data = await bridge.apiGet("fonts");
+    state.fonts = Array.isArray(data.fonts) ? data.fonts : [];
+    state.fontsDir = data.fonts_dir || "fonts";
+    applyUserFontCss(data.css || "");
+    updateFontDatalist();
+  } catch (error) {
+    console.warn("failed to load custom fonts", error);
+    state.fonts = [];
+    applyUserFontCss("");
+  }
+}
+
+function applyUserFontCss(css) {
+  let node = document.getElementById("botMenuUserFonts");
+  if (!node) {
+    node = document.createElement("style");
+    node.id = "botMenuUserFonts";
+    document.head.append(node);
+  }
+  node.textContent = css || "";
 }
 
 function bindValueChange(control, handler) {
@@ -932,6 +961,41 @@ function textInput(value, onInput, attrs = {}) {
   return input;
 }
 
+function fontFamilyInput(value, onInput) {
+  updateFontDatalist();
+  return textInput(value, onInput, {
+    list: "fontFamilyOptions",
+    maxlength: 120,
+    placeholder: "例如：Noto Sans CJK SC，或 fonts/ 下字体文件名",
+  });
+}
+
+function updateFontDatalist() {
+  let list = document.getElementById("fontFamilyOptions");
+  if (!list) {
+    list = document.createElement("datalist");
+    list.id = "fontFamilyOptions";
+    document.body.append(list);
+  }
+  list.innerHTML = "";
+  (state.fonts || []).forEach((font) => {
+    const option = document.createElement("option");
+    option.value = font.name || font.relative_path || font.family;
+    option.label = font.relative_path || font.name || font.family;
+    list.append(option);
+  });
+}
+
+function fontFamilyCss(value) {
+  const raw = String(value || "").replace(/"/g, "").trim();
+  const matched = (state.fonts || []).find((font) => {
+    const values = [font.family, font.name, font.relative_path].filter(Boolean).map((item) => String(item).replace(/\\/g, "/").toLowerCase());
+    return values.includes(raw.replace(/\\/g, "/").toLowerCase());
+  });
+  const family = matched ? matched.family : raw;
+  return family ? `"${family}", ${DEFAULT_FONT_STACK_CSS}` : DEFAULT_FONT_STACK_CSS;
+}
+
 function selectInput(value, options, onInput) {
   const select = document.createElement("select");
   select.innerHTML = options.map((option) => `<option value="${escapeAttr(option.value)}" ${String(option.value) === String(value) ? "selected" : ""}>${escapeHtml(option.label)}</option>`).join("");
@@ -1294,7 +1358,7 @@ function openStyleEditor() {
     field("卡片色", textInput(toColor(style.card_color, "#ffffff"), (value) => { updateStyle((currentStyle) => { currentStyle.card_color = value; }); }, { type: "color" })),
     field("文字色", textInput(toColor(style.text_color, "#111827"), (value) => { updateStyle((currentStyle) => { currentStyle.text_color = value; }); }, { type: "color" })),
     field("辅助文字", textInput(toColor(style.muted_color, "#6b7280"), (value) => { updateStyle((currentStyle) => { currentStyle.muted_color = value; }); }, { type: "color" })),
-    field("字体族", textInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }, { placeholder: "例如：Noto Sans CJK SC, Microsoft YaHei" }), { wide: true }),
+    field("Font family", fontFamilyInput(style.font_family || "", (value) => { updateStyle((currentStyle) => { currentStyle.font_family = value; }); }), { wide: true, hint: `Custom fonts: put .ttf/.otf/.ttc/.woff/.woff2 files in ${state.fontsDir}/, then enter a file name or relative path.` }),
   );
   const opacity = textInput(clampNumber(style.foreground_opacity, 0, 100, 92), (value, input) => {
     updateStyle((currentStyle) => {
@@ -1436,7 +1500,8 @@ function renderPreview() {
     `--preview-text:${style.text_color || "#111827"}`,
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
-    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'}`,
+    `--preview-font-family:${fontFamilyCss(style.font_family)}`,
+    `--preview-mono-font-family:${DEFAULT_MONO_FONT_STACK_CSS}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,

@@ -8,11 +8,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from .fonts import FontRegistry
+
 
 class MenuRenderCache:
     """File-backed cache for rendered menu images."""
 
-    CACHE_VERSION = 3
+    CACHE_VERSION = 4
 
     def __init__(self, data_dir: str | Path, filename: str = "render_cache.json") -> None:
         self.data_dir = Path(data_dir)
@@ -23,11 +25,13 @@ class MenuRenderCache:
         self.rendered_dir.mkdir(parents=True, exist_ok=True)
 
     def fingerprint(self, menu: dict[str, Any], *, render_width: int, render_scale: int) -> str:
+        style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
         payload = {
             "cache_version": self.CACHE_VERSION,
             "renderer": "browser-cache",
             "render_width": render_width,
             "render_scale": render_scale,
+            "font_signature": FontRegistry(self.data_dir).signature_for(style.get("font_family")),
             "menu": menu,
         }
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")

@@ -93,3 +93,7 @@ data/plugin_data/astrbot_plugin_bot_menu/assets/
 ## 更新日志
 
 详见 [CHANGELOG.md](./CHANGELOG.md)。
+
+## Custom fonts
+
+The runtime data directory creates `plugin_data/astrbot_plugin_bot_menu/fonts/`. Put `.ttf/.otf/.ttc/.woff/.woff2` files there, then select them in Page by file name or relative path. See `docs/font-system.md`.

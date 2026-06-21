@@ -15,6 +15,7 @@ from .services import (
     MenuRenderCache,
     MenuRenderCoordinator,
     MenuValidationError,
+    FontRegistry,
     RoutingStorage,
     build_preview_html,
     build_render_payload,
@@ -95,6 +96,7 @@ class BotMenuPlugin(Star):
         self.assets = AssetStorage(self.storage.data_dir)
         self.history = MenuHistoryStorage(self.storage.data_dir)
         self.routing = RoutingStorage(self.storage.data_dir)
+        self.fonts = FontRegistry(self.storage.data_dir)
         self.render_cache = MenuRenderCache(self.storage.data_dir)
         self.render_coordinator = MenuRenderCoordinator(
             storage=self.storage,
@@ -258,6 +260,15 @@ class BotMenuPlugin(Star):
             assets.append(asset)
         return json_response({"assets": assets})
 
+    async def api_list_fonts(self):
+        return json_response(
+            {
+                "fonts_dir": "fonts",
+                "fonts": [font.as_dict() for font in self.fonts.list_fonts()],
+                "css": self.fonts.css_for_all(),
+            }
+        )
+
     async def api_save_asset(self):
         payload = await read_json_body(default={})
         try:
@@ -354,7 +365,7 @@ class BotMenuPlugin(Star):
 
         if render_mode in {"browser", "local", "auto"}:  # local is fallback mapping to browser for old configs
             try:
-                html_content = build_preview_html(menu, default_width=default_width)
+                html_content = build_preview_html(menu, default_width=default_width, font_registry=self.fonts)
                 viewport_width = preview_width_for_menu(menu, default_width=default_width)
                 return await asyncio.to_thread(
                     render_menu_via_browser,
@@ -375,7 +386,7 @@ class BotMenuPlugin(Star):
                         "local browser rendering failed; no image was generated to avoid output that does not match the Page preview"
                     ) from exc
 
-        template, data, options = build_render_payload(menu, default_width=default_width)
+        template, data, options = build_render_payload(menu, default_width=default_width, font_registry=self.fonts)
         try:
             return await self.html_render(template, data, return_url=True, options=options)
         except Exception as exc:
@@ -398,6 +409,7 @@ class BotMenuPlugin(Star):
             (f"/{PLUGIN_NAME}/assets", self.api_list_assets, ["GET"], "List bot menu assets"),
             (f"/{PLUGIN_NAME}/assets", self.api_save_asset, ["POST"], "Save bot menu asset"),
             (f"/{PLUGIN_NAME}/assets/<asset_id>", self.api_delete_asset, ["DELETE", "POST"], "Delete bot menu asset"),
+            (f"/{PLUGIN_NAME}/fonts", self.api_list_fonts, ["GET"], "List bot menu fonts"),
             (f"/{PLUGIN_NAME}/routing", self.api_get_routing, ["GET"], "Get bot menu routing"),
             (f"/{PLUGIN_NAME}/routing", self.api_save_routing, ["POST"], "Save bot menu routing"),
             (f"/{PLUGIN_NAME}/cleanup", self.api_cleanup, ["POST"], "Clean bot menu cache and assets"),

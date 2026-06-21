@@ -166,3 +166,44 @@
 ### Notes
 - `progress.md`：追加本机 AstrBot 同步、缓存复核和回滚记录。
 - 回滚方式：`git checkout -- progress.md`；如需回滚本机 AstrBot 同步，把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并删除本机插件 `render_cache.json` 中本轮生成的新缓存条目或等待重新渲染覆盖。
+
+## 2026-06-21 - Task: 完善菜单字体系统
+### What was done
+- 新增运行时用户字体目录解析：后端自动使用数据目录下的 `fonts/`，支持 `.ttf/.otf/.ttc/.woff/.woff2`，菜单只保存字体名或相对路径，不保存本机绝对路径。
+- Page 初始化时加载后端字体列表和字体 CSS，字体族输入支持用户字体候选；保存后的 `font_family` 会被实际渲染 HTML 同链路读取。
+- 实际浏览器渲染与远程 HTML 渲染都接入统一字体解析并注入 `@font-face`；Pillow 备用渲染也优先读取用户字体目录，不再依赖写死的 Windows 字体路径。
+- 渲染缓存指纹加入选中字体文件签名，并提升缓存版本，替换字体文件后不会继续复用旧图。
+- 补充字体系统说明文档和 Page/渲染链路验证约定。
+### Testing
+- `node --check pages/menu-editor/app.js`
+- `python -m unittest discover -s tests -v`（50 tests OK）
+- `python -m compileall -q .`
+- `git diff --check`
+- 手动渲染验证：临时复制本机字体到测试数据目录 `fonts/brand/VerifyFont.ttf`，`build_preview_html(..., font_registry=...)` 成功注入 `@font-face` 且未泄露临时绝对路径，`render_menu_via_browser(...)` 成功生成 PNG（30440 bytes）。
+### Notes
+- `services/fonts.py`：新增用户字体目录扫描、相对路径匹配、CSS 字体栈和字体文件签名能力。
+- `services/renderer.py`：渲染 HTML 接入 FontRegistry，统一默认字体栈并注入选中用户字体。
+- `services/local_image.py`：Pillow 备用渲染改为通过用户字体目录解析字体，移除写死的 Windows 字体路径候选。
+- `services/render_cache.py`：缓存版本升到 4，并把选中用户字体文件签名纳入指纹。
+- `services/__init__.py`：导出 FontRegistry。
+- `main.py`：初始化字体注册表，新增 `fonts` API，并在实际渲染链路传入字体注册表。
+- `pages/menu-editor/app.js`：Page 启动加载字体列表/CSS，字体族输入支持用户字体候选，预览字体栈从统一函数生成。
+- `pages/menu-editor/style.css`：命令字体改走预览 CSS 变量，避免 Page 和后端字体栈分叉。
+- `pages/menu-editor/index.html`：更新 app.js 版本参数，避免旧前端缓存。
+- `tests/test_menu_services.py`：增加用户字体相对路径、渲染 HTML 注入字体、字体变化刷新缓存的回归测试。
+- `docs/font-system.md`：新增字体目录、选择方式、渲染约定和跨环境要求说明。
+- `docs/page-editor-verification.md`：补充字体渲染链路验证约定。
+- `README.md`：补充用户字体使用入口。
+- 回滚方式：执行 `git revert <本轮提交>`；未提交前可用 `git checkout -- README.md docs/page-editor-verification.md main.py pages/menu-editor/app.js pages/menu-editor/index.html pages/menu-editor/style.css services/__init__.py services/local_image.py services/render_cache.py services/renderer.py tests/test_menu_services.py` 并删除 `docs/font-system.md`、`services/fonts.py`。
+
+## 2026-06-21 - Task: 同步字体系统到本地 AstrBot
+### What was done
+- 将本轮字体系统相关代码、文档、测试和进度日志同步到本地 AstrBot 插件目录。
+- 确保本地运行数据目录存在 `plugin_data/astrbot_plugin_bot_menu/fonts/`，供用户直接放入自定义字体文件。
+### Testing
+- SHA256 校验 14 个同步文件，源仓库与本地 AstrBot 插件目录完全一致。
+- 清理本地插件目录下 `__pycache__`。
+### Notes
+- `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`：同步本轮修改后的插件文件。
+- `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugin_data\astrbot_plugin_bot_menu\fonts`：创建/确认用户字体目录。
+- 回滚方式：重新从目标分支同步上一提交文件，或在本地 AstrBot 插件目录执行相同文件的反向拷贝；用户字体目录为空目录时可直接删除。
