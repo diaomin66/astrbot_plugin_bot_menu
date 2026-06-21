@@ -12,7 +12,7 @@ from typing import Any
 class MenuRenderCache:
     """File-backed cache for rendered menu images."""
 
-    CACHE_VERSION = 2
+    CACHE_VERSION = 3
 
     def __init__(self, data_dir: str | Path, filename: str = "render_cache.json") -> None:
         self.data_dir = Path(data_dir)

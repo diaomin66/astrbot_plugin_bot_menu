@@ -76,14 +76,15 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     body {{
       width: {width}px;
       font-family: Inter, "PingFang SC", "Microsoft YaHei", sans-serif;
+      font-size: 12px;
       color: #0f172a;
     }}
     h1, h2, p {{ margin-top: 0; }}
-    .kicker {{ margin-bottom: 6px; color: var(--primary, #7c3aed); font-size: 12px; font-weight: 800; text-transform: uppercase; letter-spacing: .12em; }}
+    .kicker {{ margin-bottom: 5px; color: var(--primary, #7c3aed); font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: .16em; }}
     .preview-card {{
       width: var(--preview-width, 760px);
       margin: auto;
-      padding: 24px;
+      padding: 18px;
       border-radius: var(--preview-radius, 24px);
       color: var(--preview-text, #111827);
       font-family: var(--preview-font-family, Inter, "PingFang SC", "Microsoft YaHei", sans-serif);
@@ -105,10 +106,11 @@ def build_preview_html(menu: dict[str, Any], *, default_width: int = 900) -> str
     }}
     .preview-bg-overlay {{ position: absolute; inset: 0; z-index: 0; pointer-events: none; background: rgba(15,23,42,var(--preview-bg-overlay,0)); }}
     .preview-card .kicker {{ color: var(--preview-primary, #7c3aed); }}
-    .preview-inner {{ position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); }}
+    .preview-inner {{ position: relative; z-index: 1; padding: 16px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); }}
     .preview-title {{ margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }}
     .preview-sections {{ display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }}
     .preview-section {{ padding: var(--preview-section-padding, 15px); border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.16); }}
+    .preview-section h3 {{ margin: 0 0 10px; }}
     .preview-items {{ display: grid; grid-template-columns: repeat(var(--preview-columns, 2), minmax(0, 1fr)); gap: var(--preview-card-gap, 10px); }}
     .preview-item {{ display: grid; grid-template-columns: 34px minmax(0, 1fr); gap: 10px; min-height: 78px; padding: 11px; border-radius: 13px; background: rgba(241,245,249,var(--preview-foreground-opacity, .94)); }}
     .preview-item.size-compact {{ grid-template-columns: 28px minmax(0, 1fr); min-height: 66px; padding: 8px; gap: 8px; }}

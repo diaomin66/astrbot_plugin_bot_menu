@@ -330,7 +330,7 @@ class MenuEditorSourceTests(unittest.TestCase):
             self.assertTrue((page_dir / module_name).is_file())
             self.assertIn(f'src="./{module_name}" defer', index_html)
 
-        self.assertIn('src="./app.js?v=20260621-bglock" defer', index_html)
+        self.assertIn('src="./app.js?v=20260621-bgparity" defer', index_html)
         self.assertNotIn('<script type="module" src="./app.js"', index_html)
         self.assertNotIn("await resolvePageBridge();", app_js.split("function initializeEditor", 1)[0])
         self.assertIn("function cloneData", app_js)
@@ -1004,6 +1004,8 @@ class MenuStorageTests(unittest.TestCase):
     def test_page_reload_does_not_realign_saved_background_to_top(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
         index_html = Path("pages/menu-editor/index.html").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        renderer_py = Path("services/renderer.py").read_text(encoding="utf-8")
         self.assertNotIn("fitBackgroundToCover(false)", app_js)
         self.assertIn("fitBackgroundToCover(true)", app_js)
         self.assertIn("function backgroundTransformSnapshot(style)", app_js)
@@ -1016,7 +1018,14 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("function ensureStyle(menu)", app_js)
         self.assertIn("Object.entries(defaults).forEach", app_js)
         self.assertNotIn("menu.style = { ...defaultStyle(), ...(menu.style || {}) };", app_js)
-        self.assertIn("./app.js?v=20260621-bglock", index_html)
+        self.assertIn("./app.js?v=20260621-bgparity", index_html)
+        self.assertIn('style="${escapeAttr(previewStyle)}"', app_js)
+        self.assertIn('Inter, "PingFang SC", "Microsoft YaHei", sans-serif', app_js)
+        self.assertIn(".preview-title { margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }", css)
+        self.assertIn("font-size: 12px;", renderer_py)
+        self.assertIn("padding: 18px;", renderer_py)
+        self.assertIn("padding: 16px;", renderer_py)
+        self.assertIn(".preview-section h3 {{ margin: 0 0 10px; }}", renderer_py)
 
     def test_editor_preview_column_has_independent_scroll_pane(self):
         css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")

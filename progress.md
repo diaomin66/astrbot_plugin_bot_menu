@@ -131,3 +131,38 @@
 - `docs/page-editor-verification.md`：补充背景拖动期间不得替换 `menu.style` 对象的契约。
 - `progress.md`：追加本轮复查、修复、验证和回滚记录。
 - 回滚方式：`git checkout -- pages/menu-editor/app.js pages/menu-editor/index.html tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`。
+
+## 2026-06-21 - Task: 修复 Page 拖动背景保存后与实际渲染位置不一致
+### What was done
+- 重新复查 Page 背景拖动、保存 payload、后端 HTML 构造和浏览器实际计算链路，确认保存的 `background_image_x/y/width` 值会被后端读取，但 Page 预览与实际渲染使用的布局高度不一致。
+- 修复 Page 预览 `.preview-card` 内联 style 未转义的问题，避免默认字体栈中的双引号截断后续 `--preview-width` 等 CSS 变量，导致 Page 预览本身坐标系错误。
+- 将 Page 和后端渲染的关键布局规则对齐：默认字体栈、标题字号、基础字号、外框 padding、内容层 padding、分组标题 margin，确保 `background_image_y` 百分比按同一容器高度计算。
+- 补充回归断言，锁定 Page/后端背景坐标系一致性关键规则。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_page_reload_does_not_realign_saved_background_to_top -v`：通过。
+- `python -m unittest discover -s tests -v`：47 项通过。
+- `python -m compileall -q .`：通过。
+- 本机 Edge CDP 对同一菜单分别打开 Page 预览和后端 `build_preview_html`：修复前 Page 卡片高 `473px`、后端卡片高 `579px`，同样 `top:-37%` 实际偏移不同；修复后 Page 与后端均为 `592x482.390625`，背景图 left/top/width/height delta 全部为 0。
+- 本机 Edge CDP 端到端验证：在 Page 里真实 pointer 拖动背景并保存，保存 payload 为 `background_image_x=15, background_image_y=-12, background_image_width=180`；用该保存 payload 生成后端实际渲染 HTML 后，Page 与后端背景图 `left/top/width/height` delta 全部为 0。
+### Notes
+- `pages/menu-editor/app.js`：Page 预览卡片 style 属性改为转义输出，并将无自定义字体时的默认预览字体栈与后端渲染保持一致。
+- `pages/menu-editor/style.css`：固定 Page 预览标题字号，避免随编辑器窗口 `vw` 变化造成与实际渲染高度不一致。
+- `services/renderer.py`：对齐实际渲染的基础字号、kicker、外框/内层 padding 和分组标题 margin，使背景百分比坐标使用与 Page 一致的容器高度。
+- `services/render_cache.py`：提升渲染缓存版本，确保旧布局生成的图片缓存不会继续被复用。
+- `pages/menu-editor/index.html`：更新 `app.js` 版本参数，避免 WebView 继续缓存旧预览逻辑。
+- `tests/test_menu_services.py`：补充 Page/后端坐标系一致性源码断言。
+- `docs/page-editor-verification.md`：补充 Page 与实际渲染必须共享影响背景百分比坐标的布局规则。
+- `progress.md`：追加本轮复查、修复、验证和回滚记录。
+- 回滚方式：`git checkout -- pages/menu-editor/app.js pages/menu-editor/style.css pages/menu-editor/index.html services/renderer.py services/render_cache.py tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`。
+
+## 2026-06-21 - Task: 同步 Page 背景位置修复到本地 AstrBot
+### What was done
+- 将 Page 背景位置一致性修复同步到本机 AstrBot 插件目录，并逐文件校验源仓库与本机插件 SHA256 一致。
+- 清理本机插件目录内旧 `__pycache__`，避免运行时继续加载旧 Python 字节码。
+- 复核本机插件数据的渲染缓存状态，确认缓存版本提升后现有菜单都会进入 `missing` 状态，下一次渲染会重新生成新布局图片。
+### Testing
+- SHA256 校验 8 个同步文件全部一致：`pages/menu-editor/app.js`、`pages/menu-editor/style.css`、`pages/menu-editor/index.html`、`services/renderer.py`、`services/render_cache.py`、`tests/test_menu_services.py`、`docs/page-editor-verification.md`、`progress.md`。
+- 本机插件数据 `render_cache.json` 复核：`default`、`menu`、`menu_2`、`menu_3` 在新缓存指纹下均返回 `missing`，旧图不会被继续命中。
+### Notes
+- `progress.md`：追加本机 AstrBot 同步、缓存复核和回滚记录。
+- 回滚方式：`git checkout -- progress.md`；如需回滚本机 AstrBot 同步，把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`，并删除本机插件 `render_cache.json` 中本轮生成的新缓存条目或等待重新渲染覆盖。

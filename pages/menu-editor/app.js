@@ -1436,7 +1436,7 @@ function renderPreview() {
     `--preview-text:${style.text_color || "#111827"}`,
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
-    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : "inherit"}`,
+    `--preview-font-family:${style.font_family ? `"${String(style.font_family).replace(/"/g, "")}", sans-serif` : 'Inter, "PingFang SC", "Microsoft YaHei", sans-serif'}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
@@ -1459,7 +1459,7 @@ function renderPreview() {
         </div>` : ""}` : "";
   els.preview.innerHTML = `
     <div class="preview-fit" style="--preview-scale:1">
-      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${previewStyle}">
+      <div class="preview-card ${state.backgroundEditMode ? "is-bg-editing" : ""} ${state.batchSelectMode ? "is-batch-selecting" : ""}" data-edit="style" data-layer-label="${state.batchSelectMode ? "批量选择卡片" : "主题 / 背景 / 布局"}" style="${escapeAttr(previewStyle)}">
         ${backgroundMarkup}
         <div class="preview-bg-overlay"></div>
         <div class="preview-inner" data-edit="menu" data-layer-label="基础信息 / 全部分组">

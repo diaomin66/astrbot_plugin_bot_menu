@@ -246,7 +246,7 @@ input:focus, select:focus, textarea:focus { border-color: var(--primary); box-sh
 .preview-inner { position: relative; z-index: 1; padding: 22px; border-radius: inherit; background: rgba(255,255,255,var(--preview-foreground-opacity, .92)); box-shadow: 0 16px 34px rgba(15,23,42,.10); cursor: pointer; border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.18); transition: box-shadow .18s ease, transform .18s ease; }
 .preview-inner:hover { box-shadow: 0 0 0 2px rgba(6,182,212,.28), 0 16px 34px rgba(15,23,42,.10); }
 .preview-card .kicker { color: var(--preview-primary, #7c3aed); }
-.preview-title { margin: 12px 0 4px; font-size: clamp(28px, 4vw, 38px); line-height: 1.1; }
+.preview-title { margin: 12px 0 4px; font-size: 34px; line-height: 1.1; }
 .preview-sub, .preview-desc, .preview-footer { color: var(--preview-muted, #6b7280); }
 .preview-sections { display: grid; gap: var(--preview-section-gap, 14px); margin-top: var(--preview-section-gap, 14px); }
 .preview-section { position: relative; padding: var(--preview-section-padding, 15px); border-radius: 18px; background: color-mix(in srgb, var(--preview-card, #fff) calc(var(--preview-foreground-opacity, .92) * 100%), transparent); cursor: pointer; border: calc(var(--preview-border-strength, 1) * 1px) solid rgba(148,163,184,.16); transition: box-shadow .18s ease, transform .18s ease; }
