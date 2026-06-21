@@ -783,7 +783,7 @@ class MenuStorageTests(unittest.TestCase):
         changelog = Path("CHANGELOG.md").read_text(encoding="utf-8")
         version = re.search(r"^version:\s*(.+)$", metadata, re.MULTILINE).group(1)
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
-        self.assertEqual(version, "0.4.0")
+        self.assertEqual(version, "0.5.0")
         self.assertEqual(author, "雪碧bir")
         self.assertIn(f"当前版本：`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)

@@ -207,3 +207,37 @@
 - `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`：同步本轮修改后的插件文件。
 - `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugin_data\astrbot_plugin_bot_menu\fonts`：创建/确认用户字体目录。
 - 回滚方式：重新从目标分支同步上一提交文件，或在本地 AstrBot 插件目录执行相同文件的反向拷贝；用户字体目录为空目录时可直接删除。
+
+## 2026-06-21 - Task: 准备 0.5.0 发布版本
+### What was done
+- 将插件版本号从 `0.4.0` 更新为 `0.5.0`。
+- 整理最近 PR 内所有关键更新，新增 `0.5.0` 更新日志，覆盖 Page 保存链路、实际渲染一致性、背景坐标修复、缓存刷新和字体系统。
+- 更新 README 当前版本、0.5.0 发布重点、用户字体说明和数据目录清单。
+- 保持中文内容使用 UTF-8 写入，并复查 README/CHANGELOG 头部中文显示正常，避免新增问号乱码。
+### Testing
+- `node --check pages/menu-editor/app.js`
+- `python -m unittest discover -s tests -v`（50 tests OK）
+- `python -m compileall -q .`
+- `git diff --check`
+### Notes
+- `metadata.yaml`：发布版本号更新为 `0.5.0`。
+- `CHANGELOG.md`：新增 `0.5.0 - 2026-06-21` 发布条目。
+- `README.md`：更新当前版本、发布重点、用户字体说明和数据目录。
+- `tests/test_menu_services.py`：同步发布元数据一致性测试中的版本断言。
+- `progress.md`：记录本轮发布准备和验证结果。
+- 回滚方式：执行 `git revert <本轮提交>`；未提交前可用 `git checkout -- metadata.yaml CHANGELOG.md README.md tests/test_menu_services.py progress.md`。
+
+## 2026-06-21 - Task: 同步 0.5.0 发布文件到本地 AstrBot
+### What was done
+- 将 `0.5.0` 发布准备相关文件同步到本地 AstrBot 插件目录。
+- 保持本地插件的版本号、README、更新日志和测试断言与当前仓库一致。
+### Testing
+- SHA256 校验 5 个同步文件，源仓库与本地 AstrBot 插件目录完全一致。
+- 清理本地插件目录下 `__pycache__`。
+### Notes
+- `CHANGELOG.md`：同步 0.5.0 更新日志。
+- `README.md`：同步 0.5.0 发布说明与字体目录说明。
+- `metadata.yaml`：同步版本号 `0.5.0`。
+- `tests/test_menu_services.py`：同步版本一致性测试。
+- `progress.md`：同步发布准备与本地同步记录。
+- 回滚方式：重新从上一提交同步这些文件，或在目标插件目录还原对应文件。
