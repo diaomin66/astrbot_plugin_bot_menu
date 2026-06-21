@@ -23,7 +23,7 @@ from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
-from services.typst_renderer import build_typst_document, render_menu_via_typst
+from services.typst_renderer import _css_color_components, _css_color_expr, build_typst_document, render_menu_via_typst
 
 
 class _PreviewCardStyleParser(HTMLParser):
@@ -206,6 +206,11 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("snapshot.render_snapshot = buildRenderSnapshotForTypst(snapshot);", app_js)
         self.assertIn("function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
         self.assertIn('renderer: "typst-direct"', app_js)
+        self.assertIn('version: 2', app_js)
+        self.assertIn("visual_scale", app_js)
+        self.assertIn("device_pixel_ratio", app_js)
+        self.assertIn("letter_spacing", app_js)
+        self.assertIn("padding: sideBox", app_js)
         self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
@@ -482,6 +487,73 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("Generated from Page render_snapshot", typst_source)
             self.assertIn("width: 820pt", typst_source)
             self.assertIn("Saved Title", typst_source)
+            self.assertIn("tracking: 0pt", typst_source)
+            self.assertIn("leading: 4pt", typst_source)
+
+    def test_typst_snapshot_skips_invisible_boxes_and_preserves_rgba_alpha(self):
+        menu = normalize_menu(
+            {
+                "id": "snapshot-alpha",
+                "title": "Alpha",
+                "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 320,
+                    "height": 180,
+                    "boxes": [
+                        {
+                            "role": "card",
+                            "rect": {"x": 0, "y": 0, "width": 320, "height": 180},
+                            "background": "rgba(241, 245, 249, 0.94)",
+                        },
+                        {
+                            "role": "transparent",
+                            "rect": {"x": 10, "y": 10, "width": 80, "height": 40},
+                            "background": "rgba(0, 0, 0, 0)",
+                            "border_color": "transparent",
+                            "border_width": 0,
+                        },
+                        {
+                            "role": "gradient-only",
+                            "rect": {"x": 20, "y": 20, "width": 80, "height": 40},
+                            "background": "linear-gradient(red, blue)",
+                            "border_color": "transparent",
+                            "border_width": 0,
+                        },
+                    ],
+                    "texts": [
+                        {
+                            "role": "title",
+                            "text": "像素级文字",
+                            "rect": {"x": 24, "y": 32, "width": 200, "height": 48},
+                            "font_size": 20,
+                            "line_height": 26,
+                            "font_weight": "700",
+                            "font_family": ["Microsoft YaHei"],
+                            "letter_spacing": 1.5,
+                            "padding": {"top": 2, "right": 3, "bottom": 4, "left": 5},
+                            "color": "rgb(15, 23, 42)",
+                        }
+                    ],
+                },
+            }
+        )
+
+        self.assertEqual(menu["render_snapshot"]["version"], 2)
+        source = build_typst_document(menu)
+        self.assertIn('rgb("#f1f5f9").transparentize(6%)', source)
+        self.assertNotIn("dx: 10pt, dy: 10pt", source)
+        self.assertNotIn("dx: 20pt, dy: 20pt", source)
+        self.assertIn("dx: 29pt, dy: 34pt", source)
+        self.assertIn("width: 192pt", source)
+        self.assertIn("tracking: 1.5pt", source)
+        self.assertIn("leading: 6pt", source)
+
+    def test_typst_css_color_parser_keeps_transparency_from_page(self):
+        self.assertEqual(_css_color_expr("rgba(241,245,249,0.94)"), 'rgb("#f1f5f9").transparentize(6%)')
+        self.assertEqual(_css_color_components("rgba(0,0,0,0)"), ("#000000", 0.0))
+        self.assertEqual(_css_color_components("linear-gradient(red, blue)", fallback_alpha=0), ("#000000", 0.0))
 
     def test_storage_resolves_aliases_and_restores_soft_deleted_menu(self):
         with tempfile.TemporaryDirectory() as tmp:

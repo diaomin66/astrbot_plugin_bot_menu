@@ -15,7 +15,7 @@
     "description": "图片清晰度倍率",
     "type": "int",
     "default": 4,
-    "hint": "Playwright/browser 截图和 Pillow 降级渲染的输出倍率，范围建议 2-4；4 最清晰但图片文件更大。"
+    "hint": "Playwright/browser 截图、Typst PNG 输出和 Pillow 降级渲染的输出倍率，范围建议 2-4；4 最清晰但图片文件更大。"
   },
   "render_mode": {
     "description": "菜单图片渲染模式",

@@ -351,3 +351,27 @@
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/menu_model.py services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
 
+
+## 2026-06-21 - Task: Refine Typst snapshot fidelity and black-card prevention
+### What was done
+- Upgraded Page's Typst `render_snapshot` to v2 with unscaled CSS-pixel geometry, capture scale, device pixel ratio, padding, letter spacing, font style, transform metadata, background metadata, box shadow metadata, and image filter metadata.
+- Adjusted Typst snapshot rendering to skip fully transparent or unsupported CSS-only boxes instead of drawing black fills, while preserving real RGBA alpha from Page colors.
+- Improved text restoration by applying saved padding offsets, letter spacing, line leading, font style, opacity, and computed font-family stacks; cached Typst font-family lookup per font file to avoid repeated scans.
+- Updated docs and config hints to describe browser-free Typst snapshot rendering, v2 snapshot fidelity fields, transparency handling, and Typst output scaling.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 58 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Snapshot smoke render compiled a v2 `render_snapshot` directly through Typst to a valid 320x180 PNG; sampled card pixel was `(241, 244, 249, 240)`, confirming the transparent layer did not turn the card black.
+
+### Notes
+- `pages/menu-editor/app.js`: saves more complete Page-computed geometry and typography data for Typst, normalized out of preview zoom/scale.
+- `services/typst_renderer.py`: skips invisible boxes, preserves RGBA alpha, applies saved text metrics, and caches Typst font-family resolution.
+- `services/menu_model.py`: preserves v2 Typst snapshots instead of forcing every snapshot back to v1.
+- `tests/test_menu_services.py`: adds regression coverage for v2 snapshot fields, transparent-box skipping, RGBA conversion, and text metric emission.
+- `README.md`: documents the refined browser-free Typst snapshot behavior and output scaling.
+- `docs/typst-renderer.md`: documents v2 snapshot contract, font cache behavior, and transparency rules.
+- `_conf_schema.json`: clarifies that `render_scale` also applies to Typst PNG output.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py services/menu_model.py tests/test_menu_services.py README.md docs/typst-renderer.md _conf_schema.json progress.md`; after merge, revert the final commit and resync the plugin directory.

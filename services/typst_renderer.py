@@ -25,6 +25,7 @@ CARD_MIN_HEIGHTS = {
     "large": 112,
     "banner": 118,
 }
+_FONT_FAMILY_CACHE: dict[str, list[str]] = {}
 
 
 def render_menu_via_typst(
@@ -200,13 +201,21 @@ def _snapshot_box(element: dict[str, Any]) -> str:
     if not rect:
         return ""
     x, y, width, height = rect
-    fill = _css_color_expr(element.get("background"), opacity=element.get("opacity", 1))
+    fill_color, fill_alpha = _css_color_components(
+        element.get("background"),
+        opacity=element.get("opacity", 1),
+        fallback_alpha=0,
+    )
     stroke_width = _clamp_float(element.get("border_width"), default=0, minimum=0, maximum=20)
+    stroke_color, stroke_alpha = _css_color_components(element.get("border_color"), fallback_alpha=0)
+    if fill_alpha <= 0 and (stroke_width <= 0 or stroke_alpha <= 0):
+        return ""
+    fill = f", fill: {_color_expr(fill_color, fill_alpha)}" if fill_alpha > 0 else ""
     stroke = ""
-    if stroke_width > 0:
-        stroke = f", stroke: (paint: {_css_color_expr(element.get('border_color'))}, thickness: {stroke_width:g}pt)"
+    if stroke_width > 0 and stroke_alpha > 0:
+        stroke = f", stroke: (paint: {_color_expr(stroke_color, stroke_alpha)}, thickness: {stroke_width:g}pt)"
     radius = _clamp_float(element.get("border_radius"), default=0, minimum=0, maximum=200)
-    return f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, rect(width: {width:g}pt, height: {height:g}pt, radius: {radius:g}pt, fill: {fill}{stroke}))"
+    return f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, rect(width: {width:g}pt, height: {height:g}pt, radius: {radius:g}pt{fill}{stroke}))"
 
 
 def _snapshot_image(element: dict[str, Any], work_dir: Path | None) -> str:
@@ -226,16 +235,31 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
     if not rect or text == "":
         return ""
     x, y, width, height = rect
+    padding = _snapshot_sides(element.get("padding"))
+    if padding:
+        top, right, bottom, left = padding
+        x += left
+        y += top
+        width = max(1, width - left - right)
+        height = max(1, height - top - bottom)
     font_size = _clamp_float(element.get("font_size"), default=12, minimum=1, maximum=200)
     line_height = _clamp_float(element.get("line_height"), default=font_size * 1.2, minimum=1, maximum=300)
-    fill = _css_color_expr(element.get("color"), opacity=element.get("opacity", 1))
+    color, alpha = _css_color_components(element.get("color"), opacity=element.get("opacity", 1))
+    if alpha <= 0:
+        return ""
+    fill = _color_expr(color, alpha)
     weight = _typst_weight(element.get("font_weight"))
     families = element.get("font_family") if isinstance(element.get("font_family"), list) else []
     font_stack = _typst_snapshot_font_stack(families, font_registry=font_registry)
     align = "right" if str(element.get("text_align") or "").lower() == "right" else "left"
+    tracking = _clamp_float(element.get("letter_spacing"), default=0, minimum=-20, maximum=80)
+    leading = max(0.0, line_height - font_size)
+    style = str(element.get("font_style") or "").strip().lower()
+    style_arg = f", style: {_typst_str(style)}" if style in {"italic", "oblique"} else ""
     content = (
-        f"set text(font: {font_stack}, size: {font_size:g}pt, fill: {fill}, weight: {weight}, top-edge: \"bounds\", bottom-edge: \"bounds\");"
-        f"set par(leading: 0pt, justify: false);"
+        f"set text(font: {font_stack}, size: {font_size:g}pt, fill: {fill}, weight: {weight}, "
+        f"tracking: {tracking:g}pt, top-edge: \"bounds\", bottom-edge: \"bounds\"{style_arg});"
+        f"set par(leading: {leading:g}pt, justify: false);"
         f"show text: set block(above: 0pt, below: 0pt);"
         f"align({align}, text({_typst_str(text)}))"
     )
@@ -388,6 +412,19 @@ def _snapshot_rect(element: dict[str, Any]) -> tuple[float, float, float, float]
     return (round(x, 3), round(y, 3), round(width, 3), round(height, 3))
 
 
+def _snapshot_sides(value: Any) -> tuple[float, float, float, float] | None:
+    if not isinstance(value, dict):
+        return None
+    try:
+        top = _clamp_float(value.get("top"), default=0, minimum=0, maximum=400)
+        right = _clamp_float(value.get("right"), default=0, minimum=0, maximum=400)
+        bottom = _clamp_float(value.get("bottom"), default=0, minimum=0, maximum=400)
+        left = _clamp_float(value.get("left"), default=0, minimum=0, maximum=400)
+    except (TypeError, ValueError):
+        return None
+    return (top, right, bottom, left)
+
+
 def _estimated_item_height(item: dict[str, Any], width: float) -> float:
     size = _card_size(item.get("card_size"))
     defaults = _default_item_fonts(size)
@@ -474,6 +511,10 @@ def _typst_snapshot_font_stack(values: list[Any], *, font_registry: FontRegistry
 
 
 def _typst_font_families_for_file(path: Path) -> list[str]:
+    key = str(path.resolve())
+    cached = _FONT_FAMILY_CACHE.get(key)
+    if cached is not None:
+        return cached
     try:
         import typst
     except ImportError:
@@ -481,12 +522,15 @@ def _typst_font_families_for_file(path: Path) -> list[str]:
     try:
         target = path.resolve()
         fonts = typst.Fonts(font_paths=[str(target.parent)])
-        return [
+        families = [
             font.family
             for font in fonts.fonts()
             if getattr(font, "path", "") and Path(str(font.path)).resolve() == target
         ]
+        _FONT_FAMILY_CACHE[key] = families
+        return families
     except Exception:
+        _FONT_FAMILY_CACHE[key] = []
         return []
 
 
@@ -514,27 +558,43 @@ def _color_expr(value: str, opacity: float = 1.0) -> str:
 
 
 def _css_color_expr(value: Any, opacity: Any = 1.0) -> str:
+    color, alpha = _css_color_components(value, opacity=opacity)
+    return _color_expr(color, alpha)
+
+
+def _css_color_components(
+    value: Any,
+    opacity: Any = 1.0,
+    *,
+    fallback: str = "#000000",
+    fallback_alpha: float = 1.0,
+) -> tuple[str, float]:
     raw = str(value or "").strip()
     try:
         opacity_value = max(0.0, min(1.0, float(opacity)))
     except (TypeError, ValueError):
         opacity_value = 1.0
-    if not raw or raw == "transparent":
-        return _color_expr("#000000", 0)
+    if not raw or raw.lower() == "transparent":
+        return (fallback, 0.0)
     if raw.startswith("#"):
-        return _color_expr(raw, opacity_value)
+        color = raw
+        if re.fullmatch(r"#[0-9A-Fa-f]{3}", color):
+            color = "#" + "".join(ch * 2 for ch in color[1:])
+        if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
+            return (fallback, max(0.0, min(1.0, fallback_alpha)) * opacity_value)
+        return (color, opacity_value)
     match = re.fullmatch(r"rgba?\(([^)]+)\)", raw.replace(" ", ""))
     if not match:
-        return _color_expr("#000000", opacity_value)
+        return (fallback, max(0.0, min(1.0, fallback_alpha)) * opacity_value)
     parts = match.group(1).split(",")
     if len(parts) < 3:
-        return _color_expr("#000000", opacity_value)
+        return (fallback, max(0.0, min(1.0, fallback_alpha)) * opacity_value)
     try:
         r, g, b = [max(0, min(255, int(float(part)))) for part in parts[:3]]
         alpha = float(parts[3]) if len(parts) >= 4 else 1.0
     except ValueError:
-        return _color_expr("#000000", opacity_value)
-    return _color_expr(f"#{r:02x}{g:02x}{b:02x}", opacity_value * max(0.0, min(1.0, alpha)))
+        return (fallback, max(0.0, min(1.0, fallback_alpha)) * opacity_value)
+    return (f"#{r:02x}{g:02x}{b:02x}", opacity_value * max(0.0, min(1.0, alpha)))
 
 
 def _typst_weight(value: Any) -> int | str:

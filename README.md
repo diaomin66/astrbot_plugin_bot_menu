@@ -80,8 +80,8 @@ AstrBot/data/plugins/astrbot_plugin_bot_menu/
 
 - `default_menu_id`：默认菜单方案 ID。
 - `render_width`：默认渲染宽度。
-- `render_scale`：图片清晰度倍率，默认 `4`，用于 Playwright/browser 截图和 Pillow 降级渲染。
-- `render_mode`：菜单图片渲染模式，默认 `browser`（优先 Playwright/Chromium，失败后探测 Windows/macOS/Linux 系统浏览器），可选 `auto`、`remote` 或 `pillow`。
+- `render_scale`：图片清晰度倍率，默认 `4`，用于 Playwright/browser 截图、Typst PNG 输出和 Pillow 降级渲染。
+- `render_mode`：菜单图片渲染模式，默认 `browser`（优先 Playwright/Chromium，失败后探测 Windows/macOS/Linux 系统浏览器），可选 `auto`、`remote`、`pillow` 或 `typst`。
 - `show_render_error_detail`：调试时在聊天侧显示详细渲染错误。
 
 插件数据保存在：
@@ -105,7 +105,7 @@ data/plugin_data/astrbot_plugin_bot_menu/fonts/
 
 Set `render_mode` to `typst` to use the new Typst renderer. This mode coexists with the original browser screenshot path: switching back to `browser` restores the existing Playwright/Chromium HTML screenshot renderer.
 
-Typst mode is browser-free: Page saves a fine-grained `render_snapshot` containing preview geometry, text metrics, colors, boxes, images and font stacks, and Typst compiles that snapshot directly to PNG. It also passes the plugin `fonts/` directory to Typst so selected custom fonts can be resolved by the Typst engine. Old menus without `render_snapshot` still use fallback Typst layout; reopen and save them in Page to generate the pixel-oriented snapshot. `render_scale` still controls the final image resolution.
+Typst mode is browser-free: Page saves a fine-grained `render_snapshot` containing preview geometry, capture scale, text metrics, padding, letter spacing, colors, boxes, images and font stacks, and Typst compiles that snapshot directly to PNG. Transparent preview-only layers are skipped instead of being converted to black fills, while real RGBA card colors keep their alpha. It also passes the plugin `fonts/` directory to Typst so selected custom fonts can be resolved by the Typst engine. Old menus without `render_snapshot` still use fallback Typst layout; reopen and save them in Page to generate the pixel-oriented snapshot. `render_scale` still controls the final image resolution.
 
 ## 更新日志
 

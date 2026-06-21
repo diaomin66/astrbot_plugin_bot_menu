@@ -1758,16 +1758,29 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
   if (!card) return null;
   const cardRect = card.getBoundingClientRect();
   if (!cardRect.width || !cardRect.height) return null;
+  const visualScale = card.offsetWidth ? cardRect.width / card.offsetWidth : 1;
+  const scale = visualScale > 0 ? visualScale : 1;
   const style = ensureStyle(menuSnapshot);
   const layout = previewLayout(menuSnapshot);
   const rounded = (value) => Math.round(Number(value || 0) * 1000) / 1000;
+  const pixelLength = (value) => {
+    const raw = String(value || "").trim();
+    if (!raw || raw === "normal") return 0;
+    return rounded(parseFloat(raw) || 0);
+  };
+  const sideBox = (computed, prefix) => ({
+    top: rounded(parseFloat(computed[`${prefix}Top`]) || 0),
+    right: rounded(parseFloat(computed[`${prefix}Right`]) || 0),
+    bottom: rounded(parseFloat(computed[`${prefix}Bottom`]) || 0),
+    left: rounded(parseFloat(computed[`${prefix}Left`]) || 0),
+  });
   const relRect = (node) => {
     const rect = node.getBoundingClientRect();
     return {
-      x: rounded(rect.left - cardRect.left),
-      y: rounded(rect.top - cardRect.top),
-      width: rounded(rect.width),
-      height: rounded(rect.height),
+      x: rounded((rect.left - cardRect.left) / scale),
+      y: rounded((rect.top - cardRect.top) / scale),
+      width: rounded(rect.width / scale),
+      height: rounded(rect.height / scale),
     };
   };
   const css = (node) => getComputedStyle(node);
@@ -1778,15 +1791,21 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
     return {
       type: "text",
       role,
-      text: node.textContent || "",
+      text: node.innerText || node.textContent || "",
       rect: relRect(node),
       font_size: rounded(parseFloat(computed.fontSize) || 12),
       line_height: rounded(parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) || 12),
       font_weight: computed.fontWeight || "400",
       font_family: fontFamilies(computed.fontFamily),
+      font_style: computed.fontStyle || "normal",
       color: computed.color || "#000000",
       opacity: rounded(parseFloat(computed.opacity) || 1),
       text_align: computed.textAlign || "left",
+      letter_spacing: pixelLength(computed.letterSpacing),
+      padding: sideBox(computed, "padding"),
+      white_space: computed.whiteSpace || "normal",
+      overflow_wrap: computed.overflowWrap || computed.wordWrap || "normal",
+      transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
       ...extra,
     };
   };
@@ -1797,10 +1816,13 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       type: "box",
       role,
       rect: relRect(node),
+      background_image: computed.backgroundImage || "none",
       background: computed.backgroundColor || "transparent",
+      box_shadow: computed.boxShadow || "none",
       border_color: computed.borderColor || "transparent",
       border_width: rounded(parseFloat(computed.borderWidth) || 0),
       border_radius: rounded(parseFloat(computed.borderTopLeftRadius) || 0),
+      padding: sideBox(computed, "padding"),
       opacity: rounded(parseFloat(computed.opacity) || 1),
       ...extra,
     };
@@ -1814,6 +1836,7 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       rect: relRect(node),
       src: node.getAttribute("src") || "",
       opacity: rounded(parseFloat(computed.opacity) || 1),
+      filter: computed.filter || "none",
     };
   };
 
@@ -1843,10 +1866,15 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
   ].filter(Boolean);
 
   return {
-    version: 1,
+    version: 2,
     renderer: "typst-direct",
-    width: rounded(cardRect.width),
-    height: rounded(cardRect.height),
+    width: rounded(cardRect.width / scale),
+    height: rounded(cardRect.height / scale),
+    capture: {
+      unit: "css-px",
+      visual_scale: rounded(scale),
+      device_pixel_ratio: rounded(window.devicePixelRatio || 1),
+    },
     layout: {
       width: layout.width,
       columns: layout.columns,
