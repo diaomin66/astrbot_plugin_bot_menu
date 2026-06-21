@@ -13,6 +13,7 @@
 - 样式变量安全修复：预览和渲染的内联 style 做属性转义，避免字体族中的引号截断每行卡片数、前景透明度、宽度等 CSS 变量。
 - 渲染缓存刷新增强：布局、背景、样式和字体变化都会进入缓存指纹，旧图不会继续命中。
 - 字体系统完善：运行数据目录自动提供 `fonts/`，用户可放入 `.ttf/.otf/.ttc/.woff/.woff2`，Page 按文件名或相对路径选择，实际渲染读取同一字体。
+- 浏览器依赖自动修复：检测到 Playwright 已安装但 Chromium 二进制缺失时，会自动执行一次 Chromium 安装并重试同款浏览器渲染。
 
 ## 效果图
 
@@ -49,7 +50,7 @@
 AstrBot/data/plugins/astrbot_plugin_bot_menu/
 ```
 
-插件本地 PNG 渲染依赖 `Pillow`、`playwright` 与 `jinja2`；AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。
+插件本地 PNG 渲染依赖 `Pillow`、`playwright` 与 `jinja2`；AstrBot 安装插件依赖时会读取 `requirements.txt` 自动安装。Playwright 的 Python 包不包含 Chromium 浏览器二进制，插件在首次本地浏览器渲染时若检测到 Chromium 缺失，会自动执行一次 `python -m playwright install chromium` 并重试渲染。
 
 ## 使用
 
@@ -98,7 +99,7 @@ data/plugin_data/astrbot_plugin_bot_menu/fonts/
 
 ## 渲染说明
 
-本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。
+本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若 Playwright 报出 Chromium 可执行文件不存在，插件会自动安装一次 Chromium 后重试。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。
 
 ## 更新日志
 

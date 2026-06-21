@@ -8,6 +8,8 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
+import threading
 import textwrap
 import zlib
 from datetime import datetime
@@ -15,6 +17,9 @@ from pathlib import Path
 from typing import Any
 
 from .fonts import FontRegistry
+
+_PLAYWRIGHT_INSTALL_LOCK = threading.Lock()
+_PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED = False
 
 
 def render_menu_image(
@@ -240,12 +245,35 @@ def render_menu_via_browser(
             device_scale_factor=scale,
         )
     except Exception as playwright_exc:
+        install_detail = ""
+        if _playwright_error_looks_like_missing_browser(playwright_exc):
+            installed, install_detail = _install_playwright_chromium()
+            if installed:
+                try:
+                    _render_menu_via_playwright(
+                        html_content,
+                        screenshot_path,
+                        width=width,
+                        height=height,
+                        device_scale_factor=scale,
+                    )
+                    if not screenshot_path.is_file():
+                        raise RuntimeError("Playwright did not create the screenshot file after Chromium auto-install")
+                    try:
+                        _crop_transparent_padding(output_path)
+                    except Exception:
+                        pass
+                    return str(output_path)
+                except Exception as retry_exc:  # noqa: BLE001 - keep system-browser fallback available
+                    install_detail = f"{install_detail}; retry failed: {_decode_process_output(str(retry_exc))}"
+
         browser_path = _find_browser_executable()
 
         if not browser_path:
+            install_hint = f" Playwright Chromium auto-install detail: {install_detail}" if install_detail else ""
             raise RuntimeError(
                 "No suitable Chromium browser found for local rendering. "
-                f"Playwright failed first: {_decode_process_output(str(playwright_exc))}"
+                f"Playwright failed first: {_decode_process_output(str(playwright_exc))}.{install_hint}"
             ) from playwright_exc
 
         cmd = _build_browser_screenshot_command(
@@ -287,6 +315,44 @@ def render_menu_via_browser(
         pass
 
     return str(output_path)
+
+
+def _playwright_error_looks_like_missing_browser(error: Exception) -> bool:
+    message = str(error).casefold()
+    if not message:
+        return False
+    missing_markers = (
+        "executable doesn't exist",
+        "executable does not exist",
+        "browser_type.launch",
+        "please run the following command",
+    )
+    browser_markers = ("ms-playwright", "playwright install", "chromium", "chrome-linux")
+    return any(marker in message for marker in missing_markers) and any(marker in message for marker in browser_markers)
+
+
+def _install_playwright_chromium() -> tuple[bool, str]:
+    global _PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED
+    with _PLAYWRIGHT_INSTALL_LOCK:
+        if _PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED:
+            return False, "auto-install was already attempted in this process"
+        _PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED = True
+
+        cmd = [sys.executable, "-m", "playwright", "install", "chromium"]
+        try:
+            completed = subprocess.run(cmd, check=True, capture_output=True, timeout=300)
+        except subprocess.CalledProcessError as exc:
+            stderr = _decode_process_output(exc.stderr)
+            stdout = _decode_process_output(exc.stdout)
+            return False, stderr or stdout or str(exc)
+        except subprocess.TimeoutExpired:
+            return False, "python -m playwright install chromium timed out"
+        except Exception as exc:  # noqa: BLE001 - dependency repair should report the real failure
+            return False, str(exc)
+
+        stderr = _decode_process_output(completed.stderr)
+        stdout = _decode_process_output(completed.stdout)
+        return True, stderr or stdout or "Chromium installed"
 
 
 def _render_menu_via_playwright(

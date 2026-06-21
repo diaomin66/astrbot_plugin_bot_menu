@@ -241,3 +241,24 @@
 - `tests/test_menu_services.py`：同步版本一致性测试。
 - `progress.md`：同步发布准备与本地同步记录。
 - 回滚方式：重新从上一提交同步这些文件，或在目标插件目录还原对应文件。
+
+## 2026-06-21 - Task: Fix missing Playwright Chromium cache render failure
+### What was done
+- 定位 Page 保存后“缓存生成失败”的根因：`requirements.txt` 只能安装 Playwright Python 包，不能自动下载 Chromium 浏览器二进制，Linux 环境会在本地浏览器渲染时找不到 `ms-playwright` 下的可执行文件。
+- 在浏览器渲染入口增加缺失 Chromium 的识别与自动修复：检测到 Playwright Chromium 可执行文件缺失时，自动执行一次 `python -m playwright install chromium`，成功后立即用同一套 Chromium 渲染链路重试。
+- 保留系统浏览器探测作为后续兜底；如果自动安装成功但重试仍失败，会继续探测系统 Edge/Chrome/Chromium/Brave，并在最终错误中保留安装/重试细节。
+- 更新 README、更新日志和 Page 验证文档，说明 Playwright Python 包与 Chromium 二进制的依赖关系，以及缺失时的自动补装行为。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_playwright_missing_browser_error_is_detected tests.test_menu_services.MenuStorageTests.test_playwright_chromium_installer_runs_playwright_install tests.test_menu_services.MenuStorageTests.test_browser_render_auto_installs_missing_playwright_chromium_once -v`
+- `python -m unittest discover -s tests -v`
+- `python -m compileall -q .`
+- `node --check pages/menu-editor/app.js`
+- `git diff --check`
+- UTF-8/中文保护检查：`README.md`、`CHANGELOG.md`、`docs/page-editor-verification.md`、`progress.md` 中问号串与替换字符命中数均为 0。
+### Notes
+- Modified `services/local_image.py`: 增加 Playwright Chromium 缺失识别、自动安装一次、安装后重试和错误细节透传。
+- Modified `tests/test_menu_services.py`: 增加缺失 Chromium 报错识别、自动安装命令和安装后重试的回归测试。
+- Modified `README.md`: 补充 Chromium 二进制自动补装说明和发布重点。
+- Modified `CHANGELOG.md`: 记录 Page 保存后因 Chromium 缺失导致缓存生成失败的修复。
+- Modified `docs/page-editor-verification.md`: 补充浏览器渲染依赖契约。
+- Rollback: revert this task's changes with `git checkout -- services/local_image.py tests/test_menu_services.py README.md CHANGELOG.md docs/page-editor-verification.md progress.md` before committing, or revert the eventual commit that contains this entry.
