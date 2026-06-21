@@ -14,6 +14,7 @@
 
 - 实际 `/menu` 图片渲染和 Page 预览共用同一个 HTML 构造器，渲染读取的字段必须来自已保存菜单文档。
 - 渲染 HTML 的内联样式必须经过 HTML 属性转义；字体族等包含引号的值不能截断后续 CSS 变量，否则每行卡片数、宽度、前景透明度会回退到默认值。
+- Playwright Python 包已安装但 Chromium 二进制缺失时，浏览器渲染入口必须先自动执行一次 `python -m playwright install chromium` 并重试，避免 Page 保存后直接进入“缓存生成失败”。
 - 浏览器渲染模式失败时不再静默回退到旧 Pillow 版外观；除非用户显式选择 `pillow` 模式，否则应暴露渲染错误，避免输出与 Page 预览不一致的图片。
 - 远程 HTML 渲染也使用 Page 预览同形 HTML，不再维护第二套独立菜单模板。
 

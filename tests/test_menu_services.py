@@ -14,6 +14,7 @@ from services.local_image import (
     _build_browser_screenshot_command,
     _crop_transparent_padding_png,
     _find_browser_executable,
+    _playwright_error_looks_like_missing_browser,
     image_file_to_data_url,
     render_menu_image,
 )
@@ -850,6 +851,69 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual(_find_browser_executable(), "/usr/bin/chromium-browser")
         self.assertIn("google-chrome", command_names)
         self.assertIn("chromium-browser", command_names)
+
+    def test_playwright_missing_browser_error_is_detected(self):
+        error = RuntimeError(
+            "BrowserType.launch: Executable doesn't exist at "
+            "/root/.cache/ms-playwright/chromium_headless_shell-1123/chrome-linux/headless_shell\n"
+            "Please run the following command: playwright install"
+        )
+        self.assertTrue(_playwright_error_looks_like_missing_browser(error))
+        self.assertFalse(_playwright_error_looks_like_missing_browser(RuntimeError("navigation timeout")))
+
+    def test_playwright_chromium_installer_runs_playwright_install(self):
+        import subprocess
+        from unittest.mock import patch
+
+        import services.local_image as local_image
+
+        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"installed", stderr=b"")
+        with (
+            patch.object(local_image, "_PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED", False),
+            patch.object(local_image.subprocess, "run", return_value=completed) as run,
+        ):
+            installed, detail = local_image._install_playwright_chromium()
+
+        self.assertTrue(installed)
+        self.assertIn("installed", detail)
+        run.assert_called_once_with(
+            [local_image.sys.executable, "-m", "playwright", "install", "chromium"],
+            check=True,
+            capture_output=True,
+            timeout=300,
+        )
+
+    def test_browser_render_auto_installs_missing_playwright_chromium_once(self):
+        from unittest.mock import patch
+
+        import services.local_image as local_image
+
+        calls: list[str] = []
+
+        def fake_playwright_render(_html, screenshot_path, **_kwargs):
+            calls.append(str(screenshot_path))
+            if len(calls) == 1:
+                raise RuntimeError(
+                    "BrowserType.launch: Executable doesn't exist at "
+                    "/root/.cache/ms-playwright/chromium_headless_shell-1123/chrome-linux/headless_shell"
+                )
+            Path(screenshot_path).write_bytes(b"\x89PNG\r\n\x1a\nfake")
+
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            html = build_preview_html(menu)
+            with (
+                patch.object(local_image, "_render_menu_via_playwright", side_effect=fake_playwright_render),
+                patch.object(local_image, "_install_playwright_chromium", return_value=(True, "installed")) as install,
+                patch.object(local_image, "_find_browser_executable") as find_browser,
+            ):
+                path = local_image.render_menu_via_browser(menu, tmp, html)
+                self.assertTrue(Path(path).is_file())
+
+        self.assertEqual(len(calls), 2)
+        install.assert_called_once()
+        find_browser.assert_not_called()
 
     def test_png_crop_fallback_removes_transparent_browser_tail_without_pillow(self):
         from PIL import Image
