@@ -333,6 +333,28 @@ function applyUserFontCss(css) {
   node.textContent = css || "";
 }
 
+async function waitForPreviewFonts() {
+  if (!document.fonts?.ready) return;
+  try {
+    await document.fonts.ready;
+  } catch (error) {
+    console.warn("failed to wait for preview fonts", error);
+  }
+}
+
+function userFontCssForRaster() {
+  const css = document.getElementById("botMenuUserFonts")?.textContent || "";
+  return css.replace(/font-display\s*:\s*swap\s*;/gi, "font-display:block;");
+}
+
+function userFontStyleElementForRaster() {
+  const css = userFontCssForRaster();
+  if (!css) return "";
+  const style = document.createElement("style");
+  style.textContent = css;
+  return new XMLSerializer().serializeToString(style);
+}
+
 function bindValueChange(control, handler) {
   if (!control) return;
   const events = control.type === "file" ? ["change"] : ["input", "change"];
@@ -1758,6 +1780,7 @@ async function buildRenderSnapshotForTypst(menuSnapshot) {
   if (!card) return null;
   const cardRect = card.getBoundingClientRect();
   if (!cardRect.width || !cardRect.height) return null;
+  await waitForPreviewFonts();
   const visualScale = card.offsetWidth ? cardRect.width / card.offsetWidth : 1;
   const scale = visualScale > 0 ? visualScale : 1;
   const style = ensureStyle(menuSnapshot);
@@ -2032,10 +2055,11 @@ async function previewRasterLayer(card, cardRect, scale, rounded) {
   clone.style.left = "0";
   clone.style.top = "0";
   clone.style.width = `${width}px`;
+  const fontStyle = userFontStyleElementForRaster();
   const html = new XMLSerializer().serializeToString(clone);
   const svg = [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
-    `<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${html}</div></foreignObject>`,
+    `<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${fontStyle}${html}</div></foreignObject>`,
     "</svg>",
   ].join("");
   const image = new Image();

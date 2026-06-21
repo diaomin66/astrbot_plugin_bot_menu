@@ -19,6 +19,7 @@ from .services import (
     RoutingStorage,
     build_preview_html,
     build_render_payload,
+    materialize_saved_preview_raster,
     preview_width_for_menu,
     render_menu_image,
     render_menu_via_browser,
@@ -176,7 +177,8 @@ class BotMenuPlugin(Star):
             existing = self.storage.get_menu_including_deleted(str(raw_menu.get("id", "")).strip())
             self.history.snapshot(existing, reason="save")
             menu = self.storage.save_menu(raw_menu)
-            self.render_coordinator.schedule(menu)
+            if not await self._store_saved_typst_preview_cache(menu):
+                self.render_coordinator.schedule(menu)
             return json_response({"menu": menu, "menus": self.storage.list_menus()})
         except MenuValidationError as exc:
             return error_response(str(exc), status_code=400)
@@ -348,6 +350,37 @@ class BotMenuPlugin(Star):
 
     async def _render_menu_for_cache(self, menu: dict[str, Any]) -> str:
         return await self._render_menu_uncached(menu)
+
+    async def _store_saved_typst_preview_cache(self, menu: dict[str, Any]) -> bool:
+        if self._render_cache_engine() != "typst":
+            return False
+        render_width = self._config_int("render_width", 900)
+        render_scale = max(1, min(4, self._config_int("render_scale", 4)))
+        source_path = await asyncio.to_thread(
+            materialize_saved_preview_raster,
+            menu,
+            self.storage.data_dir,
+            output_scale=render_scale,
+        )
+        if not source_path:
+            return False
+        try:
+            self.render_cache.store_rendered(
+                menu,
+                source_path,
+                render_width=render_width,
+                render_scale=render_scale,
+                render_engine="typst",
+            )
+            return True
+        except Exception:
+            logger.exception("Bot menu saved preview raster cache failed: %s", menu.get("id"))
+            return False
+        finally:
+            try:
+                Path(source_path).unlink(missing_ok=True)
+            except Exception:
+                logger.debug("failed to remove temporary saved preview raster: %s", source_path, exc_info=True)
 
     async def _render_menu_uncached(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
         menu = self._menu_with_resolved_assets(menu)

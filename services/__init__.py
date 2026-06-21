@@ -10,7 +10,7 @@ from .render_cache import MenuRenderCache
 from .render_coordinator import MenuRenderCoordinator
 from .routing_storage import RoutingStorage
 from .storage import MenuStorage
-from .typst_renderer import build_typst_document, render_menu_via_typst
+from .typst_renderer import build_typst_document, materialize_saved_preview_raster, render_menu_via_typst
 
 __all__ = [
     "AssetStorage",
@@ -26,6 +26,7 @@ __all__ = [
     "build_preview_html",
     "build_typst_document",
     "image_file_to_data_url",
+    "materialize_saved_preview_raster",
     "normalize_menu",
     "preview_width_for_menu",
     "render_menu_image",

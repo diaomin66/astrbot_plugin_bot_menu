@@ -23,7 +23,13 @@ from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
-from services.typst_renderer import _css_color_components, _css_color_expr, build_typst_document, render_menu_via_typst
+from services.typst_renderer import (
+    _css_color_components,
+    _css_color_expr,
+    build_typst_document,
+    materialize_saved_preview_raster,
+    render_menu_via_typst,
+)
 
 
 class _PreviewCardStyleParser(HTMLParser):
@@ -205,6 +211,7 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertLess(save_body.index("await buildMenuSaveSnapshot();"), save_body.index('bridge.apiPost("menus/save", { menu: menuSnapshot })'))
         self.assertIn("snapshot.render_snapshot = await buildRenderSnapshotForTypst(snapshot);", app_js)
         self.assertIn("function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
+        self.assertIn("await waitForPreviewFonts();", app_js)
         self.assertIn('renderer: "typst-direct"', app_js)
         self.assertIn('version: 2', app_js)
         self.assertIn("visual_scale", app_js)
@@ -223,6 +230,11 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("async function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
         self.assertIn("const previewRaster = await previewRasterLayer(card, cardRect, scale, rounded);", app_js)
         self.assertIn("async function previewRasterLayer(card, cardRect, scale, rounded)", app_js)
+        self.assertIn('document.getElementById("botMenuUserFonts")', app_js)
+        self.assertIn("function userFontCssForRaster()", app_js)
+        self.assertIn("font-display:block;", app_js)
+        self.assertIn("const fontStyle = userFontStyleElementForRaster();", app_js)
+        self.assertIn("document.fonts?.ready", app_js)
         self.assertIn("function inlineComputedStyles(source, target)", app_js)
         self.assertIn("raster: previewRaster", app_js)
 
@@ -721,6 +733,55 @@ class MenuStorageTests(unittest.TestCase):
         diff = ImageChops.difference(source_image, rendered)
         self.assertIsNone(diff.getbbox())
 
+    def test_saved_preview_raster_can_fill_typst_cache_without_compiling(self):
+        import base64
+        from io import BytesIO
+
+        from PIL import Image
+
+        source_image = Image.new("RGBA", (16, 8), (15, 23, 42, 255))
+        buffer = BytesIO()
+        source_image.save(buffer, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        menu = normalize_menu(
+            {
+                "id": "snapshot-cache-raster",
+                "title": "Cache Raster",
+                "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 16,
+                    "height": 8,
+                    "raster": {
+                        "type": "image",
+                        "role": "preview",
+                        "rect": {"x": 0, "y": 0, "width": 16, "height": 8},
+                        "src": data_url,
+                        "scale": 1,
+                    },
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            raster_path = materialize_saved_preview_raster(menu, tmp, output_scale=4)
+            self.assertIsNotNone(raster_path)
+            raster = Image.open(raster_path).convert("RGBA")
+            self.assertEqual(raster.size, (64, 32))
+            cache = MenuRenderCache(tmp)
+            cached = cache.store_rendered(
+                menu,
+                raster_path,
+                render_width=900,
+                render_scale=4,
+                render_engine="typst",
+            )
+            self.assertEqual(
+                cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="typst"),
+                cached,
+            )
+
     def test_typst_snapshot_prefers_saved_text_raster_layer(self):
         png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
         menu = normalize_menu(
@@ -1126,6 +1187,9 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("cached_path = self.render_coordinator.get_cached_path(menu)", main_py)
         self.assertIn("yield event.image_result(cached_path)", main_py)
         self.assertIn("self.render_coordinator.schedule(menu)", main_py)
+        self.assertIn("async def _store_saved_typst_preview_cache", main_py)
+        self.assertIn("if not await self._store_saved_typst_preview_cache(menu):", main_py)
+        self.assertIn("materialize_saved_preview_raster", main_py)
         self.assertLess(
             main_py.index("cached_path = self.render_coordinator.get_cached_path(menu)"),
             main_py.index("yield event.image_result(cached_path)"),

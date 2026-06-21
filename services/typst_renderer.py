@@ -75,6 +75,57 @@ def render_menu_via_typst(
         shutil.rmtree(work_dir, ignore_errors=True)
 
 
+def materialize_saved_preview_raster(
+    menu: dict[str, Any],
+    output_dir: str | Path,
+    *,
+    output_scale: int = 4,
+) -> str | None:
+    """Write the Page-saved full preview raster to a PNG cache source file.
+
+    The saved full-card raster is pixel-equivalent to the Typst full-raster
+    document path. Materializing it lets the render cache become ready
+    immediately after Page save while keeping Typst as the structural fallback.
+    """
+
+    snapshot = menu.get("render_snapshot") if isinstance(menu.get("render_snapshot"), dict) else {}
+    raster = snapshot.get("raster") if isinstance(snapshot.get("raster"), dict) else {}
+    rect = raster.get("rect") if isinstance(raster.get("rect"), dict) else {}
+    source = str(raster.get("src") or "")
+    if not source.startswith("data:image/"):
+        return None
+    try:
+        width = _clamp_int(snapshot.get("width") or rect.get("width"), default=0, minimum=0, maximum=4000)
+        height = _clamp_int(snapshot.get("height") or rect.get("height"), default=0, minimum=0, maximum=8000)
+        scale = _clamp_int(output_scale, default=4, minimum=1, maximum=4)
+        header, payload = source.split(",", 1)
+        if ";base64" not in header:
+            return None
+        raw = base64.b64decode(payload)
+        target_dir = Path(output_dir) / "rendered"
+        target_dir.mkdir(parents=True, exist_ok=True)
+        safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
+        digest = hashlib.sha1(raw + f":{width}x{height}@{scale}".encode("ascii")).hexdigest()[:12]
+        target = target_dir / f"{safe_id}-typst-raster-source-{digest}.png"
+        if width > 0 and height > 0:
+            try:
+                from PIL import Image
+                from io import BytesIO
+
+                image = Image.open(BytesIO(raw)).convert("RGBA")
+                expected_size = (max(1, width * scale), max(1, height * scale))
+                if image.size != expected_size:
+                    image = image.resize(expected_size, Image.Resampling.LANCZOS)
+                image.save(target, format="PNG")
+                return str(target)
+            except Exception:
+                pass
+        target.write_bytes(raw)
+        return str(target)
+    except Exception:
+        return None
+
+
 def build_typst_document(
     menu: dict[str, Any],
     *,

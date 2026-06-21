@@ -486,3 +486,46 @@
 - `docs/typst-renderer.md`: documents the pixel-diff regression gate.
 - `progress.md`: appends this verification record.
 - Rollback: before merge, run `git restore tests/test_menu_services.py docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Fill Typst cache directly from saved Page raster
+### What was done
+- Added a saved preview raster materialization helper that decodes the Page-saved full-card raster, scales it to the configured render scale, and writes a PNG cache source.
+- Updated menu save flow in `typst` mode to store that saved raster directly into the render cache before scheduling background compilation.
+- Kept background Typst compilation as fallback when the saved full-card raster is missing or invalid.
+- Updated docs to explain immediate cache fill from Page raster for the latency-critical chat path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 65 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Fast raster cache smoke check decoded, scaled, stored, and re-read a Typst cache entry in `7.055ms` total.
+
+### Notes
+- `services/typst_renderer.py`: adds `materialize_saved_preview_raster()` for safe Page-raster cache source generation.
+- `services/__init__.py`: exports the saved-raster materialization helper.
+- `main.py`: saves `typst` render cache directly from Page raster when available, otherwise schedules the existing renderer.
+- `tests/test_menu_services.py`: verifies raster materialization, cache fill, and save-flow fast-path source markers.
+- `README.md` and `docs/typst-renderer.md`: document immediate cache fill from saved full-card raster.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore main.py services/__init__.py services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Keep Page-saved Typst raster fonts synchronized
+### What was done
+- Fixed the Page save snapshot path so it waits for loaded preview fonts before measuring text geometry or capturing the full-card raster.
+- Embedded the same user `@font-face` CSS from `#botMenuUserFonts` into the SVG `foreignObject` used for the saved full-card raster.
+- Forced raster-only font CSS from `font-display: swap` to `font-display: block` so one-shot snapshot capture does not paint a fallback font before the selected font is ready.
+- Updated README and Typst renderer docs to explain the refreshed font-synchronized saved raster contract.
+
+### Testing
+- `python -m unittest tests.test_menu_services.MenuEditorSourceTests.test_save_uses_complete_state_snapshot_without_replaying_stale_modal_controls` -> regression failed before the fix on missing `waitForPreviewFonts`, then passed after the fix.
+- `python -m unittest tests.test_menu_services` -> 65 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+
+### Notes
+- `pages/menu-editor/app.js`: waits for preview fonts and embeds user font CSS into saved preview raster SVG captures.
+- `tests/test_menu_services.py`: verifies Page save snapshots include the font-ready wait and raster font CSS injection markers.
+- `README.md`: documents that Typst mode saves a font-synchronized Page preview raster.
+- `docs/typst-renderer.md`: documents the font synchronization contract and the need to resave after font changes.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
