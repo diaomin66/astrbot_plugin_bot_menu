@@ -1720,7 +1720,7 @@ async function saveMenu() {
     setStatus("请先修正表单错误，再保存菜单。", "error");
     return;
   }
-  const menuSnapshot = buildMenuSaveSnapshot();
+  const menuSnapshot = await buildMenuSaveSnapshot();
   try {
     updateSaveState("saving");
     setStatus("正在保存...");
@@ -1747,13 +1747,13 @@ async function saveMenu() {
   }
 }
 
-function buildMenuSaveSnapshot() {
+async function buildMenuSaveSnapshot() {
   const snapshot = cloneData(state.menu);
-  snapshot.render_snapshot = buildRenderSnapshotForTypst(snapshot);
+  snapshot.render_snapshot = await buildRenderSnapshotForTypst(snapshot);
   return snapshot;
 }
 
-function buildRenderSnapshotForTypst(menuSnapshot) {
+async function buildRenderSnapshotForTypst(menuSnapshot) {
   const card = els.preview?.querySelector(".preview-card");
   if (!card) return null;
   const cardRect = card.getBoundingClientRect();
@@ -1902,6 +1902,7 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       return null;
     }
   };
+  const previewRaster = await previewRasterLayer(card, cardRect, scale, rounded);
   const textElement = (node, role, extra = {}) => {
     if (!node) return null;
     const computed = css(node);
@@ -1929,7 +1930,7 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
       lines: textGeometry.lines,
       glyphs: textGeometry.glyphs,
-      raster: textRasterLayer(node, computed, textGeometry, rect, opacity),
+      raster: previewRaster ? null : textRasterLayer(node, computed, textGeometry, rect, opacity),
       ...extra,
     };
   };
@@ -1988,7 +1989,6 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
     ...Array.from(card.querySelectorAll(".preview-footer span")).map((node, index) => textElement(node, index === 0 ? "footer_left" : "footer_right")),
     textElement(card.querySelector(".preview-watermark"), "watermark"),
   ].filter(Boolean);
-
   return {
     version: 2,
     renderer: "typst-direct",
@@ -2015,7 +2015,70 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
     images: [imageElement(card.querySelector(".preview-bg-image"), "background")].filter(Boolean),
     boxes,
     texts,
+    raster: previewRaster,
   };
+}
+
+async function previewRasterLayer(card, cardRect, scale, rounded) {
+  const width = rounded(cardRect.width / scale);
+  const height = rounded(cardRect.height / scale);
+  if (!width || !height) return null;
+  const rasterScale = Math.max(2, Math.min(4, Math.ceil(window.devicePixelRatio || 1) * 2));
+  const clone = card.cloneNode(true);
+  inlineComputedStyles(card, clone);
+  clone.style.margin = "0";
+  clone.style.transform = "none";
+  clone.style.position = "static";
+  clone.style.left = "0";
+  clone.style.top = "0";
+  clone.style.width = `${width}px`;
+  const html = new XMLSerializer().serializeToString(clone);
+  const svg = [
+    `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">`,
+    `<foreignObject width="100%" height="100%"><div xmlns="http://www.w3.org/1999/xhtml">${html}</div></foreignObject>`,
+    "</svg>",
+  ].join("");
+  const image = new Image();
+  const url = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml;charset=utf-8" }));
+  try {
+    await new Promise((resolve, reject) => {
+      image.onload = resolve;
+      image.onerror = reject;
+      image.src = url;
+    });
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(width * rasterScale));
+    canvas.height = Math.max(1, Math.ceil(height * rasterScale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.scale(rasterScale, rasterScale);
+    context.drawImage(image, 0, 0, width, height);
+    return {
+      type: "image",
+      role: "preview",
+      rect: { x: 0, y: 0, width, height },
+      src: canvas.toDataURL("image/png"),
+      scale: rasterScale,
+      mode: "page-preview-raster",
+    };
+  } catch (error) {
+    console.warn("failed to capture preview raster layer", error);
+    return null;
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function inlineComputedStyles(source, target) {
+  if (!source || !target || source.nodeType !== Node.ELEMENT_NODE || target.nodeType !== Node.ELEMENT_NODE) return;
+  const computed = getComputedStyle(source);
+  const style = [];
+  for (let index = 0; index < computed.length; index += 1) {
+    const property = computed[index];
+    style.push(`${property}:${computed.getPropertyValue(property)};`);
+  }
+  target.setAttribute("style", style.join(""));
+  Array.from(source.children).forEach((child, index) => inlineComputedStyles(child, target.children[index]));
 }
 
 function createDefaultMenu(id) {

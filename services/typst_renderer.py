@@ -178,6 +178,12 @@ def _build_typst_snapshot_document(
 ) -> str:
     width = _clamp_float(snapshot.get("width"), default=900, minimum=1, maximum=4000)
     height = _clamp_float(snapshot.get("height"), default=1200, minimum=1, maximum=8000)
+    preview_raster = _snapshot_image(snapshot.get("raster"), work_dir) if isinstance(snapshot.get("raster"), dict) else ""
+    if preview_raster:
+        return f'''// Generated from Page render_snapshot. Typst renders directly from saved preview raster; no browser is used here.
+#set page(width: {width:g}pt, height: {height:g}pt, margin: 0pt, fill: none)
+{preview_raster}
+'''
     images = [_snapshot_image(element, work_dir) for element in snapshot.get("images", []) if isinstance(element, dict)]
     boxes = [element for element in snapshot.get("boxes", []) if isinstance(element, dict)]
     texts = [element for element in snapshot.get("texts", []) if isinstance(element, dict)]

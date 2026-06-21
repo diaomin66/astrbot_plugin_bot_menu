@@ -444,3 +444,27 @@
 - `docs/typst-renderer.md`: documents the updated high-fidelity text snapshot contract.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add full-card Page raster as Typst highest-fidelity path
+### What was done
+- Added asynchronous Page snapshot capture for a full-card preview raster layer, generated from the current preview card after computed styles are inlined.
+- Updated Typst snapshot rendering to prefer the saved full-card raster and skip structured boxes/text fallback when that raster exists.
+- Kept structured boxes, text geometry, grapheme boxes, and text raster fallback data for older or failed full-raster captures.
+- Optimized Page save snapshots so successful full-card raster capture avoids generating redundant per-text raster layers.
+- Updated README and Typst renderer docs to document the full-card raster as the highest-fidelity browser-free Typst render-time path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 63 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst full-card raster smoke render compiled a valid 300x120 PNG and confirmed fallback black box/text content was not emitted in the Typst source.
+- Cache-hit smoke check returned the cached Typst PNG path in `0.861ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: makes save snapshot building asynchronous, captures a full-card preview raster, and skips redundant text rasters when the full-card raster succeeds.
+- `services/typst_renderer.py`: uses the saved full-card preview raster before boxes/text fallback.
+- `tests/test_menu_services.py`: verifies async snapshot save flow, full-card raster capture markers, and Typst full-raster priority.
+- `README.md`: documents full-card preview raster priority and structured fallback behavior.
+- `docs/typst-renderer.md`: documents the highest-fidelity full-card raster contract.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.

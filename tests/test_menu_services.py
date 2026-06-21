@@ -199,11 +199,11 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn('dispatchEditorControlEvent(active, "change");', app_js)
         self.assertIn('event.initEvent(eventName, true, false);', app_js)
         save_body = app_js.split("async function saveMenu()", 1)[1].split("function createDefaultMenu", 1)[0]
-        self.assertIn("const menuSnapshot = buildMenuSaveSnapshot();", save_body)
+        self.assertIn("const menuSnapshot = await buildMenuSaveSnapshot();", save_body)
         self.assertNotIn("syncFormToMenu({ mark: false });", save_body)
         self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("buildMenuSaveSnapshot();"))
-        self.assertLess(save_body.index("buildMenuSaveSnapshot();"), save_body.index('bridge.apiPost("menus/save", { menu: menuSnapshot })'))
-        self.assertIn("snapshot.render_snapshot = buildRenderSnapshotForTypst(snapshot);", app_js)
+        self.assertLess(save_body.index("await buildMenuSaveSnapshot();"), save_body.index('bridge.apiPost("menus/save", { menu: menuSnapshot })'))
+        self.assertIn("snapshot.render_snapshot = await buildRenderSnapshotForTypst(snapshot);", app_js)
         self.assertIn("function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
         self.assertIn('renderer: "typst-direct"', app_js)
         self.assertIn('version: 2', app_js)
@@ -218,8 +218,13 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("const textRasterLayer = (node, computed, textGeometry, rect, opacity) =>", app_js)
         self.assertIn("lines: textGeometry.lines", app_js)
         self.assertIn("glyphs: textGeometry.glyphs", app_js)
-        self.assertIn("raster: textRasterLayer(node, computed, textGeometry, rect, opacity)", app_js)
-        self.assertIn("function buildMenuSaveSnapshot()", app_js)
+        self.assertIn("raster: previewRaster ? null : textRasterLayer(node, computed, textGeometry, rect, opacity)", app_js)
+        self.assertIn("async function buildMenuSaveSnapshot()", app_js)
+        self.assertIn("async function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
+        self.assertIn("const previewRaster = await previewRasterLayer(card, cardRect, scale, rounded);", app_js)
+        self.assertIn("async function previewRasterLayer(card, cardRect, scale, rounded)", app_js)
+        self.assertIn("function inlineComputedStyles(source, target)", app_js)
+        self.assertIn("raster: previewRaster", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
         app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
@@ -637,6 +642,42 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('"U"', source)
         self.assertNotIn("MENU MAIN", source)
         self.assertNotIn("width: 4000pt", source)
+
+    def test_typst_snapshot_prefers_full_preview_raster_layer(self):
+        png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
+        menu = normalize_menu(
+            {
+                "id": "snapshot-preview-raster",
+                "title": "Preview Raster",
+                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 240,
+                    "height": 100,
+                    "raster": {
+                        "type": "image",
+                        "role": "preview",
+                        "rect": {"x": 0, "y": 0, "width": 240, "height": 100},
+                        "src": png,
+                        "scale": 4,
+                    },
+                    "boxes": [
+                        {"role": "card", "rect": {"x": 0, "y": 0, "width": 240, "height": 100}, "background": "#000000"}
+                    ],
+                    "texts": [
+                        {"role": "title", "text": "SHOULD NOT DRAW", "rect": {"x": 10, "y": 10, "width": 80, "height": 20}}
+                    ],
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = build_typst_document(menu, work_dir=tmp)
+        self.assertIn("saved preview raster", source)
+        self.assertIn("image(\"snapshot-image-", source)
+        self.assertNotIn("SHOULD NOT DRAW", source)
+        self.assertNotIn('fill: rgb("#000000")', source)
 
     def test_typst_snapshot_prefers_saved_text_raster_layer(self):
         png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
