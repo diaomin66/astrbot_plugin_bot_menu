@@ -187,7 +187,7 @@ def _build_typst_snapshot_document(
     elements.extend(_snapshot_box(element) for element in card_boxes)
     elements.extend(element for element in images if element)
     elements.extend(_snapshot_box(element) for element in other_boxes)
-    elements.extend(_snapshot_text(element, font_registry=font_registry) for element in texts)
+    elements.extend(_snapshot_text(element, work_dir=work_dir, font_registry=font_registry) for element in texts)
     body = "\n".join(element for element in elements if element)
     return f'''// Generated from Page render_snapshot. Typst renders directly from saved geometry; no browser is used here.
 #set page(width: {width:g}pt, height: {height:g}pt, margin: 0pt, fill: none)
@@ -229,12 +229,17 @@ def _snapshot_image(element: dict[str, Any], work_dir: Path | None) -> str:
     return f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, image({_typst_str(image_path)}, width: {width:g}pt, height: {height:g}pt))"
 
 
-def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | None) -> str:
+def _snapshot_text(element: dict[str, Any], *, work_dir: Path | None, font_registry: FontRegistry | None) -> str:
     rect = _snapshot_rect(element)
     text = str(element.get("text") or "")
-    if not rect or text == "":
+    if not rect:
         return ""
     x, y, width, height = rect
+    raster = _snapshot_text_raster(element, work_dir, rect)
+    if raster:
+        return raster
+    if text == "":
+        return ""
     padding = _snapshot_sides(element.get("padding"))
     if padding:
         top, right, bottom, left = padding
@@ -288,6 +293,18 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
         f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
         f"box(width: {max(width, 4000) if align == 'left' else width:g}pt, height: {height:g}pt)[#{{{content}}}])"
     )
+
+
+def _snapshot_text_raster(element: dict[str, Any], work_dir: Path | None, rect: tuple[float, float, float, float]) -> str:
+    raster = element.get("raster") if isinstance(element.get("raster"), dict) else {}
+    source = str(raster.get("src") or "")
+    if not source:
+        return ""
+    image_path = _write_data_url_image(source, work_dir)
+    if not image_path:
+        return ""
+    x, y, width, height = rect
+    return f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, image({_typst_str(image_path)}, width: {width:g}pt, height: {height:g}pt))"
 
 
 def _snapshot_text_glyphs(

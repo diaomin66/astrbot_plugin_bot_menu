@@ -214,8 +214,11 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("const captureTextGeometry = (node, computed) =>", app_js)
         self.assertIn("const transformedText = (value, transform) =>", app_js)
         self.assertIn("text_transform: computed.textTransform", app_js)
+        self.assertIn("const effectiveOpacity = (node) =>", app_js)
+        self.assertIn("const textRasterLayer = (node, computed, textGeometry, rect, opacity) =>", app_js)
         self.assertIn("lines: textGeometry.lines", app_js)
         self.assertIn("glyphs: textGeometry.glyphs", app_js)
+        self.assertIn("raster: textRasterLayer(node, computed, textGeometry, rect, opacity)", app_js)
         self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
@@ -634,6 +637,41 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn('"U"', source)
         self.assertNotIn("MENU MAIN", source)
         self.assertNotIn("width: 4000pt", source)
+
+    def test_typst_snapshot_prefers_saved_text_raster_layer(self):
+        png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
+        menu = normalize_menu(
+            {
+                "id": "snapshot-raster",
+                "title": "Raster",
+                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 240,
+                    "height": 100,
+                    "texts": [
+                        {
+                            "role": "title",
+                            "text": "MENU MAIN",
+                            "rect": {"x": 12, "y": 14, "width": 120, "height": 24},
+                            "font_size": 14,
+                            "font_family": ["Microsoft YaHei"],
+                            "color": "rgb(15, 23, 42)",
+                            "raster": {"src": png, "scale": 2},
+                            "glyphs": [{"text": "M", "rect": {"x": 12, "y": 14, "width": 8, "height": 14}}],
+                        }
+                    ],
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = build_typst_document(menu, work_dir=tmp)
+        self.assertIn("image(\"snapshot-image-", source)
+        self.assertIn("dx: 12pt, dy: 14pt", source)
+        self.assertNotIn("MENU MAIN", source)
+        self.assertNotIn('text("M")', source)
 
     def test_typst_css_color_parser_keeps_transparency_from_page(self):
         self.assertEqual(_css_color_expr("rgba(241,245,249,0.94)"), 'rgb("#f1f5f9").transparentize(6%)')

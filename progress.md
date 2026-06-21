@@ -421,3 +421,26 @@
 - `docs/typst-renderer.md`: documents the updated text snapshot contract and fallback order.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add Page-saved text raster layers for Typst fidelity
+### What was done
+- Added Page-side transparent text raster capture for each saved text element, using the same visible transformed text geometry and effective ancestor opacity from the preview.
+- Updated Typst snapshot rendering to prefer saved text raster layers before grapheme, line, or whole-text fallback rendering.
+- Preserved the browser-free Typst render-time contract: Typst reads saved Page data and embeds saved image layers without launching browser or Playwright.
+- Updated documentation to describe text raster layers as the highest-fidelity path for font shape, uppercase/lowercase, emoji fallback, and no unexpected rewrapping.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 62 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst raster-layer smoke render compiled a valid 300x120 PNG from a saved transparent text raster layer; sampled non-text card pixel was `(241, 244, 249, 240)`.
+- Raster smoke source check confirmed Typst embedded the saved image layer instead of re-emitting `MENU MAIN` or glyph text; cache hit returned in `0.984ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: captures effective text opacity and transparent text raster layers during Page save snapshots.
+- `services/typst_renderer.py`: embeds saved text raster layers before falling back to glyph/line/text rendering.
+- `tests/test_menu_services.py`: verifies Page raster snapshot markers and Typst raster-layer priority.
+- `README.md`: documents text raster restoration before grapheme and line fallback.
+- `docs/typst-renderer.md`: documents the updated high-fidelity text snapshot contract.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.

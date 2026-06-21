@@ -1859,22 +1859,67 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
   };
   const css = (node) => getComputedStyle(node);
   const fontFamilies = (value) => String(value || "").split(",").map((part) => part.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+  const effectiveOpacity = (node) => {
+    let value = 1;
+    let current = node;
+    while (current && current !== card.parentElement) {
+      const opacity = parseFloat(css(current).opacity);
+      if (!Number.isNaN(opacity)) value *= opacity;
+      if (current === card) break;
+      current = current.parentElement;
+    }
+    return rounded(Math.max(0, Math.min(1, value)));
+  };
+  const textRasterLayer = (node, computed, textGeometry, rect, opacity) => {
+    if (!textGeometry.glyphs.length || !rect.width || !rect.height) return null;
+    const rasterScale = Math.max(1, Math.min(3, Math.ceil(window.devicePixelRatio || 1)));
+    const canvas = document.createElement("canvas");
+    canvas.width = Math.max(1, Math.ceil(rect.width * rasterScale));
+    canvas.height = Math.max(1, Math.ceil(rect.height * rasterScale));
+    const context = canvas.getContext("2d");
+    if (!context) return null;
+    context.scale(rasterScale, rasterScale);
+    context.globalAlpha = Math.max(0, Math.min(1, opacity));
+    context.fillStyle = computed.color || "#000000";
+    context.textAlign = "left";
+    context.textBaseline = "top";
+    context.font = [
+      computed.fontStyle && computed.fontStyle !== "normal" ? computed.fontStyle : "",
+      computed.fontWeight || "400",
+      `${parseFloat(computed.fontSize) || 12}px`,
+      computed.fontFamily || DEFAULT_FONT_STACK_CSS,
+    ].filter(Boolean).join(" ");
+    textGeometry.glyphs.forEach((glyph) => {
+      context.fillText(glyph.text, glyph.rect.x - rect.x, glyph.rect.y - rect.y);
+    });
+    try {
+      return {
+        src: canvas.toDataURL("image/png"),
+        scale: rasterScale,
+      };
+    } catch (error) {
+      console.warn("failed to capture text raster layer", error);
+      return null;
+    }
+  };
   const textElement = (node, role, extra = {}) => {
     if (!node) return null;
     const computed = css(node);
+    const rect = relRect(node);
     const textGeometry = captureTextGeometry(node, computed);
+    const opacity = effectiveOpacity(node);
     return {
       type: "text",
       role,
       text: transformedText(node.innerText || node.textContent || "", computed.textTransform),
-      rect: relRect(node),
+      rect,
       font_size: rounded(parseFloat(computed.fontSize) || 12),
       line_height: rounded(parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) || 12),
       font_weight: computed.fontWeight || "400",
       font_family: fontFamilies(computed.fontFamily),
       font_style: computed.fontStyle || "normal",
       color: computed.color || "#000000",
-      opacity: rounded(parseFloat(computed.opacity) || 1),
+      opacity,
       text_align: computed.textAlign || "left",
       text_transform: computed.textTransform || "none",
       letter_spacing: pixelLength(computed.letterSpacing),
@@ -1884,6 +1929,7 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
       lines: textGeometry.lines,
       glyphs: textGeometry.glyphs,
+      raster: textRasterLayer(node, computed, textGeometry, rect, opacity),
       ...extra,
     };
   };
