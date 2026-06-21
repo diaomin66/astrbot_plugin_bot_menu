@@ -110,3 +110,24 @@
 - `docs/page-editor-verification.md`：补充背景图未加载完成时自动计算不得覆盖用户拖动/锁定后位置的契约。
 - `progress.md`：追加本轮修复、验证和回滚记录。
 - 回滚方式：`git checkout -- pages/menu-editor/app.js tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`。
+
+## 2026-06-21 - Task: 深度复查背景锁定后回顶缩小冲突
+### What was done
+- 重新审计所有会写入 `background_image_x/y/width` 的 Page 前端路径，确认除迟到图片 `load` 回调外，背景拖动期间还存在 `ensureStyle()` 反复替换 `menu.style` 对象的引用冲突。
+- 修复背景拖动/拉伸写入逻辑：每次 pointer move 都重新写入当前 `state.menu.style`，不再依赖进入编辑模式时捕获的旧 style 引用。
+- 修复 `ensureStyle()`：只补齐缺失默认字段，不再无条件替换整个 `menu.style` 对象，避免拖动、锁定、重绘之间出现旧对象和当前工作态分叉。
+- 为 Page 入口主脚本增加版本查询参数，降低 WebView 继续加载旧 `app.js` 导致用户仍看到旧行为的风险。
+- 补充回归断言和背景编辑契约文档。
+### Testing
+- `python -m unittest tests.test_menu_services.MenuStorageTests.test_page_reload_does_not_realign_saved_background_to_top -v`：通过。
+- `python -m unittest discover -s tests -v`：47 项通过。
+- `python -m compileall -q .`：通过。
+- 本机 Edge CDP + `.tmp-page-e2e/harness.html` 真实 pointer 拖动验证：连续两次拖动后，锁定前后工作态和 DOM 均保持约 `x=14,y=30,width=160`，不再只记录第一次移动值。
+- 本机 Edge CDP 慢加载背景图验证：自动铺满挂起时手动设为 `x=12,y=-37,width=220` 并锁定，等待图片加载完成后仍保持 `left=12%`、`top=-37%`、`width=220%`、`editMode=false`，未回顶、未缩小。
+### Notes
+- `pages/menu-editor/app.js`：背景拖动/拉伸改为写当前 style；`ensureStyle()` 改为就地补默认字段，避免替换对象造成位置尺寸写丢。
+- `pages/menu-editor/index.html`：为 `app.js` 增加版本参数，避免 WebView 继续使用旧脚本。
+- `tests/test_menu_services.py`：补充背景锁定、style 引用稳定性和入口脚本版本参数断言。
+- `docs/page-editor-verification.md`：补充背景拖动期间不得替换 `menu.style` 对象的契约。
+- `progress.md`：追加本轮复查、修复、验证和回滚记录。
+- 回滚方式：`git checkout -- pages/menu-editor/app.js pages/menu-editor/index.html tests/test_menu_services.py docs/page-editor-verification.md progress.md`；如已同步到本地 AstrBot，再把上一提交同名文件复制回 `C:\Users\21340\.astrbot_launcher\instances\263ca536-4cb7-4f22-b872-e68958ec3dc8\core\data\plugins\astrbot_plugin_bot_menu`。

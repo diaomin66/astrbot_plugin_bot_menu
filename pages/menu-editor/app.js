@@ -2099,7 +2099,6 @@ function readFileAsDataUrl(file) {
 }
 
 function attachBackgroundEditor() {
-  const style = ensureStyle(state.menu);
   const img = els.preview.querySelector(".preview-bg-image");
   const box = els.preview.querySelector(".background-transform-box");
   const card = els.preview.querySelector(".preview-card");
@@ -2113,6 +2112,7 @@ function attachBackgroundEditor() {
   };
 
   const updateImage = () => {
+    const style = ensureStyle(state.menu);
     img.style.left = `${style.background_image_x || 0}%`;
     img.style.top = `${style.background_image_y || 0}%`;
     img.style.width = `${style.background_image_width || 100}%`;
@@ -2128,9 +2128,10 @@ function attachBackgroundEditor() {
     const handle = event.target.dataset.handle;
     const startX = event.clientX;
     const startY = event.clientY;
-    const startLeft = Number(style.background_image_x) || 0;
-    const startTop = Number(style.background_image_y) || 0;
-    const startWidth = Number(style.background_image_width) || 100;
+    const startStyle = ensureStyle(state.menu);
+    const startLeft = Number(startStyle.background_image_x) || 0;
+    const startTop = Number(startStyle.background_image_y) || 0;
+    const startWidth = Number(startStyle.background_image_width) || 100;
     const cardRect = card.getBoundingClientRect();
     box.setPointerCapture(event.pointerId);
     box.classList.add("is-moving");
@@ -2138,6 +2139,7 @@ function attachBackgroundEditor() {
     const onMove = (moveEvent) => {
       const dxPct = ((moveEvent.clientX - startX) / cardRect.width) * 100;
       const dyPct = ((moveEvent.clientY - startY) / cardRect.height) * 100;
+      const style = ensureStyle(state.menu);
       if (handle) {
         const fromLeft = handle.includes("w");
         const nextWidth = clampNumber(startWidth + (fromLeft ? -dxPct : dxPct), 10, 600, startWidth);
@@ -3012,8 +3014,13 @@ function showRenderStatus(status) {
 }
 
 function ensureStyle(menu) {
-  menu.style = { ...defaultStyle(), ...(menu.style || {}) };
-  return menu.style;
+  const style = menu.style && typeof menu.style === "object" ? menu.style : {};
+  const defaults = defaultStyle();
+  Object.entries(defaults).forEach(([key, value]) => {
+    if (style[key] === undefined || style[key] === null) style[key] = value;
+  });
+  menu.style = style;
+  return style;
 }
 
 function defaultStyle() {
