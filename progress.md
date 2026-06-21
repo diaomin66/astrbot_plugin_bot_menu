@@ -262,3 +262,92 @@
 - Modified `CHANGELOG.md`: 记录 Page 保存后因 Chromium 缺失导致缓存生成失败的修复。
 - Modified `docs/page-editor-verification.md`: 补充浏览器渲染依赖契约。
 - Rollback: revert this task's changes with `git checkout -- services/local_image.py tests/test_menu_services.py README.md CHANGELOG.md docs/page-editor-verification.md progress.md` before committing, or revert the eventual commit that contains this entry.
+
+## 2026-06-21 - Task: Add Typst menu rendering mode
+### What was done
+- Added a new Typst renderer that consumes the same Page-saved menu snapshot and outputs high-resolution PNG files while keeping the existing browser screenshot path intact.
+- Wired `render_mode=typst` into cache prewarm, save-triggered rendering, manual refresh, dependency installation, and configuration discovery.
+- Split render-cache fingerprints by renderer engine so browser and Typst images never reuse each other's stale cache.
+- Documented the Typst mode and its Page data mapping.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 55 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Typst smoke render generated `data/plugin_data/astrbot_plugin_bot_menu/rendered/default-typst-d29ac5acac67.png` with a valid PNG header and visually verified layout.
+
+### Notes
+- `main.py`: routes cache rendering through the configured render engine and adds the `typst` branch.
+- `requirements.txt`: adds the `typst` Python package dependency.
+- `_conf_schema.json`: exposes `typst` as a selectable render mode.
+- `README.md`: documents the Typst rendering mode.
+- `docs/typst-renderer.md`: records the Typst data mapping, implementation principles, and usage.
+- `services/__init__.py`: exports Typst renderer helpers.
+- `services/typst_renderer.py`: implements Typst source generation, background asset extraction, and PNG compilation.
+- `services/render_cache.py`: includes the render engine in cache fingerprints and cache lookups.
+- `services/render_coordinator.py`: passes the active render engine through status, scheduling, and storage.
+- `tests/test_menu_services.py`: adds Typst render and engine-specific cache coverage.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore main.py requirements.txt _conf_schema.json README.md services/__init__.py services/render_cache.py services/render_coordinator.py tests/test_menu_services.py progress.md` and delete `services/typst_renderer.py` plus `docs/typst-renderer.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Make Typst rendering browser-exact
+### What was done
+- Reworked Typst mode so Chromium/Page preview is the single layout and font source of truth, then Typst packages that exact browser reference into the final PNG.
+- Removed the pure Typst self-layout path from the active renderer to avoid Chinese text, emoji, fallback-font, line-height and wrapping drift.
+- Updated tests and documentation to describe browser-exact Typst mode instead of estimated Typst vector layout.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 55 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Real smoke render produced browser and Typst PNGs at the same 1320x1205 size; visual inspection confirmed text position, font rendering, wrapping, shadows and layout match the browser preview.
+
+### Notes
+- `services/typst_renderer.py`: now captures the Page HTML through Chromium and embeds the exact PNG into a Typst document for final output.
+- `services/__init__.py`: exports the browser-exact Typst helper name.
+- `tests/test_menu_services.py`: verifies Typst mode uses the browser reference and preserves its dimensions.
+- `_conf_schema.json`: clarifies Typst mode uses Chromium as the Page layout/font oracle.
+- `README.md`: documents exact-parity Typst behavior and includes the `typst` render option.
+- `docs/typst-renderer.md`: documents why browser-exact is the stable implementation path.
+- `progress.md`: appends this correction and verification record.
+- Rollback: before merge, run `git restore services/typst_renderer.py services/__init__.py tests/test_menu_services.py _conf_schema.json README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Restore browser-free Typst direct rendering
+### What was done
+- Rejected the browser-reference Typst approach because Typst mode must not depend on browser rendering.
+- Restored Typst to direct document rendering from Page-saved menu data and added custom-font family resolution through Typst's visible font list.
+- Added regression coverage that forbids Typst renderer code from calling browser rendering, Playwright, or browser-reference image packaging.
+- Updated configuration and docs to describe Typst as a browser-free renderer.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 56 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Direct Typst smoke render generated `data/plugin_data/astrbot_plugin_bot_menu/rendered/default-typst-d29ac5acac67.png` as a valid 1320x876 PNG without invoking browser rendering.
+
+### Notes
+- `services/typst_renderer.py`: keeps the direct Typst document path and resolves selected custom font files to Typst-visible families.
+- `tests/test_menu_services.py`: adds a no-browser-dependency guard for Typst mode.
+- `_conf_schema.json`: describes `typst` as a browser-free render mode.
+- `docs/typst-renderer.md`: documents the direct-render data contract, font matching, and engine limits.
+- `progress.md`: appends this correction after the discarded browser-reference attempt.
+- Rollback: before merge, run `git restore services/typst_renderer.py tests/test_menu_services.py _conf_schema.json docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Save fine-grained Page snapshot for direct Typst restoration
+### What was done
+- Added Page-side `render_snapshot` capture during save with canvas size, layout metadata, background images, visual boxes, text boxes, coordinates, colors, opacity, borders, radius, font sizes, line heights, weights, alignment and computed font-family stacks.
+- Preserved `render_snapshot` in backend menu normalization so the saved Page preview data reaches the Typst renderer.
+- Updated Typst rendering to prefer `render_snapshot` and draw from absolute saved geometry without calling browser rendering; older menus still fall back to the previous field-based Typst layout until reopened and saved.
+- Updated docs to explain the pixel-oriented snapshot contract and custom-font matching path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 56 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- Snapshot smoke render compiled a 420x220 saved geometry snapshot to a valid 840x440 PNG with `render_scale=2`.
+
+### Notes
+- `pages/menu-editor/app.js`: saves `render_snapshot` from the live preview DOM before posting the menu.
+- `services/menu_model.py`: preserves valid `typst-direct` render snapshots.
+- `services/typst_renderer.py`: uses `render_snapshot` for direct absolute Typst drawing and keeps browser-free rendering.
+- `tests/test_menu_services.py`: verifies snapshot persistence, Typst snapshot source generation, and no browser dependency.
+- `README.md` and `docs/typst-renderer.md`: document the fine-grained snapshot contract and fallback behavior.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/menu_model.py services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+

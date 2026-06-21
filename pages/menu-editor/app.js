@@ -1748,7 +1748,122 @@ async function saveMenu() {
 }
 
 function buildMenuSaveSnapshot() {
-  return cloneData(state.menu);
+  const snapshot = cloneData(state.menu);
+  snapshot.render_snapshot = buildRenderSnapshotForTypst(snapshot);
+  return snapshot;
+}
+
+function buildRenderSnapshotForTypst(menuSnapshot) {
+  const card = els.preview?.querySelector(".preview-card");
+  if (!card) return null;
+  const cardRect = card.getBoundingClientRect();
+  if (!cardRect.width || !cardRect.height) return null;
+  const style = ensureStyle(menuSnapshot);
+  const layout = previewLayout(menuSnapshot);
+  const rounded = (value) => Math.round(Number(value || 0) * 1000) / 1000;
+  const relRect = (node) => {
+    const rect = node.getBoundingClientRect();
+    return {
+      x: rounded(rect.left - cardRect.left),
+      y: rounded(rect.top - cardRect.top),
+      width: rounded(rect.width),
+      height: rounded(rect.height),
+    };
+  };
+  const css = (node) => getComputedStyle(node);
+  const fontFamilies = (value) => String(value || "").split(",").map((part) => part.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
+  const textElement = (node, role, extra = {}) => {
+    if (!node) return null;
+    const computed = css(node);
+    return {
+      type: "text",
+      role,
+      text: node.textContent || "",
+      rect: relRect(node),
+      font_size: rounded(parseFloat(computed.fontSize) || 12),
+      line_height: rounded(parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) || 12),
+      font_weight: computed.fontWeight || "400",
+      font_family: fontFamilies(computed.fontFamily),
+      color: computed.color || "#000000",
+      opacity: rounded(parseFloat(computed.opacity) || 1),
+      text_align: computed.textAlign || "left",
+      ...extra,
+    };
+  };
+  const boxElement = (node, role, extra = {}) => {
+    if (!node) return null;
+    const computed = css(node);
+    return {
+      type: "box",
+      role,
+      rect: relRect(node),
+      background: computed.backgroundColor || "transparent",
+      border_color: computed.borderColor || "transparent",
+      border_width: rounded(parseFloat(computed.borderWidth) || 0),
+      border_radius: rounded(parseFloat(computed.borderTopLeftRadius) || 0),
+      opacity: rounded(parseFloat(computed.opacity) || 1),
+      ...extra,
+    };
+  };
+  const imageElement = (node, role) => {
+    if (!node) return null;
+    const computed = css(node);
+    return {
+      type: "image",
+      role,
+      rect: relRect(node),
+      src: node.getAttribute("src") || "",
+      opacity: rounded(parseFloat(computed.opacity) || 1),
+    };
+  };
+
+  const boxes = [
+    boxElement(card, "card", {
+      background: style.background_color || "#f8fafc",
+      border_radius: rounded(parseFloat(css(card).borderTopLeftRadius) || style.radius || 24),
+    }),
+    boxElement(card.querySelector(".preview-bg-overlay"), "background_overlay"),
+    boxElement(card.querySelector(".preview-inner"), "inner"),
+    ...Array.from(card.querySelectorAll(".preview-section")).map((node, index) => boxElement(node, "section", { section_index: index })),
+    ...Array.from(card.querySelectorAll(".preview-item")).map((node) => boxElement(node, "item", {
+      section_index: Number(node.dataset.sectionIndex || 0),
+      item_index: Number(node.dataset.itemIndex || 0),
+    })),
+  ].filter(Boolean);
+
+  const texts = [
+    textElement(card.querySelector(".kicker"), "kicker"),
+    textElement(card.querySelector(".preview-title"), "title"),
+    textElement(card.querySelector(".preview-sub"), "subtitle"),
+    ...Array.from(card.querySelectorAll(".preview-section h3")).map((node, index) => textElement(node, "section_title", { section_index: index })),
+    ...Array.from(card.querySelectorAll(".preview-icon")).map((node) => textElement(node, "item_icon")),
+    ...Array.from(card.querySelectorAll(".preview-item-title, .preview-item-name, .preview-desc, .preview-command")).map((node) => textElement(node, "item_text")),
+    ...Array.from(card.querySelectorAll(".preview-footer span")).map((node, index) => textElement(node, index === 0 ? "footer_left" : "footer_right")),
+    textElement(card.querySelector(".preview-watermark"), "watermark"),
+  ].filter(Boolean);
+
+  return {
+    version: 1,
+    renderer: "typst-direct",
+    width: rounded(cardRect.width),
+    height: rounded(cardRect.height),
+    layout: {
+      width: layout.width,
+      columns: layout.columns,
+      item_count: layout.itemCount,
+      section_gap: sectionGapForMenu(menuSnapshot),
+    },
+    style: {
+      font_family: style.font_family || "",
+      background_image: style.background_image || "",
+      background_image_x: style.background_image_x || 0,
+      background_image_y: style.background_image_y || 0,
+      background_image_width: style.background_image_width || 100,
+    },
+    images: [imageElement(card.querySelector(".preview-bg-image"), "background")].filter(Boolean),
+    boxes,
+    texts,
+  };
 }
 
 function createDefaultMenu(id) {

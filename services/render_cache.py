@@ -24,11 +24,18 @@ class MenuRenderCache:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.rendered_dir.mkdir(parents=True, exist_ok=True)
 
-    def fingerprint(self, menu: dict[str, Any], *, render_width: int, render_scale: int) -> str:
+    def fingerprint(
+        self,
+        menu: dict[str, Any],
+        *,
+        render_width: int,
+        render_scale: int,
+        render_engine: str = "browser",
+    ) -> str:
         style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
         payload = {
             "cache_version": self.CACHE_VERSION,
-            "renderer": "browser-cache",
+            "renderer": str(render_engine or "browser"),
             "render_width": render_width,
             "render_scale": render_scale,
             "font_signature": FontRegistry(self.data_dir).signature_for(style.get("font_family")),
@@ -37,8 +44,20 @@ class MenuRenderCache:
         raw = json.dumps(payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")
         return hashlib.sha256(raw).hexdigest()
 
-    def get_cached_path(self, menu: dict[str, Any], *, render_width: int, render_scale: int) -> str | None:
-        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+    def get_cached_path(
+        self,
+        menu: dict[str, Any],
+        *,
+        render_width: int,
+        render_scale: int,
+        render_engine: str = "browser",
+    ) -> str | None:
+        fingerprint = self.fingerprint(
+            menu,
+            render_width=render_width,
+            render_scale=render_scale,
+            render_engine=render_engine,
+        )
         with self._lock:
             entry = self._read().get("menus", {}).get(str(menu.get("id") or ""))
         if not isinstance(entry, dict) or entry.get("fingerprint") != fingerprint:
@@ -54,11 +73,17 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
+        render_engine: str = "browser",
         is_rendering: bool = False,
     ) -> dict[str, Any]:
         """Return the render cache status for the current menu fingerprint."""
 
-        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+        fingerprint = self.fingerprint(
+            menu,
+            render_width=render_width,
+            render_scale=render_scale,
+            render_engine=render_engine,
+        )
         if is_rendering:
             with self._lock:
                 entry = self._read().get("menus", {}).get(str(menu.get("id") or ""))
@@ -127,11 +152,17 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
+        render_engine: str = "browser",
     ) -> str:
         source = Path(rendered_path)
         if not source.is_file():
             raise FileNotFoundError(f"rendered image not found: {source}")
-        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+        fingerprint = self.fingerprint(
+            menu,
+            render_width=render_width,
+            render_scale=render_scale,
+            render_engine=render_engine,
+        )
         target = self.cache_path_for_menu(menu, fingerprint=fingerprint)
         target.parent.mkdir(parents=True, exist_ok=True)
         tmp_path = target.with_suffix(".tmp")
@@ -165,13 +196,19 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
+        render_engine: str = "browser",
     ) -> None:
         with self._lock:
             data = self._read()
             menus = data.setdefault("menus", {})
             previous = menus.get(str(menu.get("id") or ""))
             previous_attempts = previous.get("attempts", 0) if isinstance(previous, dict) else 0
-            fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+            fingerprint = self.fingerprint(
+                menu,
+                render_width=render_width,
+                render_scale=render_scale,
+                render_engine=render_engine,
+            )
             entry = {
                 "fingerprint": fingerprint,
                 "path": str(self.cache_path_for_menu(menu, fingerprint=fingerprint)),
@@ -190,8 +227,14 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
+        render_engine: str = "browser",
     ) -> None:
-        fingerprint = self.fingerprint(menu, render_width=render_width, render_scale=render_scale)
+        fingerprint = self.fingerprint(
+            menu,
+            render_width=render_width,
+            render_scale=render_scale,
+            render_engine=render_engine,
+        )
         entry = {
             "fingerprint": fingerprint,
             "path": str(self.cache_path_for_menu(menu, fingerprint=fingerprint)),

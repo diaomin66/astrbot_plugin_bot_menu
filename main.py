@@ -22,6 +22,7 @@ from .services import (
     preview_width_for_menu,
     render_menu_image,
     render_menu_via_browser,
+    render_menu_via_typst,
 )
 
 PLUGIN_NAME = "astrbot_plugin_bot_menu"
@@ -104,6 +105,7 @@ class BotMenuPlugin(Star):
             render_menu=self._render_menu_for_cache,
             render_width=lambda: self._config_int("render_width", 900),
             render_scale=lambda: max(1, min(4, self._config_int("render_scale", 4))),
+            render_engine=self._render_cache_engine,
             logger=logger,
         )
         self._register_web_apis(context)
@@ -345,14 +347,24 @@ class BotMenuPlugin(Star):
         return json_response({"cache": cache, "assets": assets})
 
     async def _render_menu_for_cache(self, menu: dict[str, Any]) -> str:
-        return await self._render_menu_uncached(menu, render_mode="browser")
+        return await self._render_menu_uncached(menu)
 
     async def _render_menu_uncached(self, menu: dict[str, Any], *, render_mode: str | None = None) -> str:
         menu = self._menu_with_resolved_assets(menu)
         default_width = self._config_int("render_width", 900)
         render_scale = max(1, min(4, self._config_int("render_scale", 4)))
         if not render_mode:
-            render_mode = str(self._config_get("render_mode", "browser") or "browser").strip().lower()
+            render_mode = self._render_cache_engine()
+
+        if render_mode == "typst":
+            return await asyncio.to_thread(
+                render_menu_via_typst,
+                menu,
+                self.storage.data_dir,
+                default_width=default_width,
+                output_scale=render_scale,
+                font_registry=self.fonts,
+            )
 
         if render_mode == "pillow":
             return await asyncio.to_thread(
@@ -394,6 +406,10 @@ class BotMenuPlugin(Star):
             raise RuntimeError(
                 "remote HTML rendering failed; no image was generated to avoid output that does not match the Page preview"
             ) from exc
+
+    def _render_cache_engine(self) -> str:
+        render_mode = str(self._config_get("render_mode", "browser") or "browser").strip().lower()
+        return "browser" if render_mode == "local" else render_mode
 
     def _register_web_apis(self, context: Context) -> None:
         routes = [

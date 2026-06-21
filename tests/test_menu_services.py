@@ -23,6 +23,7 @@ from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
 from services.routing_storage import RoutingStorage
 from services.storage import MenuStorage
+from services.typst_renderer import build_typst_document, render_menu_via_typst
 
 
 class _PreviewCardStyleParser(HTMLParser):
@@ -202,6 +203,9 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertNotIn("syncFormToMenu({ mark: false });", save_body)
         self.assertLess(save_body.index("flushLiveEditorControls();"), save_body.index("buildMenuSaveSnapshot();"))
         self.assertLess(save_body.index("buildMenuSaveSnapshot();"), save_body.index('bridge.apiPost("menus/save", { menu: menuSnapshot })'))
+        self.assertIn("snapshot.render_snapshot = buildRenderSnapshotForTypst(snapshot);", app_js)
+        self.assertIn("function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
+        self.assertIn('renderer: "typst-direct"', app_js)
         self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
@@ -419,6 +423,31 @@ class MenuStorageTests(unittest.TestCase):
                             ],
                         }
                     ],
+                    "render_snapshot": {
+                        "renderer": "typst-direct",
+                        "width": 820,
+                        "height": 460,
+                        "boxes": [
+                            {
+                                "role": "card",
+                                "rect": {"x": 0, "y": 0, "width": 820, "height": 460},
+                                "background": "rgb(254, 243, 199)",
+                                "border_radius": 9,
+                            }
+                        ],
+                        "texts": [
+                            {
+                                "role": "title",
+                                "text": "Saved Title",
+                                "rect": {"x": 20, "y": 30, "width": 300, "height": 48},
+                                "font_size": 34,
+                                "line_height": 38,
+                                "font_weight": "700",
+                                "font_family": ["Noto Sans CJK SC", "Microsoft YaHei"],
+                                "color": "rgb(2, 6, 23)",
+                            }
+                        ],
+                    },
                 }
             )
             reloaded = storage.get_menu("snapshot")
@@ -434,6 +463,8 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual(item["content_order"], ["description", "label", "command"])
             self.assertEqual(item["content_gap"], 9)
             self.assertFalse(item["enabled"])
+            self.assertEqual(reloaded["render_snapshot"]["renderer"], "typst-direct")
+            self.assertEqual(reloaded["render_snapshot"]["width"], 820)
 
             preview_html = build_preview_html(reloaded)
             render_template, render_data, render_options = build_render_payload(reloaded)
@@ -446,6 +477,11 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("--preview-bg-overlay:0.370", render_template)
             self.assertIn("--item-content-gap:9px", render_template)
             self.assertIn('class="preview-item size-banner disabled"', render_template)
+
+            typst_source = build_typst_document(reloaded)
+            self.assertIn("Generated from Page render_snapshot", typst_source)
+            self.assertIn("width: 820pt", typst_source)
+            self.assertIn("Saved Title", typst_source)
 
     def test_storage_resolves_aliases_and_restores_soft_deleted_menu(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -526,6 +562,74 @@ class MenuStorageTests(unittest.TestCase):
             with open(path, "rb") as f:
                 self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
+    def test_typst_renderer_writes_png_from_saved_page_snapshot(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.save_menu(
+                {
+                    "id": "typst",
+                    "name": "Typst",
+                    "title": "Typst 渲染菜单",
+                    "subtitle": "对接 Page 保存数据",
+                    "footer": "高质量 PNG",
+                    "style": {
+                        "width_mode": "custom",
+                        "width": 720,
+                        "columns": 3,
+                        "primary_color": "#2563eb",
+                        "background_color": "#eff6ff",
+                        "card_color": "#ffffff",
+                        "text_color": "#0f172a",
+                        "muted_color": "#475569",
+                        "foreground_opacity": 88,
+                        "section_gap_mode": "custom",
+                        "section_gap": 9,
+                        "card_gap": 7,
+                        "section_padding": 13,
+                        "watermark": "Typst",
+                        "show_updated_at": False,
+                    },
+                    "sections": [
+                        {
+                            "title": "功能",
+                            "items": [
+                                {
+                                    "label": "横幅卡片",
+                                    "command": "/banner",
+                                    "description": "保存后由 Typst 读取同一份菜单数据",
+                                    "icon": "✨",
+                                    "card_size": "banner",
+                                    "content_order": ["label", "command", "description"],
+                                    "content_gap": 6,
+                                    "command_font_size": 17,
+                                    "label_font_size": 14,
+                                    "description_font_size": 12,
+                                },
+                                {"label": "紧凑", "command": "/compact", "card_size": "compact"},
+                            ],
+                        }
+                    ],
+                }
+            )
+            source = build_typst_document(menu, font_registry=FontRegistry(tmp))
+            self.assertIn("Typst 渲染菜单", source)
+            self.assertIn("对接 Page 保存数据", source)
+            self.assertIn("grid.cell(colspan: 3)", source)
+            self.assertIn("spacing: 9pt", source)
+            self.assertIn("gutter: 7pt", source)
+            self.assertIn("inset: 13pt", source)
+
+            path = render_menu_via_typst(menu, tmp, output_scale=1, font_registry=FontRegistry(tmp))
+            self.assertTrue(path.endswith(".png"))
+            with open(path, "rb") as f:
+                self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
+
+    def test_typst_renderer_does_not_depend_on_browser_renderer(self):
+        source = Path("services/typst_renderer.py").read_text(encoding="utf-8")
+        self.assertNotIn("render_menu_via_browser", source)
+        self.assertNotIn("playwright", source.lower())
+        self.assertNotIn("browser-reference", source)
+
     def test_rendered_png_can_be_embedded_in_web_preview(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
@@ -544,6 +648,30 @@ class MenuStorageTests(unittest.TestCase):
             changed_menu = {**menu, "title": "修改后的菜单"}
             self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
             self.assertTrue(Path(cached_path).is_file())
+
+    def test_render_cache_separates_browser_and_typst_engines(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            storage = MenuStorage(tmp)
+            menu = storage.get_menu("default")
+            cache = MenuRenderCache(tmp)
+            rendered_path = render_menu_image(menu, tmp)
+            browser_fingerprint = cache.fingerprint(menu, render_width=900, render_scale=4, render_engine="browser")
+            typst_fingerprint = cache.fingerprint(menu, render_width=900, render_scale=4, render_engine="typst")
+
+            self.assertNotEqual(browser_fingerprint, typst_fingerprint)
+            cached_path = cache.store_rendered(
+                menu,
+                rendered_path,
+                render_width=900,
+                render_scale=4,
+                render_engine="browser",
+            )
+
+            self.assertEqual(
+                cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="browser"),
+                cached_path,
+            )
+            self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="typst"))
 
     def test_render_cache_uses_fingerprinted_paths_for_layout_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -670,11 +798,13 @@ class MenuStorageTests(unittest.TestCase):
                     render_menu=render_menu,
                     render_width=lambda: 900,
                     render_scale=lambda: 4,
+                    render_engine=lambda: "typst",
                 )
                 self.assertTrue(coordinator.schedule(menu))
                 self.assertEqual(coordinator.status_for_menu(menu)["status"], "rendering")
                 await asyncio.sleep(0.1)
                 self.assertEqual(coordinator.status_for_menu(menu)["status"], "ready")
+                self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="browser"))
 
         asyncio.run(run_case())
 

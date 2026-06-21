@@ -25,9 +25,10 @@
       "browser",
       "auto",
       "remote",
-      "pillow"
+      "pillow",
+      "typst"
     ],
-    "hint": "browser 为优先调用 Playwright/Chromium、失败后探测 Windows/macOS/Linux 系统浏览器的无头截图（与 Page 实时预览同款排版，推荐）；auto 先尝试 browser，失败后再尝试 AstrBot 远程 T2I；remote 仅使用远程 T2I；pillow 降级为基础绘图引擎。"
+    "hint": "browser uses Playwright/Chromium and keeps the Page HTML preview screenshot path; typst uses a browser-free Typst document renderer fed by the same Page-saved menu data and outputs high-quality PNG; auto tries browser before AstrBot remote T2I; remote only uses remote T2I; pillow is the basic drawing fallback."
   },
   "show_render_error_detail": {
     "description": "聊天侧显示详细渲染错误",

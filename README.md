@@ -101,6 +101,12 @@ data/plugin_data/astrbot_plugin_bot_menu/fonts/
 
 本插件默认使用跨平台 Playwright/Chromium 进行 4x 无头高清截图（`browser` 模式），失败时会继续探测 Windows、macOS 与 Linux 上常见的 Edge、Chrome、Chromium、Brave 浏览器；该模式复用 Page 实时预览的同款 HTML 结构和 CSS 排版，并且不受 AstrBot 远程 T2I 服务波动影响。若 Playwright 报出 Chromium 可执行文件不存在，插件会自动安装一次 Chromium 后重试。若使用 `auto`，会先尝试 browser，同款截图失败后再尝试 AstrBot 远程 T2I，最后回退到纯 Python 的 Pillow 绘制引擎。
 
+## Typst rendering mode
+
+Set `render_mode` to `typst` to use the new Typst renderer. This mode coexists with the original browser screenshot path: switching back to `browser` restores the existing Playwright/Chromium HTML screenshot renderer.
+
+Typst mode is browser-free: Page saves a fine-grained `render_snapshot` containing preview geometry, text metrics, colors, boxes, images and font stacks, and Typst compiles that snapshot directly to PNG. It also passes the plugin `fonts/` directory to Typst so selected custom fonts can be resolved by the Typst engine. Old menus without `render_snapshot` still use fallback Typst layout; reopen and save them in Page to generate the pixel-oriented snapshot. `render_scale` still controls the final image resolution.
+
 ## 更新日志
 
 详见 [CHANGELOG.md](./CHANGELOG.md)。

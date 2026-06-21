@@ -121,6 +121,7 @@ def normalize_menu(raw: dict[str, Any]) -> dict[str, Any]:
     footer = _clean_text(raw.get("footer"), "footer", default="", max_length=240)
     style = _normalize_style(raw.get("style"))
     sections = _normalize_sections(raw.get("sections"))
+    render_snapshot = _normalize_render_snapshot(raw.get("render_snapshot"))
     created_at = _clean_text(raw.get("created_at"), "created_at", default=_now_iso(), max_length=64)
     updated_at = _clean_text(raw.get("updated_at"), "updated_at", default=_now_iso(), max_length=64)
     deleted_at = _clean_optional_text(raw.get("deleted_at"), "deleted_at", max_length=64)
@@ -134,12 +135,34 @@ def normalize_menu(raw: dict[str, Any]) -> dict[str, Any]:
         "footer": footer,
         "style": style,
         "sections": sections,
+        "render_snapshot": render_snapshot,
         "created_at": created_at,
         "updated_at": updated_at,
     }
     if deleted_at:
         menu["deleted_at"] = deleted_at
     return menu
+
+
+def _normalize_render_snapshot(raw_snapshot: Any) -> dict[str, Any] | None:
+    if raw_snapshot in (None, ""):
+        return None
+    if not isinstance(raw_snapshot, dict):
+        return None
+    try:
+        raw = copy.deepcopy(raw_snapshot)
+    except Exception:
+        return None
+    if raw.get("renderer") != "typst-direct":
+        return None
+    width = _clamp_float(raw.get("width"), default=0, minimum=0, maximum=4000)
+    height = _clamp_float(raw.get("height"), default=0, minimum=0, maximum=8000)
+    if width <= 0 or height <= 0:
+        return None
+    raw["version"] = 1
+    raw["width"] = width
+    raw["height"] = height
+    return raw
 
 
 def normalize_menu_collection(raw_menus: Any) -> list[dict[str, Any]]:
