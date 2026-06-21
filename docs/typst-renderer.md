@@ -22,6 +22,8 @@ Transparent Page layers are not emitted as visible Typst rectangles. `rgba(..., 
 
 Cached renders are still the latency-critical path for chat usage. If the menu fingerprint is unchanged, the coordinator returns the cached PNG path and does not invoke Typst again.
 
+The full-card raster path has a pixel-diff regression test: a saved RGBA PNG is embedded through Typst at the same CSS-pixel size, rendered back to PNG, and compared pixel-for-pixel with the saved raster. This locks the highest-fidelity path against Typst-side reflow, color conversion, or black fallback layers.
+
 ## Limits
 
 This is a true browser-free Typst renderer. The pixel-oriented path depends on Page saving `render_snapshot`; after changing visual rules, reopen and save the menu so Typst receives fresh geometry. Emoji fallback and engine-specific glyph shaping can still differ if Typst and the preview cannot resolve the same font files, so custom fonts should be installed in the plugin `fonts/` directory.

@@ -679,6 +679,48 @@ class MenuStorageTests(unittest.TestCase):
         self.assertNotIn("SHOULD NOT DRAW", source)
         self.assertNotIn('fill: rgb("#000000")', source)
 
+    def test_typst_full_preview_raster_output_matches_saved_pixels(self):
+        import base64
+        from io import BytesIO
+
+        from PIL import Image, ImageChops
+
+        source_image = Image.new("RGBA", (16, 8))
+        for y in range(8):
+            for x in range(16):
+                source_image.putpixel((x, y), ((x * 17) % 256, (y * 31) % 256, ((x + y) * 13) % 256, 255))
+        buffer = BytesIO()
+        source_image.save(buffer, format="PNG")
+        data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        menu = normalize_menu(
+            {
+                "id": "snapshot-pixel-diff",
+                "title": "Pixel Diff",
+                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 16,
+                    "height": 8,
+                    "raster": {
+                        "type": "image",
+                        "role": "preview",
+                        "rect": {"x": 0, "y": 0, "width": 16, "height": 8},
+                        "src": data_url,
+                        "scale": 1,
+                    },
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            rendered_path = render_menu_via_typst(menu, tmp, output_scale=1)
+            rendered = Image.open(rendered_path).convert("RGBA")
+
+        self.assertEqual(rendered.size, source_image.size)
+        diff = ImageChops.difference(source_image, rendered)
+        self.assertIsNone(diff.getbbox())
+
     def test_typst_snapshot_prefers_saved_text_raster_layer(self):
         png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
         menu = normalize_menu(

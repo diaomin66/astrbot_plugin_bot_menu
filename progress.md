@@ -468,3 +468,21 @@
 - `docs/typst-renderer.md`: documents the highest-fidelity full-card raster contract.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Add pixel-diff proof for Typst full-card raster path
+### What was done
+- Added a pixel-level regression test for the full-card preview raster path.
+- The test renders a saved RGBA PNG through Typst at the same CSS-pixel size and compares the final PNG pixel-for-pixel against the saved raster.
+- Updated Typst renderer documentation to record the pixel-diff gate for the highest-fidelity path.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 64 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Pixel-diff regression proved the Typst full-card raster output matched the saved raster exactly for the checked RGBA sample.
+
+### Notes
+- `tests/test_menu_services.py`: adds exact pixel comparison for saved preview raster through Typst output.
+- `docs/typst-renderer.md`: documents the pixel-diff regression gate.
+- `progress.md`: appends this verification record.
+- Rollback: before merge, run `git restore tests/test_menu_services.py docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
