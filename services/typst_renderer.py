@@ -99,6 +99,8 @@ def materialize_saved_preview_raster(
     """
 
     snapshot = menu.get("render_snapshot") if isinstance(menu.get("render_snapshot"), dict) else {}
+    if not _snapshot_uses_menu_font_contract(snapshot):
+        return None
     raster = snapshot.get("raster") if isinstance(snapshot.get("raster"), dict) else {}
     rect = raster.get("rect") if isinstance(raster.get("rect"), dict) else {}
     source = str(raster.get("src") or "")
@@ -145,7 +147,6 @@ def build_typst_document(
     foreground_opacity = style["foreground_opacity"] / 100
     columns = style["columns"]
     font_stack = _typst_font_stack(style.get("font_family"), font_registry=font_registry)
-    mono_stack = _typst_string_array(["Consolas", "JetBrains Mono", "Microsoft YaHei"])
     sections = ",\n".join(
         _typst_section(section, columns=columns, style=style, width=width)
         for section in menu.get("sections", [])
@@ -168,7 +169,6 @@ def build_typst_document(
 #let card_fill = {_color_expr(style['card_color'], foreground_opacity)}
 #let item_fill = {_color_expr('#f1f5f9', foreground_opacity * 0.94)}
 #let border_paint = {_color_expr('#94a3b8', 0.16)}
-#let mono_stack = {mono_stack}
 
 #box(width: 100%)[
   #rect(
@@ -214,10 +214,16 @@ def build_typst_document(
 def _is_usable_render_snapshot(snapshot: dict[str, Any] | None) -> bool:
     if not isinstance(snapshot, dict) or snapshot.get("renderer") != "typst-direct":
         return False
+    if not _snapshot_uses_menu_font_contract(snapshot):
+        return False
     try:
         return float(snapshot.get("width") or 0) > 0 and float(snapshot.get("height") or 0) > 0
     except (TypeError, ValueError):
         return False
+
+
+def _snapshot_uses_menu_font_contract(snapshot: dict[str, Any]) -> bool:
+    return snapshot.get("font_contract") == "menu-font-all-text"
 
 
 def _build_typst_snapshot_document(
@@ -500,7 +506,7 @@ def _typst_item_block(item: dict[str, Any], block: str, *, disabled: bool, style
     if block == "command":
         font_size = _clamp_float(item.get("command_font_size"), default=defaults["command"], minimum=8, maximum=34)
         return (
-            f'text(font: mono_stack, fill: {_color_expr(style["primary_color"], opacity)}, '
+            f'text(fill: {_color_expr(style["primary_color"], opacity)}, '
             f'size: {font_size:g}pt, weight: 800, {_typst_str(item.get("command") or "")})'
         )
     if block == "label":

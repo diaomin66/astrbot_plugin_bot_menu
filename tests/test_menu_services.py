@@ -218,7 +218,8 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("function buildRenderSnapshotForTypst(menuSnapshot)", app_js)
         self.assertIn("await waitForPreviewFonts();", app_js)
         self.assertIn('renderer: "typst-direct"', app_js)
-        self.assertIn('version: 2', app_js)
+        self.assertIn('version: 3', app_js)
+        self.assertIn('font_contract: "menu-font-all-text"', app_js)
         self.assertIn("visual_scale", app_js)
         self.assertIn("device_pixel_ratio", app_js)
         self.assertIn("letter_spacing", app_js)
@@ -460,6 +461,7 @@ class MenuStorageTests(unittest.TestCase):
                     ],
                     "render_snapshot": {
                         "renderer": "typst-direct",
+                        "font_contract": "menu-font-all-text",
                         "width": 820,
                         "height": 460,
                         "boxes": [
@@ -499,6 +501,7 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual(item["content_gap"], 9)
             self.assertFalse(item["enabled"])
             self.assertEqual(reloaded["render_snapshot"]["renderer"], "typst-direct")
+            self.assertEqual(reloaded["render_snapshot"].get("font_contract"), "menu-font-all-text")
             self.assertEqual(reloaded["render_snapshot"]["width"], 820)
 
             preview_html = build_preview_html(reloaded)
@@ -528,7 +531,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 320,
                     "height": 180,
                     "boxes": [
@@ -570,7 +574,7 @@ class MenuStorageTests(unittest.TestCase):
             }
         )
 
-        self.assertEqual(menu["render_snapshot"]["version"], 2)
+        self.assertEqual(menu["render_snapshot"]["version"], 3)
         source = build_typst_document(menu)
         self.assertIn('rgb("#f1f5f9").transparentize(6%)', source)
         self.assertNotIn("dx: 10pt, dy: 10pt", source)
@@ -588,7 +592,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 360,
                     "height": 160,
                     "texts": [
@@ -625,7 +630,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 360,
                     "height": 120,
                     "texts": [
@@ -669,7 +675,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 240,
                     "height": 100,
                     "raster": {
@@ -706,7 +713,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 16,
                     "height": 8,
                     "raster": {
@@ -736,7 +744,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "功能", "items": [{"label": "测试"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 16,
                     "height": 8,
                     "raster": {
@@ -770,6 +779,46 @@ class MenuStorageTests(unittest.TestCase):
                 cached,
             )
 
+    def test_legacy_snapshot_without_font_contract_does_not_reuse_old_font_raster(self):
+        source_png = _tiny_png_bytes()
+        data_url = "data:image/png;base64," + base64.b64encode(source_png).decode("ascii")
+        menu = normalize_menu(
+            {
+                "id": "legacy-font-contract",
+                "title": "Legacy Font Contract",
+                "style": {"font_family": "DemoFont"},
+                "sections": [{"title": "group", "items": [{"label": "item", "command": "/demo"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 16,
+                    "height": 8,
+                    "raster": {
+                        "type": "image",
+                        "role": "preview",
+                        "rect": {"x": 0, "y": 0, "width": 16, "height": 8},
+                        "src": data_url,
+                        "scale": 1,
+                    },
+                    "texts": [
+                        {
+                            "role": "item_text",
+                            "text": "/demo",
+                            "rect": {"x": 0, "y": 0, "width": 12, "height": 8},
+                            "font_family": ["Consolas"],
+                        }
+                    ],
+                },
+            }
+        )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            self.assertIsNone(materialize_saved_preview_raster(menu, tmp, output_scale=4))
+        typst_source = build_typst_document(menu)
+        self.assertNotIn("Generated from Page render_snapshot", typst_source)
+        self.assertIn("DemoFont", typst_source)
+        self.assertNotIn("Consolas", typst_source)
+
     def test_typst_snapshot_prefers_saved_text_raster_layer(self):
         png = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
         menu = normalize_menu(
@@ -779,7 +828,8 @@ class MenuStorageTests(unittest.TestCase):
                 "sections": [{"title": "group", "items": [{"label": "item"}]}],
                 "render_snapshot": {
                     "renderer": "typst-direct",
-                    "version": 2,
+                    "font_contract": "menu-font-all-text",
+                    "version": 3,
                     "width": 240,
                     "height": 100,
                     "texts": [
@@ -1376,6 +1426,28 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("data:font/woff2;base64,", html)
             self.assertIn("BotMenuUserFont-", html)
             self.assertNotIn(str(Path(tmp)), html)
+
+    def test_command_text_uses_menu_font_family_everywhere(self):
+        menu = normalize_menu(
+            {
+                "id": "command-font",
+                "style": {"font_family": "DemoFont"},
+                "sections": [{"title": "group", "items": [{"label": "item", "command": "/demo"}]}],
+            }
+        )
+        app_js = Path("pages/menu-editor/app.js").read_text(encoding="utf-8")
+        css = Path("pages/menu-editor/style.css").read_text(encoding="utf-8")
+        html = build_preview_html(menu)
+        typst_source = build_typst_document(menu)
+
+        self.assertNotIn("DEFAULT_MONO_FONT_STACK_CSS", app_js)
+        self.assertNotIn("--preview-mono-font-family", app_js + css + html)
+        self.assertNotRegex(css, r"preview-command(?:-title)?[^{}]*\{[^{}]*font-family")
+        self.assertNotIn("default_mono_font_stack_css", Path("services/renderer.py").read_text(encoding="utf-8"))
+        self.assertNotIn("mono_stack", typst_source)
+        self.assertNotIn("font: mono", typst_source)
+        self.assertIn("DemoFont", html)
+        self.assertIn("DemoFont", typst_source)
 
     def test_preview_html_embeds_all_user_fonts_for_saved_preview_capture(self):
         with tempfile.TemporaryDirectory() as tmp:

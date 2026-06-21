@@ -159,7 +159,7 @@ def _normalize_render_snapshot(raw_snapshot: Any) -> dict[str, Any] | None:
     height = _clamp_float(raw.get("height"), default=0, minimum=0, maximum=8000)
     if width <= 0 or height <= 0:
         return None
-    raw["version"] = _clamp_int(raw.get("version"), default=1, minimum=1, maximum=2)
+    raw["version"] = _clamp_int(raw.get("version"), default=1, minimum=1, maximum=3)
     raw["width"] = width
     raw["height"] = height
     return raw

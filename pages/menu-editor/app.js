@@ -86,7 +86,6 @@ const CONTENT_FONT_LIMITS = {
   description_font_size: { min: 8, max: 28, fallback: 11.5 },
 };
 const DEFAULT_FONT_STACK_CSS = '"Inter", "PingFang SC", "Microsoft YaHei", sans-serif';
-const DEFAULT_MONO_FONT_STACK_CSS = '"Consolas", "JetBrains Mono", monospace';
 
 const STYLE_COPY_KEYS = [
   "theme", "primary_color", "background_color", "background_image", "background_image_asset_id", "background_image_name",
@@ -1523,7 +1522,6 @@ function renderPreview() {
     `--preview-muted:${style.muted_color || "#6b7280"}`,
     `--preview-radius:${style.radius || 24}px`,
     `--preview-font-family:${fontFamilyCss(style.font_family)}`,
-    `--preview-mono-font-family:${DEFAULT_MONO_FONT_STACK_CSS}`,
     `--preview-width:${layout.width}px`,
     `--preview-columns:${layout.columns}`,
     `--preview-section-gap:${sectionGapForMenu(menu)}px`,
@@ -2013,8 +2011,9 @@ async function buildRenderSnapshotForTypst(menuSnapshot) {
     textElement(card.querySelector(".preview-watermark"), "watermark"),
   ].filter(Boolean);
   return {
-    version: 2,
+    version: 3,
     renderer: "typst-direct",
+    font_contract: "menu-font-all-text",
     width: rounded(cardRect.width / scale),
     height: rounded(cardRect.height / scale),
     capture: {

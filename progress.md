@@ -600,3 +600,31 @@
 - `docs/font-system.md`、`docs/page-editor-verification.md`、`docs/typst-renderer.md`：恢复中文文档。
 - `tests/test_menu_services.py`：恢复 UTF-8 测试内容并清理旧渲染相关测试数据。
 - Rollback: revert this task commit, then rerun the local AstrBot sync step from the previous known-good commit.
+
+
+## 2026-06-21 - Task: Make every menu text use the custom menu font
+### What was done
+- 移除指令文字单独使用等宽字体的例外，指令文字现在和标题、分组、名称、简介、页脚、水印一样继承当前菜单自定义字体。
+- 后端预览 HTML 和 Typst 兼容渲染同步移除指令专用字体栈。
+- 新保存的 Page 快照写入 `font_contract: "menu-font-all-text"`，旧快照不会继续复用可能已固化错误字体的 PNG 快路径。
+- 提升渲染缓存版本，避免继续命中旧的错误字体缓存图。
+- 已同步到本地 AstrBot 插件目录。
+
+### Testing
+- `python -m json.tool _conf_schema.json` passed.
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m unittest tests.test_menu_services` passed: 56 tests OK.
+- 指令专用字体栈扫描通过：未发现 `DEFAULT_MONO`、`preview-mono-font-family`、`mono_stack`、`font: mono`、`Consolas` 或 `JetBrains Mono` 残留于渲染链路。
+- 乱码扫描通过。
+- 本地 AstrBot 插件目录编译、指令专用字体栈扫描和乱码扫描均通过。
+
+### Notes
+- `pages/menu-editor/app.js`：Page 快照升级到 v3 并记录字体契约。
+- `pages/menu-editor/style.css`：指令样式不再声明单独字体。
+- `services/renderer.py`：后端预览 HTML 移除指令专用字体变量。
+- `services/typst_renderer.py`：Typst 兼容路径让指令继承菜单字体，并拒绝旧字体契约缺失快照。
+- `services/menu_model.py`：允许保存 v3 render_snapshot。
+- `services/render_cache.py`：提升缓存版本以失效旧图。
+- `tests/test_menu_services.py`：新增所有菜单文字跟随当前菜单字体、旧快照不复用旧字体 PNG 的回归测试。
+- `docs/font-system.md`、`docs/typst-renderer.md`：记录所有菜单文字跟随自定义字体和旧快照策略。
+- Rollback: revert this task commit, then resync the local AstrBot plugin directory.

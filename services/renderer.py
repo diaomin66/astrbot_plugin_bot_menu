@@ -4,7 +4,7 @@ from datetime import datetime
 from html import escape
 from typing import Any
 
-from .fonts import FontRegistry, default_font_stack_css, default_mono_font_stack_css
+from .fonts import FontRegistry, default_font_stack_css
 
 CARD_SIZE_WIDTHS = {
     "compact": 190,
@@ -56,7 +56,6 @@ def build_preview_html(
         f"--preview-muted:{style['muted_color']};"
         f"--preview-radius:{style['radius'] or 24}px;"
         f"--preview-font-family:{_css_font_family(style['font_family'], font_registry=font_registry)};"
-        f"--preview-mono-font-family:{default_mono_font_stack_css()};"
         f"--preview-width:{width}px;"
         f"--preview-columns:{style['columns']};"
         f"--preview-section-gap:{section_gap}px;"
@@ -134,10 +133,10 @@ def build_preview_html(
     .preview-icon {{ line-height: 1.1; font-size: 22px; display: flex; align-items: flex-start; justify-content: center; padding-top: 1px; }}
     .preview-item-main {{ min-width: 0; display: flex; flex-direction: column; gap: var(--item-content-gap, 2px); }}
     .preview-item-title {{ display: block; margin-top: 0; color: var(--preview-text, #111827); font-size: var(--item-command-size, 14px); line-height: 1.18; letter-spacing: -.01em; overflow-wrap: anywhere; }}
-    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-weight: 800; }}
+    .preview-command-title {{ margin-top: 0; color: var(--preview-primary, #7c3aed); font-weight: 800; }}
     .preview-item-name {{ color: var(--preview-text, #111827); font-size: var(--item-label-size, 11.5px); line-height: 1.28; font-weight: 650; overflow-wrap: anywhere; }}
     .preview-desc {{ margin-top: 0; padding-top: 0; color: var(--preview-muted, #6b7280); font-size: var(--item-description-size, 11.5px); line-height: 1.34; overflow-wrap: anywhere; }}
-    .preview-command {{ color: var(--preview-primary, #7c3aed); font-family: var(--preview-mono-font-family, {default_mono_font_stack_css()}); font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
+    .preview-command {{ color: var(--preview-primary, #7c3aed); font-size: 11.5px; line-height: 1.25; overflow-wrap: anywhere; }}
     .preview-item.size-compact .preview-icon {{ font-size: 18px; }}
     .preview-item.size-large .preview-icon, .preview-item.size-banner .preview-icon {{ font-size: 26px; }}
     .preview-item.size-large .preview-command, .preview-item.size-banner .preview-command {{ font-size: 12px; }}
