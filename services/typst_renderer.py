@@ -36,7 +36,17 @@ def render_menu_via_typst(
     output_scale: int = 4,
     font_registry: FontRegistry | None = None,
 ) -> str:
-    """Render the saved Page menu snapshot through Typst into a PNG file."""
+    """Render a menu through the Typst-only path into a PNG file.
+
+    Page-saved full-card raster snapshots are already pixel-final.  Returning
+    that PNG directly avoids a second layout or resampling pass and keeps the
+    hot render path in the millisecond range.  Menus without that snapshot fall
+    back to a generated Typst document.
+    """
+
+    raster_path = materialize_saved_preview_raster(menu, output_dir, output_scale=output_scale)
+    if raster_path:
+        return raster_path
 
     try:
         import typst
@@ -105,21 +115,10 @@ def materialize_saved_preview_raster(
         target_dir = Path(output_dir) / "rendered"
         target_dir.mkdir(parents=True, exist_ok=True)
         safe_id = "".join(ch for ch in str(menu.get("id") or "menu") if ch.isalnum() or ch in ("_", "-")) or "menu"
-        digest = hashlib.sha1(raw + f":{width}x{height}@{scale}".encode("ascii")).hexdigest()[:12]
-        target = target_dir / f"{safe_id}-typst-raster-source-{digest}.png"
-        if width > 0 and height > 0:
-            try:
-                from PIL import Image
-                from io import BytesIO
-
-                image = Image.open(BytesIO(raw)).convert("RGBA")
-                expected_size = (max(1, width * scale), max(1, height * scale))
-                if image.size != expected_size:
-                    image = image.resize(expected_size, Image.Resampling.LANCZOS)
-                image.save(target, format="PNG")
-                return str(target)
-            except Exception:
-                pass
+        raster_scale = _clamp_float(raster.get("scale"), default=scale, minimum=1, maximum=8)
+        digest = hashlib.sha1(raw + f":{width}x{height}@{raster_scale:g}".encode("ascii")).hexdigest()[:12]
+        suffix = ".jpg" if header.startswith("data:image/jpeg") or header.startswith("data:image/jpg") else ".png"
+        target = target_dir / f"{safe_id}-typst-raster-source-{digest}{suffix}"
         target.write_bytes(raw)
         return str(target)
     except Exception:
@@ -231,7 +230,7 @@ def _build_typst_snapshot_document(
     height = _clamp_float(snapshot.get("height"), default=1200, minimum=1, maximum=8000)
     preview_raster = _snapshot_image(snapshot.get("raster"), work_dir) if isinstance(snapshot.get("raster"), dict) else ""
     if preview_raster:
-        return f'''// Generated from Page render_snapshot. Typst renders directly from saved preview raster; no browser is used here.
+        return f'''// Generated from Page render_snapshot. Typst uses the saved preview raster directly.
 #set page(width: {width:g}pt, height: {height:g}pt, margin: 0pt, fill: none)
 {preview_raster}
 '''
@@ -246,7 +245,7 @@ def _build_typst_snapshot_document(
     elements.extend(_snapshot_box(element) for element in other_boxes)
     elements.extend(_snapshot_text(element, work_dir=work_dir, font_registry=font_registry) for element in texts)
     body = "\n".join(element for element in elements if element)
-    return f'''// Generated from Page render_snapshot. Typst renders directly from saved geometry; no browser is used here.
+    return f'''// Generated from Page render_snapshot. Typst uses saved geometry directly.
 #set page(width: {width:g}pt, height: {height:g}pt, margin: 0pt, fill: none)
 #set text(lang: "zh")
 {body}

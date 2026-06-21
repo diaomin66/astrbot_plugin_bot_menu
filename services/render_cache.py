@@ -30,12 +30,12 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
     ) -> str:
         style = menu.get("style") if isinstance(menu.get("style"), dict) else {}
         payload = {
             "cache_version": self.CACHE_VERSION,
-            "renderer": str(render_engine or "browser"),
+            "renderer": str(render_engine or "typst"),
             "render_width": render_width,
             "render_scale": render_scale,
             "font_signature": FontRegistry(self.data_dir).signature_for(style.get("font_family")),
@@ -50,7 +50,7 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
     ) -> str | None:
         fingerprint = self.fingerprint(
             menu,
@@ -73,7 +73,7 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
         is_rendering: bool = False,
     ) -> dict[str, Any]:
         """Return the render cache status for the current menu fingerprint."""
@@ -152,7 +152,7 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
     ) -> str:
         source = Path(rendered_path)
         if not source.is_file():
@@ -196,7 +196,7 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
     ) -> None:
         with self._lock:
             data = self._read()
@@ -227,7 +227,7 @@ class MenuRenderCache:
         *,
         render_width: int,
         render_scale: int,
-        render_engine: str = "browser",
+        render_engine: str = "typst",
     ) -> None:
         fingerprint = self.fingerprint(
             menu,

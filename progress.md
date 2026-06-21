@@ -551,3 +551,30 @@
 - `docs/page-editor-verification.md`: updates the verification requirement for browser render fonts.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore services/renderer.py tests/test_menu_services.py README.md docs/font-system.md docs/page-editor-verification.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Remove legacy render paths and keep Typst-only rendering
+### What was done
+- Removed the old multi-renderer path from the plugin runtime so menu images always use Typst.
+- Deleted the local screenshot renderer module and removed the stale render-mode configuration and dependencies.
+- Optimized the Typst fast path so a Page-saved full preview PNG is reused directly instead of being re-laid out or resampled.
+- Updated tests and docs to describe the single Typst path and the Page-saved raster consistency contract.
+
+### Testing
+- `python -m py_compile main.py services/*.py tests/test_menu_services.py` passed.
+- `python -m unittest tests.test_menu_services` passed: 54 tests OK.
+- Repository keyword scan for legacy render terms returned no matches across source, tests, docs, README, requirements and schema.
+
+### Notes
+- `main.py`: forced runtime rendering to Typst and removed old render-mode branching.
+- `services/local_image.py`: removed the legacy local screenshot renderer module.
+- `services/typst_renderer.py`: made saved preview raster the direct fast path and kept Typst document fallback for old menus.
+- `services/render_cache.py`: changed default render engine metadata to Typst.
+- `services/render_coordinator.py`: made Typst the only render engine reported to cache/status logic.
+- `services/__init__.py`: removed exports for deleted local image helpers.
+- `services/fonts.py`: removed old local-drawing font helper.
+- `services/renderer.py`: renamed the Page font CSS helper away from old renderer wording.
+- `_conf_schema.json`: removed render-mode options and old renderer hints.
+- `requirements.txt`: removed stale non-Typst render dependencies.
+- `README.md`, `CHANGELOG.md`, `docs/font-system.md`, `docs/page-editor-verification.md`, `docs/typst-renderer.md`: updated user-facing behavior to Typst-only rendering.
+- `tests/test_menu_services.py`: removed legacy renderer tests and kept Typst/cache coverage.
+- Rollback: revert this repository to the commit before this task, or restore `services/local_image.py` plus the previous render-mode branches/config/dependencies from Git history.

@@ -18,11 +18,7 @@ from .services import (
     FontRegistry,
     RoutingStorage,
     build_preview_html,
-    build_render_payload,
     materialize_saved_preview_raster,
-    preview_width_for_menu,
-    render_menu_image,
-    render_menu_via_browser,
     render_menu_via_typst,
 )
 
@@ -386,63 +382,21 @@ class BotMenuPlugin(Star):
         menu = self._menu_with_resolved_assets(menu)
         default_width = self._config_int("render_width", 900)
         render_scale = max(1, min(4, self._config_int("render_scale", 4)))
-        if not render_mode:
-            render_mode = self._render_cache_engine()
+        render_mode = (render_mode or self._render_cache_engine()).strip().lower()
+        if render_mode != "typst":
+            logger.warning("Unsupported render_mode=%s ignored; Typst is the only render path", render_mode)
 
-        if render_mode == "typst":
-            return await asyncio.to_thread(
-                render_menu_via_typst,
-                menu,
-                self.storage.data_dir,
-                default_width=default_width,
-                output_scale=render_scale,
-                font_registry=self.fonts,
-            )
-
-        if render_mode == "pillow":
-            return await asyncio.to_thread(
-                render_menu_image,
-                menu,
-                self.storage.data_dir,
-                default_width=default_width,
-                output_scale=render_scale,
-            )
-
-        if render_mode in {"browser", "local", "auto"}:  # local is fallback mapping to browser for old configs
-            try:
-                html_content = build_preview_html(menu, default_width=default_width, font_registry=self.fonts)
-                viewport_width = preview_width_for_menu(menu, default_width=default_width)
-                return await asyncio.to_thread(
-                    render_menu_via_browser,
-                    menu,
-                    self.storage.data_dir,
-                    html_content,
-                    default_width=default_width,
-                    viewport_width=viewport_width,
-                    device_scale_factor=render_scale,
-                )
-            except Exception as exc:
-                import traceback
-                if render_mode == "auto":
-                    logger.warning("Local browser rendering failed, falling back to remote HTML render: %s\n%s", exc, traceback.format_exc())
-                else:
-                    logger.error("Local browser rendering failed; not using mismatched Pillow fallback: %s\n%s", exc, traceback.format_exc())
-                    raise RuntimeError(
-                        "local browser rendering failed; no image was generated to avoid output that does not match the Page preview"
-                    ) from exc
-
-        template, data, options = build_render_payload(menu, default_width=default_width, font_registry=self.fonts)
-        try:
-            return await self.html_render(template, data, return_url=True, options=options)
-        except Exception as exc:
-            logger.error("Remote HTML rendering failed; not using mismatched Pillow fallback: %s", exc)
-            raise RuntimeError(
-                "remote HTML rendering failed; no image was generated to avoid output that does not match the Page preview"
-            ) from exc
+        return await asyncio.to_thread(
+            render_menu_via_typst,
+            menu,
+            self.storage.data_dir,
+            default_width=default_width,
+            output_scale=render_scale,
+            font_registry=self.fonts,
+        )
 
     def _render_cache_engine(self) -> str:
-        render_mode = str(self._config_get("render_mode", "browser") or "browser").strip().lower()
-        return "browser" if render_mode == "local" else render_mode
+        return "typst"
 
     def _register_web_apis(self, context: Context) -> None:
         routes = [

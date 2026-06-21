@@ -30,7 +30,7 @@ class MenuRenderCoordinator:
         self.render_menu = render_menu
         self.render_width = render_width
         self.render_scale = render_scale
-        self.render_engine = render_engine or (lambda: "browser")
+        self.render_engine = render_engine or (lambda: "typst")
         self.logger = logger or logging.getLogger(__name__)
         self._tasks: dict[str, asyncio.Task[None]] = {}
         self._task_fingerprints: dict[str, str] = {}
@@ -203,5 +203,5 @@ class MenuRenderCoordinator:
                 self._task_fingerprints.pop(menu_id, None)
 
     def _render_engine(self) -> str:
-        engine = str(self.render_engine() or "browser").strip().lower()
-        return engine or "browser"
+        engine = str(self.render_engine() or "typst").strip().lower()
+        return "typst"

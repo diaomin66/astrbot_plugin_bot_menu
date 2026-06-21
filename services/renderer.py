@@ -84,7 +84,7 @@ def build_preview_html(
 <head>
   <meta charset="utf-8" />
   <style>
-    {_browser_font_face_css(font_registry)}
+    {_font_face_css(font_registry)}
     * {{ box-sizing: border-box; }}
     html, body {{ margin: 0; padding: 0; background: transparent; }}
     body {{
@@ -272,7 +272,7 @@ def _css_font_family(value: Any, *, font_registry: FontRegistry | None = None) -
     return f'"{raw}", {default_font_stack_css()}'
 
 
-def _browser_font_face_css(font_registry: FontRegistry | None) -> str:
+def _font_face_css(font_registry: FontRegistry | None) -> str:
     if not font_registry:
         return ""
     return font_registry.css_for_all().replace("font-display:swap;", "font-display:block;")

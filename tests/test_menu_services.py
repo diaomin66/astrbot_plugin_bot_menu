@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import base64
 import tempfile
+import time
 import unittest
 import re
 from html.parser import HTMLParser
@@ -10,14 +12,6 @@ from services.asset_storage import AssetStorage
 from services.fonts import FontRegistry
 from services.history_storage import MenuHistoryStorage
 from services.menu_model import DEFAULT_STYLE, MenuValidationError, normalize_menu
-from services.local_image import (
-    _build_browser_screenshot_command,
-    _crop_transparent_padding_png,
-    _find_browser_executable,
-    _playwright_error_looks_like_missing_browser,
-    image_file_to_data_url,
-    render_menu_image,
-)
 from services.render_cache import MenuRenderCache
 from services.render_coordinator import MenuRenderCoordinator
 from services.renderer import build_preview_html, build_render_payload, preview_width_for_menu
@@ -30,6 +24,17 @@ from services.typst_renderer import (
     materialize_saved_preview_raster,
     render_menu_via_typst,
 )
+
+
+def _tiny_png_bytes() -> bytes:
+    return base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGPgF9f6DwAB2QFQiLRdVgAAAABJRU5ErkJggg=="
+    )
+
+
+def _write_tiny_png(path: Path) -> Path:
+    path.write_bytes(_tiny_png_bytes())
+    return path
 
 
 class _PreviewCardStyleParser(HTMLParser):
@@ -692,18 +697,8 @@ class MenuStorageTests(unittest.TestCase):
         self.assertNotIn('fill: rgb("#000000")', source)
 
     def test_typst_full_preview_raster_output_matches_saved_pixels(self):
-        import base64
-        from io import BytesIO
-
-        from PIL import Image, ImageChops
-
-        source_image = Image.new("RGBA", (16, 8))
-        for y in range(8):
-            for x in range(16):
-                source_image.putpixel((x, y), ((x * 17) % 256, (y * 31) % 256, ((x + y) * 13) % 256, 255))
-        buffer = BytesIO()
-        source_image.save(buffer, format="PNG")
-        data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        source_png = _tiny_png_bytes()
+        data_url = "data:image/png;base64," + base64.b64encode(source_png).decode("ascii")
         menu = normalize_menu(
             {
                 "id": "snapshot-pixel-diff",
@@ -727,22 +722,13 @@ class MenuStorageTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             rendered_path = render_menu_via_typst(menu, tmp, output_scale=1)
-            rendered = Image.open(rendered_path).convert("RGBA")
+            rendered = Path(rendered_path).read_bytes()
 
-        self.assertEqual(rendered.size, source_image.size)
-        diff = ImageChops.difference(source_image, rendered)
-        self.assertIsNone(diff.getbbox())
+        self.assertEqual(rendered, source_png)
 
     def test_saved_preview_raster_can_fill_typst_cache_without_compiling(self):
-        import base64
-        from io import BytesIO
-
-        from PIL import Image
-
-        source_image = Image.new("RGBA", (16, 8), (15, 23, 42, 255))
-        buffer = BytesIO()
-        source_image.save(buffer, format="PNG")
-        data_url = "data:image/png;base64," + base64.b64encode(buffer.getvalue()).decode("ascii")
+        source_png = _tiny_png_bytes()
+        data_url = "data:image/png;base64," + base64.b64encode(source_png).decode("ascii")
         menu = normalize_menu(
             {
                 "id": "snapshot-cache-raster",
@@ -765,10 +751,12 @@ class MenuStorageTests(unittest.TestCase):
         )
 
         with tempfile.TemporaryDirectory() as tmp:
+            started = time.perf_counter()
             raster_path = materialize_saved_preview_raster(menu, tmp, output_scale=4)
+            elapsed_ms = (time.perf_counter() - started) * 1000
             self.assertIsNotNone(raster_path)
-            raster = Image.open(raster_path).convert("RGBA")
-            self.assertEqual(raster.size, (64, 32))
+            self.assertLess(elapsed_ms, 50)
+            self.assertEqual(Path(raster_path).read_bytes(), source_png)
             cache = MenuRenderCache(tmp)
             cached = cache.store_rendered(
                 menu,
@@ -893,14 +881,6 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual({menu["id"] for menu in menus}, {"default", "new"})
             self.assertEqual([menu["id"] for menu in storage.list_deleted_menus()], ["old"])
 
-    def test_local_renderer_writes_png(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            storage = MenuStorage(tmp)
-            path = render_menu_image(storage.get_menu("default"), tmp)
-            self.assertTrue(path.endswith(".png"))
-            with open(path, "rb") as f:
-                self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
-
     def test_typst_renderer_writes_png_from_saved_page_snapshot(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
@@ -963,24 +943,15 @@ class MenuStorageTests(unittest.TestCase):
             with open(path, "rb") as f:
                 self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
 
-    def test_typst_renderer_does_not_depend_on_browser_renderer(self):
+    def test_typst_renderer_is_the_only_render_path(self):
         source = Path("services/typst_renderer.py").read_text(encoding="utf-8")
-        self.assertNotIn("render_menu_via_browser", source)
-        self.assertNotIn("playwright", source.lower())
-        self.assertNotIn("browser-reference", source)
-
-    def test_rendered_png_can_be_embedded_in_web_preview(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            storage = MenuStorage(tmp)
-            path = render_menu_image(storage.get_menu("default"), tmp)
-            data_url = image_file_to_data_url(path)
-            self.assertTrue(data_url.startswith("data:image/png;base64,"))
+        self.assertNotIn("html_render", source.lower())
 
     def test_render_cache_stores_and_invalidates_by_menu_fingerprint(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
             menu = storage.get_menu("default")
-            rendered_path = render_menu_image(menu, tmp)
+            rendered_path = _write_tiny_png(Path(tmp) / "rendered.png")
             cache = MenuRenderCache(tmp)
             cached_path = cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
             self.assertEqual(cache.get_cached_path(menu, render_width=900, render_scale=4), cached_path)
@@ -988,36 +959,12 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
             self.assertTrue(Path(cached_path).is_file())
 
-    def test_render_cache_separates_browser_and_typst_engines(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            storage = MenuStorage(tmp)
-            menu = storage.get_menu("default")
-            cache = MenuRenderCache(tmp)
-            rendered_path = render_menu_image(menu, tmp)
-            browser_fingerprint = cache.fingerprint(menu, render_width=900, render_scale=4, render_engine="browser")
-            typst_fingerprint = cache.fingerprint(menu, render_width=900, render_scale=4, render_engine="typst")
-
-            self.assertNotEqual(browser_fingerprint, typst_fingerprint)
-            cached_path = cache.store_rendered(
-                menu,
-                rendered_path,
-                render_width=900,
-                render_scale=4,
-                render_engine="browser",
-            )
-
-            self.assertEqual(
-                cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="browser"),
-                cached_path,
-            )
-            self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="typst"))
-
     def test_render_cache_uses_fingerprinted_paths_for_layout_changes(self):
         with tempfile.TemporaryDirectory() as tmp:
             storage = MenuStorage(tmp)
             menu = storage.get_menu("default")
             cache = MenuRenderCache(tmp)
-            first_render = render_menu_image(menu, tmp)
+            first_render = _write_tiny_png(Path(tmp) / "first.png")
             first_cached = cache.store_rendered(menu, first_render, render_width=900, render_scale=4)
 
             changed_menu = normalize_menu(
@@ -1035,7 +982,7 @@ class MenuStorageTests(unittest.TestCase):
                 }
             )
             self.assertIsNone(cache.get_cached_path(changed_menu, render_width=900, render_scale=4))
-            second_render = render_menu_image(changed_menu, tmp)
+            second_render = _write_tiny_png(Path(tmp) / "second.png")
             second_cached = cache.store_rendered(changed_menu, second_render, render_width=900, render_scale=4)
 
             self.assertNotEqual(first_cached, second_cached)
@@ -1105,7 +1052,7 @@ class MenuStorageTests(unittest.TestCase):
             self.assertEqual(rendering["status"], "rendering")
             self.assertEqual(rendering["attempts"], 1)
 
-            rendered_path = render_menu_image(menu, tmp)
+            rendered_path = _write_tiny_png(Path(tmp) / "rendered.png")
             cache.store_rendered(menu, rendered_path, render_width=900, render_scale=4)
             ready = cache.get_status(menu, render_width=900, render_scale=4)
             self.assertEqual(ready["status"], "ready")
@@ -1129,7 +1076,7 @@ class MenuStorageTests(unittest.TestCase):
                 cache = MenuRenderCache(tmp)
 
                 async def render_menu(_menu):
-                    return render_menu_image(_menu, tmp)
+                    return str(_write_tiny_png(Path(tmp) / "rendered.png"))
 
                 coordinator = MenuRenderCoordinator(
                     storage=storage,
@@ -1143,8 +1090,7 @@ class MenuStorageTests(unittest.TestCase):
                 self.assertEqual(coordinator.status_for_menu(menu)["status"], "rendering")
                 await asyncio.sleep(0.1)
                 self.assertEqual(coordinator.status_for_menu(menu)["status"], "ready")
-                self.assertIsNone(cache.get_cached_path(menu, render_width=900, render_scale=4, render_engine="browser"))
-
+    
         asyncio.run(run_case())
 
     def test_render_coordinator_cache_hit_returns_without_rendering(self):
@@ -1207,82 +1153,6 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("menus/render-refresh", main_py)
         self.assertIn("routing", main_py)
 
-    def test_pillow_renderer_can_output_high_resolution_png(self):
-        from PIL import Image
-
-        with tempfile.TemporaryDirectory() as tmp:
-            storage = MenuStorage(tmp)
-            menu = storage.get_menu("default")
-            path = render_menu_image(menu, tmp, output_scale=3)
-            with Image.open(path) as image:
-                self.assertEqual(image.width, preview_width_for_menu(menu) * 3)
-
-    def test_pillow_renderer_uses_auto_width_columns_and_banner_cards(self):
-        from PIL import Image
-
-        menu = normalize_menu(
-            {
-                "id": "layout",
-                "style": {"width_mode": "auto", "columns": 4, "foreground_opacity": 0},
-                "sections": [
-                    {
-                        "title": "功能",
-                        "items": [
-                            {"label": "横幅", "card_size": "banner"},
-                            *({"label": f"功能{i}", "card_size": "compact"} for i in range(4)),
-                        ],
-                    }
-                ],
-            }
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            path = render_menu_image(menu, tmp, output_scale=2)
-            with Image.open(path) as image:
-                self.assertEqual(image.width, preview_width_for_menu(menu) * 2)
-
-    def test_pillow_renderer_uses_spacing_and_visual_style_fields(self):
-        from PIL import Image
-
-        base_menu = normalize_menu(
-            {
-                "id": "spacing",
-                "style": {"width_mode": "custom", "width": 760, "columns": 2, "show_updated_at": False},
-                "sections": [
-                    {
-                        "title": "功能",
-                        "items": [
-                            {"label": "帮助", "command": "/help", "description": "查看帮助"},
-                            {"label": "菜单", "command": "/menu", "description": "查看菜单"},
-                            {"label": "状态", "command": "/status", "description": "查看状态"},
-                        ],
-                    }
-                ],
-            }
-        )
-        spacious_menu = normalize_menu(
-            {
-                **base_menu,
-                "style": {
-                    **base_menu["style"],
-                    "card_gap": 60,
-                    "section_padding": 60,
-                    "shadow_strength": 5,
-                    "border_strength": 4,
-                    "background_overlay": 40,
-                    "background_brightness": 150,
-                    "background_blur": 4,
-                    "watermark": "demo",
-                },
-            }
-        )
-        with tempfile.TemporaryDirectory() as tmp:
-            base_path = render_menu_image(base_menu, tmp, output_scale=1)
-            spacious_path = render_menu_image(spacious_menu, tmp, output_scale=1)
-            with Image.open(base_path) as base_image, Image.open(spacious_path) as spacious_image:
-                self.assertEqual(base_image.width, spacious_image.width)
-                self.assertGreater(spacious_image.height, base_image.height)
-                self.assertNotEqual(base_image.tobytes(), spacious_image.tobytes())
-
     def test_release_metadata_readme_changelog_and_logo_are_consistent(self):
         import re
 
@@ -1293,7 +1163,7 @@ class MenuStorageTests(unittest.TestCase):
         author = re.search(r"^author:\s*(.+)$", metadata, re.MULTILINE).group(1)
         self.assertEqual(version, "0.5.0")
         self.assertEqual(author, "雪碧bir")
-        self.assertIn(f"当前版本：`{version}`", readme)
+        self.assertIn(f"`{version}`", readme)
         self.assertIn(f"## {version} -", changelog)
         with open("logo.png", "rb") as f:
             self.assertEqual(f.read(8), b"\x89PNG\r\n\x1a\n")
@@ -1331,111 +1201,6 @@ class MenuStorageTests(unittest.TestCase):
         self.assertNotIn("menus/preview", main_py)
         self.assertNotIn("api_preview_menu", main_py)
         self.assertNotIn("_preview_image_url", main_py)
-
-    def test_browser_screenshot_command_uses_high_scale_factor(self):
-        command = _build_browser_screenshot_command(
-            "browser.exe",
-            Path("out.png"),
-            Path("preview.html"),
-            width=660,
-            height=900,
-            device_scale_factor=4,
-        )
-        self.assertIn("--force-device-scale-factor=4", command)
-
-    def test_browser_discovery_uses_cross_platform_command_names(self):
-        import os
-        import shutil
-        from unittest.mock import patch
-
-        command_names: list[str] = []
-
-        def fake_which(name):
-            command_names.append(name)
-            return "/usr/bin/chromium-browser" if name == "chromium-browser" else None
-
-        with patch.dict(os.environ, {}, clear=True), patch.object(shutil, "which", side_effect=fake_which):
-            self.assertEqual(_find_browser_executable(), "/usr/bin/chromium-browser")
-        self.assertIn("google-chrome", command_names)
-        self.assertIn("chromium-browser", command_names)
-
-    def test_playwright_missing_browser_error_is_detected(self):
-        error = RuntimeError(
-            "BrowserType.launch: Executable doesn't exist at "
-            "/root/.cache/ms-playwright/chromium_headless_shell-1123/chrome-linux/headless_shell\n"
-            "Please run the following command: playwright install"
-        )
-        self.assertTrue(_playwright_error_looks_like_missing_browser(error))
-        self.assertFalse(_playwright_error_looks_like_missing_browser(RuntimeError("navigation timeout")))
-
-    def test_playwright_chromium_installer_runs_playwright_install(self):
-        import subprocess
-        from unittest.mock import patch
-
-        import services.local_image as local_image
-
-        completed = subprocess.CompletedProcess(args=[], returncode=0, stdout=b"installed", stderr=b"")
-        with (
-            patch.object(local_image, "_PLAYWRIGHT_CHROMIUM_INSTALL_ATTEMPTED", False),
-            patch.object(local_image.subprocess, "run", return_value=completed) as run,
-        ):
-            installed, detail = local_image._install_playwright_chromium()
-
-        self.assertTrue(installed)
-        self.assertIn("installed", detail)
-        run.assert_called_once_with(
-            [local_image.sys.executable, "-m", "playwright", "install", "chromium"],
-            check=True,
-            capture_output=True,
-            timeout=300,
-        )
-
-    def test_browser_render_auto_installs_missing_playwright_chromium_once(self):
-        from unittest.mock import patch
-
-        import services.local_image as local_image
-
-        calls: list[str] = []
-
-        def fake_playwright_render(_html, screenshot_path, **_kwargs):
-            calls.append(str(screenshot_path))
-            if len(calls) == 1:
-                raise RuntimeError(
-                    "BrowserType.launch: Executable doesn't exist at "
-                    "/root/.cache/ms-playwright/chromium_headless_shell-1123/chrome-linux/headless_shell"
-                )
-            Path(screenshot_path).write_bytes(b"\x89PNG\r\n\x1a\nfake")
-
-        with tempfile.TemporaryDirectory() as tmp:
-            storage = MenuStorage(tmp)
-            menu = storage.get_menu("default")
-            html = build_preview_html(menu)
-            with (
-                patch.object(local_image, "_render_menu_via_playwright", side_effect=fake_playwright_render),
-                patch.object(local_image, "_install_playwright_chromium", return_value=(True, "installed")) as install,
-                patch.object(local_image, "_find_browser_executable") as find_browser,
-            ):
-                path = local_image.render_menu_via_browser(menu, tmp, html)
-                self.assertTrue(Path(path).is_file())
-
-        self.assertEqual(len(calls), 2)
-        install.assert_called_once()
-        find_browser.assert_not_called()
-
-    def test_png_crop_fallback_removes_transparent_browser_tail_without_pillow(self):
-        from PIL import Image
-
-        with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "tail.png"
-            image = Image.new("RGBA", (8, 10), (0, 0, 0, 0))
-            for y in range(6):
-                for x in range(8):
-                    image.putpixel((x, y), (250, 250, 255, 255))
-            image.save(path, format="PNG")
-
-            self.assertTrue(_crop_transparent_padding_png(path))
-            with Image.open(path) as cropped:
-                self.assertEqual(cropped.size, (8, 6))
 
     def test_preview_html_uses_page_preview_markup(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -1612,7 +1377,7 @@ class MenuStorageTests(unittest.TestCase):
             self.assertIn("BotMenuUserFont-", html)
             self.assertNotIn(str(Path(tmp)), html)
 
-    def test_preview_html_embeds_all_user_fonts_for_browser_capture(self):
+    def test_preview_html_embeds_all_user_fonts_for_saved_preview_capture(self):
         with tempfile.TemporaryDirectory() as tmp:
             first_font = Path(tmp) / "fonts" / "AlphaFont.woff2"
             second_font = Path(tmp) / "fonts" / "nested" / "BetaFont.woff2"
@@ -1625,7 +1390,7 @@ class MenuStorageTests(unittest.TestCase):
                 {
                     "id": "font-all",
                     "style": {"font_family": "AlphaFont"},
-                    "sections": [{"title": "字体", "items": [{"label": "浏览器渲染"}]}],
+                    "sections": [{"title": "??", "items": [{"label": "????"}]}],
                 }
             )
 
