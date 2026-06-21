@@ -398,3 +398,26 @@
 - `docs/typst-renderer.md`: documents the measured line-box contract and cached latency-critical path.
 - `progress.md`: appends this implementation and verification record.
 - Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.
+
+## 2026-06-21 - Task: Preserve visible text case and prevent Typst rewrapping
+### What was done
+- Updated Page snapshot capture to save CSS `text-transform` results as the final visible text, so uppercase/lowercase styling from preview is not lost in Typst.
+- Added measured grapheme boxes for text snapshots, including emoji-safe segmentation when `Intl.Segmenter` is available.
+- Updated Typst snapshot rendering to prefer saved grapheme boxes before line boxes, and widened fallback text boxes to prevent Typst from introducing new line breaks.
+- Updated docs to describe grapheme-box restoration, `text-transform` preservation, and no-rewrap fallback behavior.
+
+### Testing
+- `python -m unittest tests.test_menu_services` -> 61 tests passed.
+- `python -m compileall main.py services tests` -> compile check passed.
+- `python -m json.tool _conf_schema.json` -> JSON schema parses successfully.
+- Direct Typst glyph smoke render compiled a valid 360x120 PNG from saved grapheme boxes; sampled non-text card pixel was `(241, 244, 249, 240)`.
+- Glyph smoke source check confirmed saved uppercase glyphs were used instead of re-emitting the whole original line, and cache hit returned in `0.856ms`.
+
+### Notes
+- `pages/menu-editor/app.js`: applies computed `text-transform` during snapshot capture and records grapheme boxes plus line boxes.
+- `services/typst_renderer.py`: renders saved grapheme boxes first and uses no-rewrap fallback widths for line/whole-text paths.
+- `tests/test_menu_services.py`: verifies Page capture markers, grapheme-box priority, visible uppercase text, transparency handling, and cache-hit behavior.
+- `README.md`: documents text-transform, grapheme boxes, and no-rewrap Typst behavior.
+- `docs/typst-renderer.md`: documents the updated text snapshot contract and fallback order.
+- `progress.md`: appends this implementation and verification record.
+- Rollback: before merge, run `git restore pages/menu-editor/app.js services/typst_renderer.py tests/test_menu_services.py README.md docs/typst-renderer.md progress.md`; after merge, revert the final commit and resync the plugin directory.

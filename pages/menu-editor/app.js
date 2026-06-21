@@ -1795,49 +1795,78 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       height: rounded(bottom - top),
     };
   };
-  const captureTextLines = (node) => {
+  const textSegments = (value) => {
+    if (window.Intl?.Segmenter) {
+      return Array.from(new Intl.Segmenter("zh", { granularity: "grapheme" }).segment(value)).map((part) => ({
+        segment: part.segment,
+        index: part.index,
+      }));
+    }
+    const segments = [];
+    let offset = 0;
+    while (offset < value.length) {
+      const codePoint = value.codePointAt(offset);
+      const step = codePoint > 0xffff ? 2 : 1;
+      segments.push({ segment: value.slice(offset, offset + step), index: offset });
+      offset += step;
+    }
+    return segments;
+  };
+  const transformedSegment = (segment, source, index, transform) => {
+    const mode = String(transform || "none").toLowerCase();
+    if (mode === "uppercase") return segment.toLocaleUpperCase("zh-CN");
+    if (mode === "lowercase") return segment.toLocaleLowerCase("zh-CN");
+    if (mode === "capitalize") {
+      const previous = index > 0 ? source.slice(Math.max(0, index - 1), index) : "";
+      if (!previous || /\s/.test(previous)) return segment.toLocaleUpperCase("zh-CN");
+    }
+    return segment;
+  };
+  const transformedText = (value, transform) => textSegments(String(value || ""))
+    .map(({ segment, index }) => transformedSegment(segment, String(value || ""), index, transform))
+    .join("");
+  const captureTextGeometry = (node, computed) => {
     const lines = [];
+    const glyphs = [];
     const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT);
     const range = document.createRange();
     let textNode = walker.nextNode();
     while (textNode) {
       const value = textNode.nodeValue || "";
-      let offset = 0;
-      while (offset < value.length) {
-        const codePoint = value.codePointAt(offset);
-        const step = codePoint > 0xffff ? 2 : 1;
-        const segment = value.slice(offset, offset + step);
+      textSegments(value).forEach(({ segment, index }) => {
         if (segment !== "\n" && segment !== "\r") {
-          range.setStart(textNode, offset);
-          range.setEnd(textNode, offset + step);
+          range.setStart(textNode, index);
+          range.setEnd(textNode, index + segment.length);
           const rect = range.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
             const relative = relDomRect(rect);
+            const visibleSegment = transformedSegment(segment, value, index, computed.textTransform);
+            glyphs.push({ text: visibleSegment, rect: relative });
             const existing = lines.find((line) => Math.abs(line.rect.y - relative.y) <= Math.max(1, relative.height * 0.35));
             if (existing) {
-              existing.text += segment;
+              existing.text += visibleSegment;
               existing.rect = unionRects(existing.rect, relative);
             } else {
-              lines.push({ text: segment, rect: relative });
+              lines.push({ text: visibleSegment, rect: relative });
             }
           }
         }
-        offset += step;
-      }
+      });
       textNode = walker.nextNode();
     }
     range.detach?.();
-    return lines;
+    return { lines, glyphs };
   };
   const css = (node) => getComputedStyle(node);
   const fontFamilies = (value) => String(value || "").split(",").map((part) => part.trim().replace(/^['"]|['"]$/g, "")).filter(Boolean);
   const textElement = (node, role, extra = {}) => {
     if (!node) return null;
     const computed = css(node);
+    const textGeometry = captureTextGeometry(node, computed);
     return {
       type: "text",
       role,
-      text: node.innerText || node.textContent || "",
+      text: transformedText(node.innerText || node.textContent || "", computed.textTransform),
       rect: relRect(node),
       font_size: rounded(parseFloat(computed.fontSize) || 12),
       line_height: rounded(parseFloat(computed.lineHeight) || parseFloat(computed.fontSize) || 12),
@@ -1847,12 +1876,14 @@ function buildRenderSnapshotForTypst(menuSnapshot) {
       color: computed.color || "#000000",
       opacity: rounded(parseFloat(computed.opacity) || 1),
       text_align: computed.textAlign || "left",
+      text_transform: computed.textTransform || "none",
       letter_spacing: pixelLength(computed.letterSpacing),
       padding: sideBox(computed, "padding"),
       white_space: computed.whiteSpace || "normal",
       overflow_wrap: computed.overflowWrap || computed.wordWrap || "normal",
       transform: computed.transform && computed.transform !== "none" ? computed.transform : "",
-      lines: captureTextLines(node),
+      lines: textGeometry.lines,
+      glyphs: textGeometry.glyphs,
       ...extra,
     };
   };

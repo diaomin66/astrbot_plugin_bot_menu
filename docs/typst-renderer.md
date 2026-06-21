@@ -6,9 +6,9 @@ Typst mode is an additional render mode that coexists with the original browser 
 
 ## Data contract with Page
 
-Page saves a `render_snapshot` for Typst. The snapshot includes canvas width/height, capture scale, device pixel ratio, layout metadata, background images, visual boxes, text boxes, relative x/y/width/height normalized back to CSS pixels, colors, background images, box shadow metadata, border radius, border width, opacity, padding, font size, line height, weight, style, letter spacing, alignment, transform metadata, computed font-family stack, and measured text line boxes. Typst uses this snapshot first and falls back to field-based layout only for older menus without a snapshot.
+Page saves a `render_snapshot` for Typst. The snapshot includes canvas width/height, capture scale, device pixel ratio, layout metadata, background images, visual boxes, text boxes, relative x/y/width/height normalized back to CSS pixels, colors, background images, box shadow metadata, border radius, border width, opacity, padding, font size, line height, weight, style, letter spacing, alignment, `text-transform`, transform metadata, computed font-family stack, measured text line boxes, and measured grapheme boxes. Typst uses this snapshot first and falls back to field-based layout only for older menus without a snapshot.
 
-For text, Page records the real rendered line rectangles from the preview DOM. Typst places each saved line at the recorded x/y position when line boxes are present, so wrapping differences between browser layout and Typst do not move later lines.
+For text, Page records the real rendered line rectangles and grapheme rectangles from the preview DOM after CSS `text-transform` is applied. Typst places each saved grapheme at the recorded x/y position when grapheme boxes are present, then falls back to saved line boxes, then to a whole text box. Line and whole-text fallback boxes are deliberately widened so Typst does not introduce new line breaks that were not present in Page.
 
 ## Font matching
 

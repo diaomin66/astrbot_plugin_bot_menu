@@ -256,6 +256,16 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
     leading = max(0.0, line_height - font_size)
     style = str(element.get("font_style") or "").strip().lower()
     style_arg = f", style: {_typst_str(style)}" if style in {"italic", "oblique"} else ""
+    glyph_elements = _snapshot_text_glyphs(
+        element.get("glyphs"),
+        font_stack=font_stack,
+        font_size=font_size,
+        fill=fill,
+        weight=weight,
+        style_arg=style_arg,
+    )
+    if glyph_elements:
+        return "\n".join(glyph_elements)
     line_elements = _snapshot_text_lines(
         element.get("lines"),
         font_stack=font_stack,
@@ -276,8 +286,41 @@ def _snapshot_text(element: dict[str, Any], *, font_registry: FontRegistry | Non
     )
     return (
         f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
-        f"box(width: {width:g}pt, height: {height:g}pt)[#{{{content}}}])"
+        f"box(width: {max(width, 4000) if align == 'left' else width:g}pt, height: {height:g}pt)[#{{{content}}}])"
     )
+
+
+def _snapshot_text_glyphs(
+    value: Any,
+    *,
+    font_stack: str,
+    font_size: float,
+    fill: str,
+    weight: int | str,
+    style_arg: str,
+) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    rendered: list[str] = []
+    for glyph in value:
+        if not isinstance(glyph, dict):
+            continue
+        text = str(glyph.get("text") or "")
+        rect = _snapshot_rect(glyph)
+        if not text or not rect:
+            continue
+        x, y, width, height = rect
+        content = (
+            f"set text(font: {font_stack}, size: {font_size:g}pt, fill: {fill}, weight: {weight}, "
+            f"tracking: 0pt, top-edge: \"bounds\", bottom-edge: \"bounds\"{style_arg});"
+            f"show text: set block(above: 0pt, below: 0pt);"
+            f"text({_typst_str(text)})"
+        )
+        rendered.append(
+            f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
+            f"box(width: {max(1, width + 2):g}pt, height: {height:g}pt)[#{{{content}}}])"
+        )
+    return rendered
 
 
 def _snapshot_text_lines(
@@ -310,7 +353,7 @@ def _snapshot_text_lines(
         )
         rendered.append(
             f"#place(top + left, dx: {x:g}pt, dy: {y:g}pt, "
-            f"box(width: {max(1, width + 2):g}pt, height: {height:g}pt)[#{{{content}}}])"
+            f"box(width: {max(width + 2, 4000):g}pt, height: {height:g}pt)[#{{{content}}}])"
         )
     return rendered
 

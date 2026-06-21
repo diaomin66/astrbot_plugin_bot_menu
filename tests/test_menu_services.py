@@ -211,8 +211,11 @@ class MenuEditorSourceTests(unittest.TestCase):
         self.assertIn("device_pixel_ratio", app_js)
         self.assertIn("letter_spacing", app_js)
         self.assertIn("padding: sideBox", app_js)
-        self.assertIn("const captureTextLines = (node) =>", app_js)
-        self.assertIn("lines: captureTextLines(node)", app_js)
+        self.assertIn("const captureTextGeometry = (node, computed) =>", app_js)
+        self.assertIn("const transformedText = (value, transform) =>", app_js)
+        self.assertIn("text_transform: computed.textTransform", app_js)
+        self.assertIn("lines: textGeometry.lines", app_js)
+        self.assertIn("glyphs: textGeometry.glyphs", app_js)
         self.assertIn("function buildMenuSaveSnapshot()", app_js)
 
     def test_page_destructive_actions_use_in_page_dialogs(self):
@@ -548,7 +551,7 @@ class MenuStorageTests(unittest.TestCase):
         self.assertNotIn("dx: 10pt, dy: 10pt", source)
         self.assertNotIn("dx: 20pt, dy: 20pt", source)
         self.assertIn("dx: 29pt, dy: 34pt", source)
-        self.assertIn("width: 192pt", source)
+        self.assertIn("width: 4000pt", source)
         self.assertIn("tracking: 1.5pt", source)
         self.assertIn("leading: 6pt", source)
 
@@ -588,6 +591,49 @@ class MenuStorageTests(unittest.TestCase):
         self.assertIn("第一行", source)
         self.assertIn("第二行", source)
         self.assertNotIn("leading: 4pt", source)
+
+    def test_typst_snapshot_uses_saved_glyph_rects_and_visible_text_case(self):
+        menu = normalize_menu(
+            {
+                "id": "snapshot-glyphs",
+                "title": "Glyphs",
+                "sections": [{"title": "??", "items": [{"label": "??"}]}],
+                "render_snapshot": {
+                    "renderer": "typst-direct",
+                    "version": 2,
+                    "width": 360,
+                    "height": 120,
+                    "texts": [
+                        {
+                            "role": "kicker",
+                            "text": "MENU MAIN",
+                            "rect": {"x": 10, "y": 12, "width": 120, "height": 20},
+                            "font_size": 11,
+                            "line_height": 14,
+                            "font_weight": "900",
+                            "font_family": ["Microsoft YaHei"],
+                            "text_transform": "uppercase",
+                            "color": "rgb(124, 58, 237)",
+                            "lines": [{"text": "MENU MAIN", "rect": {"x": 10, "y": 12, "width": 72, "height": 14}}],
+                            "glyphs": [
+                                {"text": "M", "rect": {"x": 10, "y": 12, "width": 9, "height": 14}},
+                                {"text": "E", "rect": {"x": 20, "y": 12, "width": 8, "height": 14}},
+                                {"text": "N", "rect": {"x": 29, "y": 12, "width": 9, "height": 14}},
+                                {"text": "U", "rect": {"x": 39, "y": 12, "width": 9, "height": 14}},
+                            ],
+                        }
+                    ],
+                },
+            }
+        )
+
+        source = build_typst_document(menu)
+        self.assertIn("dx: 10pt, dy: 12pt", source)
+        self.assertIn("dx: 39pt, dy: 12pt", source)
+        self.assertIn('"M"', source)
+        self.assertIn('"U"', source)
+        self.assertNotIn("MENU MAIN", source)
+        self.assertNotIn("width: 4000pt", source)
 
     def test_typst_css_color_parser_keeps_transparency_from_page(self):
         self.assertEqual(_css_color_expr("rgba(241,245,249,0.94)"), 'rgb("#f1f5f9").transparentize(6%)')
